@@ -10,6 +10,7 @@ import {
 import { eq, and } from "drizzle-orm";
 import { getStripeClient, getStripeWebhookSecret } from "@/lib/stripe";
 import { sendOrderConfirmation } from "@/lib/email";
+import { createIFramerJob, IFramerError } from "@/lib/iframer";
 import type Stripe from "stripe";
 
 export const dynamic = "force-dynamic";
@@ -22,14 +23,12 @@ export async function POST(request: Request) {
   const webhookSecret = await getStripeWebhookSecret();
 
   const isProd = process.env.NODE_ENV === "production";
-  // Dev-mode bypass is only allowed when explicitly opted in AND not in production
   const devBypass =
     !isProd && process.env.STRIPE_WEBHOOK_DEV_BYPASS === "true";
 
   let event: Stripe.Event;
 
   if (webhookSecret && sig) {
-    // Always verify when we have both a secret and a signature
     try {
       event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
     } catch (err: any) {
@@ -37,15 +36,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
     }
   } else if (devBypass) {
-    // Development only: skip verification when STRIPE_WEBHOOK_DEV_BYPASS=true
     try {
       event = JSON.parse(body) as Stripe.Event;
     } catch {
       return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
   } else {
-    // Missing secret or signature — reject.
-    // In production this is always enforced. In dev, set STRIPE_WEBHOOK_DEV_BYPASS=true to skip.
     console.error(
       "Webhook rejected: missing signature or webhook secret. " +
         "Set STRIPE_WEBHOOK_SECRET, or set STRIPE_WEBHOOK_DEV_BYPASS=true for local dev.",
@@ -134,17 +130,18 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     artworkSku: artwork.sku,
   });
 
-  // Mark artwork SOLD (regardless of prior status — payment is confirmed)
+  // Mark artwork SOLD
   await db
     .update(artworksTable)
     .set({ status: "SOLD" })
     .where(eq(artworksTable.id, artworkId));
 
-  // Send confirmation email (non-fatal if it fails)
+  // Fetch tenant (needed for email + iFramer)
   const tenant = await db.query.tenantsTable.findFirst({
     where: eq(tenantsTable.id, tenantId),
   });
 
+  // Send confirmation email (non-fatal)
   if (buyerEmail && tenant) {
     await sendOrderConfirmation({
       buyerEmail,
@@ -155,18 +152,80 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       tenantName: tenant.businessName,
     });
   }
+
+  // ── iFramer job creation ───────────────────────────────────────────────────
+  // Triggered only for FRAMING_JOB orders where the tenant has an iFramer account.
+  if (fulfillmentType === "FRAMING_JOB" && tenant?.iframerAccountId) {
+    await createIFramerJobForOrder({
+      orderId: order.id,
+      iframerAccountId: tenant.iframerAccountId,
+      artwork: {
+        title: artwork.title,
+        id: artwork.id,
+        dimensionsW: artwork.dimensionsW,
+        dimensionsH: artwork.dimensionsH,
+        condition: artwork.condition,
+      },
+    });
+  }
+}
+
+async function createIFramerJobForOrder({
+  orderId,
+  iframerAccountId,
+  artwork,
+}: {
+  orderId: string;
+  iframerAccountId: string;
+  artwork: {
+    title: string;
+    id: string;
+    dimensionsW: number | null;
+    dimensionsH: number | null;
+    condition: string | null;
+  };
+}) {
+  try {
+    const result = await createIFramerJob({
+      accountId: iframerAccountId,
+      artworkTitle: artwork.title,
+      // Convert mm → metres (iFramer API expects metres)
+      widthM: artwork.dimensionsW != null ? artwork.dimensionsW / 1000 : null,
+      heightM: artwork.dimensionsH != null ? artwork.dimensionsH / 1000 : null,
+      condition: artwork.condition,
+      sourceOrderId: orderId,
+      sourceArtworkId: artwork.id,
+    });
+
+    await db
+      .update(ordersTable)
+      .set({ iframerJobId: result.jobId, iframerJobError: null })
+      .where(eq(ordersTable.id, orderId));
+
+    console.log(`iFramer job created: ${result.jobId} for order ${orderId}`);
+  } catch (err) {
+    const message =
+      err instanceof IFramerError
+        ? err.message
+        : `Unexpected error: ${(err as any)?.message ?? String(err)}`;
+
+    console.error(`iFramer job creation failed for order ${orderId}:`, message);
+
+    await db
+      .update(ordersTable)
+      .set({ iframerJobError: message })
+      .where(eq(ordersTable.id, orderId));
+  }
 }
 
 async function handleCheckoutExpired(session: Stripe.Checkout.Session) {
-  // If a session expires, revert RESERVED artwork back to AVAILABLE
   const { artworkId, tenantId } = session.metadata ?? {};
   if (!artworkId || !tenantId) return;
 
-  // Only revert if no paid order was created for this session
   const paidOrder = await db.query.ordersTable.findFirst({
     where: eq(ordersTable.stripeSessionId, session.id),
   });
-  if (paidOrder) return; // webhook ordering edge case — leave SOLD
+  if (paidOrder) return;
 
   await db
     .update(artworksTable)

@@ -3,11 +3,11 @@ import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { db } from "@workspace/db";
-import { ordersTable, orderItemsTable } from "@workspace/db";
+import { ordersTable, orderItemsTable, tenantsTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { formatPrice } from "@/lib/tenant-cache";
 import { markFulfilled, markCancelled, saveTrackingNote } from "./actions";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, CheckCircle2, AlertCircle, Clock } from "lucide-react";
 
 export const metadata: Metadata = { title: "Order Detail" };
 
@@ -21,7 +21,7 @@ const STATUS_STYLES: Record<string, { label: string; cls: string }> = {
 const FULFILLMENT_LABELS: Record<string, string> = {
   SHIP: "Ship to buyer",
   PICKUP: "Buyer collects in person",
-  FRAMING_JOB: "Custom framing job (stays with framer)",
+  FRAMING_JOB: "Custom framing job",
 };
 
 export default async function OrderDetailPage({
@@ -34,21 +34,29 @@ export default async function OrderDetailPage({
 
   const { id } = await params;
 
-  const order = await db.query.ordersTable.findFirst({
-    where: and(
-      eq(ordersTable.id, id),
-      eq(ordersTable.tenantId, session.tenantId),
-    ),
-  });
-  if (!order) notFound();
+  const [order, items, tenant] = await Promise.all([
+    db.query.ordersTable.findFirst({
+      where: and(
+        eq(ordersTable.id, id),
+        eq(ordersTable.tenantId, session.tenantId),
+      ),
+    }),
+    db.query.orderItemsTable.findMany({
+      where: eq(orderItemsTable.orderId, id),
+    }),
+    db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, session.tenantId),
+      columns: { iframerAccountId: true },
+    }),
+  ]);
 
-  const items = await db.query.orderItemsTable.findMany({
-    where: eq(orderItemsTable.orderId, id),
-  });
+  if (!order) notFound();
 
   const badge = STATUS_STYLES[order.status];
   const canFulfil = order.status === "PAID";
   const canCancel = order.status === "PAID" || order.status === "PENDING";
+  const isFramingJob = order.fulfillmentType === "FRAMING_JOB";
+  const hasIFramer = Boolean(tenant?.iframerAccountId);
 
   return (
     <div className="px-8 py-8 max-w-3xl">
@@ -80,9 +88,7 @@ export default async function OrderDetailPage({
           </p>
         </div>
         {badge && (
-          <span
-            className={`rounded-full px-3 py-1 text-sm font-semibold ${badge.cls}`}
-          >
+          <span className={`rounded-full px-3 py-1 text-sm font-semibold ${badge.cls}`}>
             {badge.label}
           </span>
         )}
@@ -109,10 +115,7 @@ export default async function OrderDetailPage({
           <h2 className="text-sm font-semibold text-stone-900 mb-4">Items</h2>
           <div className="divide-y divide-stone-100">
             {items.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-center justify-between py-3"
-              >
+              <div key={item.id} className="flex items-center justify-between py-3">
                 <div>
                   <p className="font-medium text-stone-900">{item.artworkTitle}</p>
                   {item.artworkSku && (
@@ -139,6 +142,60 @@ export default async function OrderDetailPage({
             </p>
           )}
         </div>
+
+        {/* ── iFramer job status (FRAMING_JOB orders only) ─────────────────── */}
+        {isFramingJob && hasIFramer && (
+          <div className="rounded-xl border border-stone-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-stone-900 mb-4">
+              iFramer job
+            </h2>
+
+            {order.iframerJobId ? (
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-emerald-700">
+                    Job created successfully
+                  </p>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    iFramer job ID:{" "}
+                    <span className="font-mono text-stone-700">
+                      {order.iframerJobId}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            ) : order.iframerJobError ? (
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-red-700">
+                      Job creation failed
+                    </p>
+                    <p className="text-xs text-stone-500 mt-1 leading-relaxed break-words">
+                      {order.iframerJobError}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs text-stone-400 pl-8">
+                  Check that{" "}
+                  <span className="font-mono">IFRAMER_API_BASE_URL</span> and{" "}
+                  <span className="font-mono">IFRAMER_API_KEY</span> are
+                  configured and retry by manually creating the job in iFramer.
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <Clock className="h-5 w-5 text-stone-400 shrink-0" />
+                <p className="text-sm text-stone-500">
+                  Job creation pending — this updates automatically when the order
+                  webhook is processed.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Tracking note */}
         <div className="rounded-xl border border-stone-200 bg-white p-6">

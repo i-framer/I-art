@@ -38,6 +38,9 @@ export const ordersTable = pgTable("order", {
   totalCents: integer("total_cents").notNull(),
   applicationFeeCents: integer("application_fee_cents"),
   trackingNote: text("tracking_note"),
+  // iFramer integration (FRAMING_JOB orders only)
+  iframerJobId: text("iframer_job_id"),
+  iframerJobError: text("iframer_job_error"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
