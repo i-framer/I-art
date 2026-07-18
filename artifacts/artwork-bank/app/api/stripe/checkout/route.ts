@@ -3,7 +3,11 @@ import { db } from "@workspace/db";
 import { artworksTable, artworkImagesTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { getTenantBySlug } from "@/lib/tenant-cache";
-import { getStripeClient, calcApplicationFee } from "@/lib/stripe";
+import {
+  getStripeClient,
+  calcApplicationFee,
+  StripeNotConfiguredError,
+} from "@/lib/stripe";
 import { getServeUrl } from "@/lib/object-storage";
 
 export const dynamic = "force-dynamic";
@@ -102,7 +106,19 @@ export async function POST(request: Request) {
         ? requestOrigin
         : platformBaseUrl;
 
-    const stripe = await getStripeClient();
+    let stripe;
+    try {
+      stripe = await getStripeClient();
+    } catch (err) {
+      if (err instanceof StripeNotConfiguredError) {
+        console.error("Checkout unavailable — Stripe not configured:", err.message);
+        return NextResponse.json(
+          { error: "Payments are not configured for this gallery. Please try again later or contact the gallery directly." },
+          { status: 503 },
+        );
+      }
+      throw err;
+    }
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],

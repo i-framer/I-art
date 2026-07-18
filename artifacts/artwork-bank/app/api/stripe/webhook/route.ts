@@ -8,7 +8,11 @@ import {
   tenantsTable,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import { getStripeClient, getStripeWebhookSecret } from "@/lib/stripe";
+import {
+  getStripeClient,
+  getStripeWebhookSecret,
+  StripeNotConfiguredError,
+} from "@/lib/stripe";
 import { sendOrderConfirmation } from "@/lib/email";
 import { createIFramerJob, IFramerError } from "@/lib/iframer";
 import type Stripe from "stripe";
@@ -28,8 +32,21 @@ export async function POST(request: Request) {
   let event: Stripe.Event;
 
   if (webhookSecret && sig) {
+    let stripe;
     try {
-      const stripe = await getStripeClient();
+      stripe = await getStripeClient();
+    } catch (err: any) {
+      if (err instanceof StripeNotConfiguredError) {
+        console.error("Webhook rejected — Stripe not configured:", err.message);
+        return NextResponse.json(
+          { error: "Payments are not configured." },
+          { status: 503 },
+        );
+      }
+      console.error("Webhook Stripe client error:", err?.message ?? err);
+      return NextResponse.json({ error: "Stripe unavailable" }, { status: 503 });
+    }
+    try {
       event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
     } catch (err: any) {
       console.error("Webhook signature verification failed:", err.message);
