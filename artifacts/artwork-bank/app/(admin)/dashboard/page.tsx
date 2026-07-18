@@ -80,11 +80,16 @@ export default async function DashboardPage() {
         <Store className="h-5 w-5 text-amber-600 shrink-0" />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-amber-900">
-            Your storefront URL
+            Your storefront
           </p>
-          <p className="text-sm text-amber-700 truncate">
-            <span className="font-mono">{tenant.slug}.i-art.com.au</span>
-          </p>
+          <Link
+            href={`/t/${tenant.slug}`}
+            target="_blank"
+            className="text-sm text-amber-700 truncate hover:underline font-mono"
+          >
+            /t/{tenant.slug}
+          </Link>
+          <span className="ml-3 text-xs text-amber-500">(production: {tenant.slug}.i-art.com.au)</span>
         </div>
         <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium shrink-0">
           {tenant.storefrontEnabled ? "Active" : "Disabled"}
