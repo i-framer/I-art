@@ -19,7 +19,6 @@ export async function POST(request: Request) {
   const body = await request.text();
   const sig = (await headers()).get("stripe-signature");
 
-  const stripe = await getStripeClient();
   const webhookSecret = await getStripeWebhookSecret();
 
   const isProd = process.env.NODE_ENV === "production";
@@ -30,6 +29,7 @@ export async function POST(request: Request) {
 
   if (webhookSecret && sig) {
     try {
+      const stripe = await getStripeClient();
       event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
     } catch (err: any) {
       console.error("Webhook signature verification failed:", err.message);
