@@ -21,27 +21,49 @@ export async function POST(request: Request) {
   const stripe = await getStripeClient();
   const webhookSecret = await getStripeWebhookSecret();
 
+  const isProd = process.env.NODE_ENV === "production";
+  // Dev-mode bypass is only allowed when explicitly opted in AND not in production
+  const devBypass =
+    !isProd && process.env.STRIPE_WEBHOOK_DEV_BYPASS === "true";
+
   let event: Stripe.Event;
 
   if (webhookSecret && sig) {
+    // Always verify when we have both a secret and a signature
     try {
       event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
     } catch (err: any) {
       console.error("Webhook signature verification failed:", err.message);
       return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
     }
-  } else {
-    // Development: skip signature verification
+  } else if (devBypass) {
+    // Development only: skip verification when STRIPE_WEBHOOK_DEV_BYPASS=true
     try {
       event = JSON.parse(body) as Stripe.Event;
     } catch {
       return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
+  } else {
+    // Missing secret or signature — reject.
+    // In production this is always enforced. In dev, set STRIPE_WEBHOOK_DEV_BYPASS=true to skip.
+    console.error(
+      "Webhook rejected: missing signature or webhook secret. " +
+        "Set STRIPE_WEBHOOK_SECRET, or set STRIPE_WEBHOOK_DEV_BYPASS=true for local dev.",
+    );
+    return NextResponse.json(
+      {
+        error:
+          "Webhook signature required. Configure STRIPE_WEBHOOK_SECRET or use the Stripe CLI for local testing.",
+      },
+      { status: 400 },
+    );
   }
 
   try {
     if (event.type === "checkout.session.completed") {
       await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session);
+    } else if (event.type === "checkout.session.expired") {
+      await handleCheckoutExpired(event.data.object as Stripe.Checkout.Session);
     }
   } catch (err: any) {
     console.error("Webhook handler error:", err);
@@ -64,6 +86,20 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     where: eq(ordersTable.stripeSessionId, session.id),
   });
   if (existing) return;
+
+  // Validate artwork belongs to the stated tenant before mutating anything
+  const artwork = await db.query.artworksTable.findFirst({
+    where: and(
+      eq(artworksTable.id, artworkId),
+      eq(artworksTable.tenantId, tenantId),
+    ),
+  });
+  if (!artwork) {
+    console.error(
+      `Webhook integrity error: artwork ${artworkId} not found for tenant ${tenantId}`,
+    );
+    return;
+  }
 
   const buyerEmail =
     session.customer_details?.email ?? (session as any).customer_email ?? "";
@@ -88,16 +124,6 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     })
     .returning();
 
-  // Fetch artwork snapshot
-  const artwork = await db.query.artworksTable.findFirst({
-    where: eq(artworksTable.id, artworkId),
-  });
-
-  if (!artwork) {
-    console.error("Artwork not found during webhook:", artworkId);
-    return;
-  }
-
   // Create order item
   await db.insert(orderItemsTable).values({
     orderId: order.id,
@@ -108,7 +134,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     artworkSku: artwork.sku,
   });
 
-  // Mark artwork SOLD
+  // Mark artwork SOLD (regardless of prior status — payment is confirmed)
   await db
     .update(artworksTable)
     .set({ status: "SOLD" })
@@ -129,4 +155,27 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       tenantName: tenant.businessName,
     });
   }
+}
+
+async function handleCheckoutExpired(session: Stripe.Checkout.Session) {
+  // If a session expires, revert RESERVED artwork back to AVAILABLE
+  const { artworkId, tenantId } = session.metadata ?? {};
+  if (!artworkId || !tenantId) return;
+
+  // Only revert if no paid order was created for this session
+  const paidOrder = await db.query.ordersTable.findFirst({
+    where: eq(ordersTable.stripeSessionId, session.id),
+  });
+  if (paidOrder) return; // webhook ordering edge case — leave SOLD
+
+  await db
+    .update(artworksTable)
+    .set({ status: "AVAILABLE" })
+    .where(
+      and(
+        eq(artworksTable.id, artworkId),
+        eq(artworksTable.tenantId, tenantId),
+        eq(artworksTable.status, "RESERVED"),
+      ),
+    );
 }
