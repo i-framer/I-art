@@ -1,0 +1,2 @@
+- [Next.js in Vite Monorepo](nextjs-in-vite-monorepo.md) — key config to transpile workspace TS packages in a pnpm Vite-first monorepo
+- [Iron-Session Next.js Auth Pattern](iron-session-nextjs.md) — session read/write pattern for Next.js 15 App Router with iron-session v8

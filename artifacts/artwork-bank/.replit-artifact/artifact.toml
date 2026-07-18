@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Artwork Bank"
+version = "1.0.0"
+id = "artifacts/artwork-bank"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24410
+
+[services.development]
+run = "pnpm --filter @workspace/artwork-bank run dev"
+
+[services.production.build]
+args = ["pnpm", "--filter", "@workspace/artwork-bank", "run", "build"]
+
+[services.production.build.env]
+NODE_ENV = "production"
+
+[services.production.run]
+args = ["pnpm", "--filter", "@workspace/artwork-bank", "run", "start"]
+
+[services.production.run.env]
+PORT = "24410"
+NODE_ENV = "production"
+
+[services.env]
+PORT = "24410"
+BASE_PATH = "/"
