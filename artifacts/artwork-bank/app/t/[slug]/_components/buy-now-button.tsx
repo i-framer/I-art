@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { formatPrice } from "@/lib/tenant-cache";
+import { formatPrice } from "@/lib/format";
 
 type Props = {
   artworkId: string;

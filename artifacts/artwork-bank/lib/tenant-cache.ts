@@ -30,26 +30,6 @@ export const getTenantByCustomDomain = cache(async (domain: string) => {
 export const CNAME_TARGET =
   process.env.CNAME_TARGET ?? "cname.i-art.com.au";
 
-/**
- * Format a price stored in cents into a display string (AUD).
- */
-export function formatPrice(cents: number): string {
-  return `$${(cents / 100).toLocaleString("en-AU", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-/**
- * Format dimensions in mm into a readable string (e.g. "900 × 600 mm").
- */
-export function formatDimensions(
-  w: number | null,
-  h: number | null,
-  d: number | null,
-): string | null {
-  if (!w && !h) return null;
-  const parts = [w, h].filter(Boolean).map((v) => `${v}`);
-  if (d) parts.push(`${d}`);
-  return parts.join(" × ") + " mm";
-}
+// Re-export pure formatting utilities so existing server-component imports
+// continue to work without pulling the DB into client bundles.
+export { formatPrice, formatDimensions } from "./format";
