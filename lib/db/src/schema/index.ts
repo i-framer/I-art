@@ -2,3 +2,7 @@ export * from "./tenant";
 export * from "./user";
 export * from "./tenantUser";
 export * from "./staffInvite";
+export * from "./representedArtist";
+export * from "./artwork";
+export * from "./artworkImage";
+export * from "./artworkCategory";

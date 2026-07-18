@@ -16,7 +16,7 @@ import {
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/catalog", label: "Catalog", icon: Image, soon: true },
+  { href: "/catalog", label: "Catalog", icon: Image },
   { href: "/orders", label: "Orders", icon: ShoppingBag, soon: true },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
