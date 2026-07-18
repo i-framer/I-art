@@ -1,0 +1,304 @@
+# Artwork Bank — standalone multi-tenant marketplace
+
+## What this is
+
+A multi-tenant SaaS where each tenant is either an **independent artist** or a
+**framing business**, and each gets their own storefront to list and sell
+artwork online — on a subdomain we provide, or their own custom domain.
+iFramer customers get it as an add-on with a data hook back into their jobs;
+everyone else just uses it standalone.
+
+Two tenant types, same underlying schema:
+
+- **ARTIST tenant** — an individual selling their own work directly.
+- **FRAMER tenant** — a framing business listing its own stock and/or
+  artwork it represents on consignment from third-party artists. May
+  optionally be linked to an iFramer account.
+
+## Recommended stack
+
+- **Next.js** (App Router) — one app serves both the public storefronts
+  (needs SSR/SSG for SEO — buyers find art through search, not just direct
+  links) and the tenant admin dashboard.
+- **Postgres** + **Prisma** — standard pairing with the hosting pattern
+  below; also gives you JSON columns if artwork attributes get flexible
+  later.
+- **Stripe Connect** (Express accounts) — required because this is a
+  marketplace: money needs to flow to individual artists/framers, not just
+  to you. Stripe Checkout + destination charges with an
+  `application_fee_amount` is the standard pattern.
+- **Domain routing**: wildcard subdomain (`{slug}.yourplatform.com`) by
+  default, custom domain via CNAME + verification for tenants who want one.
+  Next.js middleware reads the `Host` header on every request, looks up the
+  tenant by subdomain or custom domain, and rewrites to a tenant-scoped
+  route. This is the same pattern Vercel's own "Platforms" starter kit uses
+  — worth looking at directly if Replit's agent needs a reference.
+
+## Data model (Prisma / Postgres)
+
+```prisma
+enum TenantType {
+  ARTIST
+  FRAMER
+}
+
+model Tenant {
+  id                    String   @id @default(cuid())
+  type                  TenantType
+  businessName          String
+  slug                  String   @unique   // {slug}.yourplatform.com
+  customDomain          String?  @unique
+  customDomainVerified  Boolean  @default(false)
+  storefrontEnabled     Boolean  @default(true)
+  logoUrl               String?
+  themeColor            String?
+  aboutText             String?  @db.Text
+
+  stripeAccountId       String?  // Stripe Connect Express account
+  iframerAccountId      String?  // set only for linked iFramer customers
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  users                 TenantUser[]
+  artists               RepresentedArtist[]
+  artworks              Artwork[]
+  categories            ArtworkCategory[]
+  orders                Order[]
+
+  @@map("tenant")
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String
+  createdAt    DateTime     @default(now())
+
+  tenants      TenantUser[]
+
+  @@map("app_user")
+}
+
+model TenantUser {
+  tenantId String
+  userId   String
+  role     String  @default("owner") // owner | staff
+  tenant   Tenant  @relation(fields: [tenantId], references: [id])
+  user     User    @relation(fields: [userId], references: [id])
+
+  @@id([tenantId, userId])
+  @@map("tenant_user")
+}
+
+// Only used by FRAMER tenants representing third-party artists on
+// consignment. An ARTIST tenant's own identity lives on Tenant itself —
+// no RepresentedArtist row needed for their own work.
+model RepresentedArtist {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  name          String
+  bio           String?  @db.Text
+  commissionPct Decimal? @db.Decimal(5, 2)
+  active        Boolean  @default(true)
+
+  artworks      Artwork[]
+
+  @@map("represented_artist")
+}
+
+enum ArtworkCondition {
+  FRAGILE
+  POOR
+  AVERAGE
+  GOOD
+  EXCELLENT
+}
+
+enum ArtworkStatus {
+  IN_STOCK
+  ON_DISPLAY
+  SOLD
+  RETURNED
+  FRAMED_JOB
+}
+
+model Artwork {
+  id                  String             @id @default(cuid())
+  tenantId            String
+  tenant              Tenant             @relation(fields: [tenantId], references: [id])
+  representedArtistId String?            // null for ARTIST tenants' own work
+  representedArtist   RepresentedArtist? @relation(fields: [representedArtistId], references: [id])
+
+  sku                 String
+  title               String
+  description         String?            @db.Text
+  medium              String?
+  widthM              Decimal            @db.Decimal(10, 4)
+  heightM             Decimal            @db.Decimal(10, 4)
+  condition           ArtworkCondition   @default(GOOD)
+
+  retailPrice         Decimal            @db.Decimal(10, 2)
+  status              ArtworkStatus      @default(IN_STOCK)
+  showInGallery       Boolean            @default(false)
+
+  images              ArtworkImage[]
+  categories          ArtworkCategoryOnArtwork[]
+  orderItems          OrderItem[]
+
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@unique([tenantId, sku])
+  @@map("artwork")
+}
+
+model ArtworkImage {
+  id        String  @id @default(cuid())
+  artworkId String
+  artwork   Artwork @relation(fields: [artworkId], references: [id])
+  url       String
+  isPrimary Boolean @default(false)
+  sortOrder Int     @default(0)
+
+  @@map("artwork_image")
+}
+
+model ArtworkCategory {
+  id       String                     @id @default(cuid())
+  tenantId String
+  tenant   Tenant                     @relation(fields: [tenantId], references: [id])
+  name     String
+  artworks ArtworkCategoryOnArtwork[]
+
+  @@unique([tenantId, name])
+  @@map("artwork_category")
+}
+
+model ArtworkCategoryOnArtwork {
+  artworkId  String
+  categoryId String
+  artwork    Artwork         @relation(fields: [artworkId], references: [id])
+  category   ArtworkCategory @relation(fields: [categoryId], references: [id])
+
+  @@id([artworkId, categoryId])
+  @@map("artwork_category_on_artwork")
+}
+
+enum FulfillmentType {
+  SHIP           // artist ships direct to buyer
+  PICKUP         // buyer collects from framer's shop
+  FRAMING_JOB    // piece stays with framer, converted into a framing job
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  FULFILLED
+  CANCELLED
+  REFUNDED
+}
+
+model Order {
+  id              String          @id @default(cuid())
+  tenantId        String
+  tenant          Tenant          @relation(fields: [tenantId], references: [id])
+  customerEmail   String
+  customerName    String?
+  shippingAddress String?         @db.Text
+  fulfillmentType FulfillmentType
+  status          OrderStatus     @default(PENDING)
+  totalAmount     Decimal         @db.Decimal(10, 2)
+  stripePaymentIntentId String?
+
+  items           OrderItem[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@map("order")
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id])
+  artworkId String
+  artwork   Artwork @relation(fields: [artworkId], references: [id])
+  price     Decimal @db.Decimal(10, 2)
+
+  @@map("order_item")
+}
+```
+
+Notes on the design:
+
+- Every tenant-owned table carries `tenantId` directly (not just inherited
+  through a join) — this is what makes it safe to write a single "always
+  filter by tenant" rule into every query and avoid cross-tenant data leaks.
+- `RepresentedArtist` only exists to let a FRAMER tenant track consignment
+  splits for artists they represent. An ARTIST tenant's own work just has
+  `representedArtistId = null`.
+- `fulfillmentType` on `Order` is the key nuance: an artist's sale usually
+  ships; a framer's sale might just mean the piece is now committed to a
+  framing job and never leaves the shop.
+
+## Domain & storefront routing
+
+1. Default: `{tenant.slug}.yourplatform.com` — wildcard DNS + wildcard TLS
+   cert (Cloudflare or your host's wildcard cert support).
+2. Custom domain: tenant enters `www.theirdomain.com`, adds a CNAME to a
+   fixed target you give them, app polls/checks DNS, flips
+   `customDomainVerified`, TLS is provisioned automatically (Vercel and
+   similar platforms handle this per-domain; on a raw VPS you'd want
+   Caddy or Traefik with on-demand TLS).
+3. Middleware on every request reads `Host`, resolves the `Tenant` by
+   subdomain or custom domain, and rewrites to `/_sites/[tenantId]/...`
+   internally. Tenant admin dashboard lives on its own fixed host
+   (`app.yourplatform.com`), unaffected by tenant routing.
+
+## iFramer integration (later phase, not now)
+
+For linked tenants (`tenant.iframerAccountId` set), the hook is: when a
+buyer picks a piece with `fulfillmentType = FRAMING_JOB`, call an iFramer
+API endpoint to create a job pre-filled from the artwork's
+width/height/condition — mirroring the `ArtworkUnit/Width/Height/Condition`
+fields already on iFramer's `job` table. Keep this as a thin webhook/API
+call; don't couple the two databases directly.
+
+## Phased build order
+
+1. **Tenancy + auth** — Tenant, User, TenantUser, subdomain routing working
+   end to end (create a tenant, log in, land on your own subdomain).
+2. **Artwork catalog CRUD** — Artwork, ArtworkImage, ArtworkCategory,
+   RepresentedArtist, tenant-scoped admin dashboard to manage inventory.
+3. **Public storefront** — SSR pages per tenant, gallery browse, artwork
+   detail pages, category filtering.
+4. **Checkout & payments** — Stripe Connect onboarding per tenant, Stripe
+   Checkout, Order/OrderItem, webhook to mark orders paid.
+5. **Custom domains** — CNAME verification flow, TLS provisioning.
+6. **iFramer integration** — the webhook described above, only for linked
+   tenants.
+
+## Decisions made
+
+- **Hosting: Vercel**, kept fully separate from the existing AWS EC2 boxes
+  running iFramer v1 (ASP.NET/MySQL) and iFramer v2. There's no shared
+  infrastructure or database between this app and either iFramer version —
+  it just talks to iFramer's API later, for linked tenants only. This also
+  means moving off the current pattern of deploying new Replit-built
+  features as subdomains on a separate AWS server (`i-framer.co`) — Vercel
+  handles wildcard subdomain + custom domain TLS provisioning natively,
+  which is exactly the manual nginx/certbot work that pattern would
+  otherwise require per tenant.
+- **Root domain: `i-art.com.au`** (confirmed available). Tenant storefronts
+  become `{slug}.i-art.com.au` by default, with custom domain as an
+  upgrade option.
+
+## Open questions to settle before scaffolding
+
+- Does an artist tenant ever need multiple staff logins, or is it always a
+  single person? (Affects whether `TenantUser` needs to support invites
+  from day one.)
+- Any print-on-demand angle (multiple sizes/editions of one piece) or is
+  every artwork a unique, one-off original?
