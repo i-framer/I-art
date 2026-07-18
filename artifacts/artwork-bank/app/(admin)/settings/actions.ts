@@ -101,6 +101,54 @@ export async function createInvite(
   return { success: true, inviteUrl: `/invite/${token}`, email, error: "" };
 }
 
+// ---------------------------------------------------------------------------
+// Stripe Connect onboarding
+// ---------------------------------------------------------------------------
+export async function startStripeOnboarding() {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  const tenant = await db.query.tenantsTable.findFirst({
+    where: eq(tenantsTable.id, session.tenantId),
+  });
+  if (!tenant) redirect("/login");
+
+  const { getStripeClient } = await import("@/lib/stripe");
+
+  const stripe = await getStripeClient();
+
+  let accountId = tenant.stripeAccountId;
+  if (!accountId) {
+    const account = await stripe.accounts.create({
+      type: "express",
+      capabilities: {
+        card_payments: { requested: true },
+        transfers: { requested: true },
+      },
+      country: "AU",
+    });
+    accountId = account.id;
+    await db
+      .update(tenantsTable)
+      .set({ stripeAccountId: accountId })
+      .where(eq(tenantsTable.id, tenant.id));
+  }
+
+  const replitDomain = process.env.REPLIT_DOMAINS?.split(",")[0];
+  const baseUrl = replitDomain
+    ? `https://${replitDomain}`
+    : "http://localhost:3000";
+
+  const accountLink = await stripe.accountLinks.create({
+    account: accountId,
+    refresh_url: `${baseUrl}/settings?stripe=refresh`,
+    return_url: `${baseUrl}/settings?stripe=connected`,
+    type: "account_onboarding",
+  });
+
+  redirect(accountLink.url);
+}
+
 export async function removeTeamMember(userId: string) {
   const session = await getSession();
   if (!session.userId) return;

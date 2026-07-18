@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const ADMIN_PATHS = ["/dashboard", "/settings"];
+const ADMIN_PATHS = ["/dashboard", "/settings", "/orders", "/catalog"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -30,5 +30,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/settings/:path*"],
+  matcher: ["/dashboard/:path*", "/settings/:path*", "/orders/:path*", "/catalog/:path*"],
 };

@@ -17,7 +17,7 @@ import {
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/catalog", label: "Catalog", icon: Image },
-  { href: "/orders", label: "Orders", icon: ShoppingBag, soon: true },
+  { href: "/orders", label: "Orders", icon: ShoppingBag },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -67,23 +67,14 @@ export default async function AdminLayout({
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5">
-          {navItems.map(({ href, label, icon: Icon, soon }) => (
+          {navItems.map(({ href, label, icon: Icon }) => (
             <Link
               key={href}
-              href={soon ? "#" : href}
-              className={`group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                soon
-                  ? "text-stone-600 cursor-default"
-                  : "text-stone-300 hover:bg-stone-800 hover:text-white"
-              }`}
+              href={href}
+              className="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-stone-300 hover:bg-stone-800 hover:text-white transition-colors"
             >
               <Icon className="h-4 w-4 shrink-0" />
               <span>{label}</span>
-              {soon && (
-                <span className="ml-auto text-[10px] text-stone-600 font-normal">
-                  soon
-                </span>
-              )}
             </Link>
           ))}
         </nav>

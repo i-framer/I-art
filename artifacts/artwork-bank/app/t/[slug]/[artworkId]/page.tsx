@@ -11,9 +11,11 @@ import { and, asc, eq } from "drizzle-orm";
 import { getTenantBySlug, formatPrice, formatDimensions } from "@/lib/tenant-cache";
 import { getServeUrl } from "@/lib/object-storage";
 import { ImageCarousel } from "../_components/image-carousel";
+import { BuyNowButton } from "../_components/buy-now-button";
 
 type Props = {
   params: Promise<{ slug: string; artworkId: string }>;
+  searchParams: Promise<{ cancelled?: string }>;
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -55,8 +57,9 @@ const CONDITION_LABELS: Record<string, string> = {
   POOR: "Poor",
 };
 
-export default async function ArtworkDetailPage({ params }: Props) {
+export default async function ArtworkDetailPage({ params, searchParams }: Props) {
   const { slug, artworkId } = await params;
+  const { cancelled } = await searchParams;
   const tenant = await getTenantBySlug(slug);
   if (!tenant) notFound();
 
@@ -108,6 +111,13 @@ export default async function ArtworkDetailPage({ params }: Props) {
         <span className="text-stone-300">/</span>
         <span className="text-stone-700 truncate max-w-xs">{artwork.title}</span>
       </nav>
+
+      {/* Checkout cancelled flash */}
+      {cancelled && (
+        <div className="mb-6 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700">
+          Your checkout was cancelled — no payment was taken.
+        </div>
+      )}
 
       {/* Two-column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
@@ -173,14 +183,13 @@ export default async function ArtworkDetailPage({ params }: Props) {
                 Currently reserved — contact us for availability
               </div>
             ) : (
-              <button
-                disabled
-                title="Checkout coming soon"
-                className="w-full rounded-xl py-4 text-white text-sm font-semibold cursor-not-allowed opacity-70"
-                style={{ backgroundColor: themeColor }}
-              >
-                Add to Cart — Coming Soon
-              </button>
+              <BuyNowButton
+                artworkId={artworkId}
+                slug={slug}
+                tenantType={tenant.type}
+                price={artwork.price!}
+                themeColor={themeColor}
+              />
             )}
           </div>
 
