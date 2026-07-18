@@ -205,11 +205,19 @@ export async function startStripeOnboarding() {
 
   const { getStripeClient } = await import("@/lib/stripe");
 
-  const stripe = await getStripeClient();
+  let stripe;
+  try {
+    stripe = await getStripeClient();
+  } catch {
+    redirect("/settings?stripe=not_configured");
+  }
+
+  // stripe is always defined here (redirect() above never returns)
+  const stripeClient = stripe!;
 
   let accountId = tenant.stripeAccountId;
   if (!accountId) {
-    const account = await stripe.accounts.create({
+    const account = await stripeClient.accounts.create({
       type: "express",
       capabilities: {
         card_payments: { requested: true },
@@ -229,7 +237,7 @@ export async function startStripeOnboarding() {
     ? `https://${replitDomain}`
     : "http://localhost:3000";
 
-  const accountLink = await stripe.accountLinks.create({
+  const accountLink = await stripeClient.accountLinks.create({
     account: accountId,
     refresh_url: `${baseUrl}/settings?stripe=refresh`,
     return_url: `${baseUrl}/settings?stripe=connected`,

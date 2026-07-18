@@ -99,6 +99,11 @@ export default async function SettingsPage({
           The Stripe session expired — please reconnect to continue setup.
         </div>
       )}
+      {stripe === "not_configured" && (
+        <div className="mb-6 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          Stripe is not connected. Add the Stripe integration in the Integrations tab first.
+        </div>
+      )}
       {domain_status === "saved" && (
         <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
           Domain saved. Add the CNAME record below, then click &ldquo;Verify&rdquo;.
