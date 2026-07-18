@@ -5,16 +5,31 @@ import { getSession } from "@/lib/auth";
 import { db } from "@workspace/db";
 import { tenantsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { updateTenantSettings, startStripeOnboarding } from "./actions";
-import { Users, ExternalLink, CheckCircle2, AlertCircle, CreditCard } from "lucide-react";
+import {
+  updateTenantSettings,
+  startStripeOnboarding,
+  verifyCustomDomain,
+  removeCustomDomain,
+} from "./actions";
+import {
+  Users,
+  ExternalLink,
+  CheckCircle2,
+  AlertCircle,
+  CreditCard,
+  Globe,
+  Copy,
+} from "lucide-react";
 import { getStripeClient } from "@/lib/stripe";
+import { CNAME_TARGET } from "@/lib/tenant-cache";
+import { DomainForm } from "./_components/domain-form";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ saved?: string; stripe?: string }>;
+  searchParams: Promise<{ saved?: string; stripe?: string; domain_status?: string }>;
 }) {
   const session = await getSession();
   if (!session.userId) redirect("/login");
@@ -24,9 +39,9 @@ export default async function SettingsPage({
   });
   if (!tenant) redirect("/login");
 
-  const { saved, stripe } = await searchParams;
+  const { saved, stripe, domain_status } = await searchParams;
 
-  // Check Stripe Connect status
+  // Stripe Connect status
   type StripeStatus = "not_connected" | "pending" | "active";
   let stripeStatus: StripeStatus = "not_connected";
   if (tenant.stripeAccountId) {
@@ -51,7 +66,7 @@ export default async function SettingsPage({
         </p>
       </div>
 
-      {/* Tab-like nav */}
+      {/* Tabs */}
       <div className="flex gap-1 mb-8 border-b border-stone-200">
         <Link
           href="/settings"
@@ -68,7 +83,7 @@ export default async function SettingsPage({
         </Link>
       </div>
 
-      {/* Flash messages */}
+      {/* ── Flash messages ─────────────────────────────────────────────────── */}
       {saved && (
         <div className="mb-6 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-700">
           Settings saved successfully.
@@ -84,19 +99,29 @@ export default async function SettingsPage({
           The Stripe session expired — please reconnect to continue setup.
         </div>
       )}
+      {domain_status === "saved" && (
+        <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
+          Domain saved. Add the CNAME record below, then click &ldquo;Verify&rdquo;.
+        </div>
+      )}
+      {domain_status === "verified" && (
+        <div className="mb-6 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-700">
+          Domain verified — your storefront is reachable at your custom domain!
+        </div>
+      )}
+      {domain_status === "unverified" && (
+        <div className="mb-6 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700">
+          Domain not yet verified. Make sure the CNAME record has been added and DNS has propagated (can take up to 48 hours).
+        </div>
+      )}
 
+      {/* ── Business details form ──────────────────────────────────────────── */}
       <form action={updateTenantSettings} className="space-y-6">
-        {/* Business info */}
         <div className="rounded-xl border border-stone-200 bg-white p-6 space-y-4">
-          <h2 className="text-sm font-semibold text-stone-900">
-            Business details
-          </h2>
+          <h2 className="text-sm font-semibold text-stone-900">Business details</h2>
 
           <div>
-            <label
-              htmlFor="businessName"
-              className="block text-sm font-medium text-stone-700 mb-1.5"
-            >
+            <label htmlFor="businessName" className="block text-sm font-medium text-stone-700 mb-1.5">
               Business / artist name
             </label>
             <input
@@ -111,7 +136,7 @@ export default async function SettingsPage({
 
           <div>
             <label className="block text-sm font-medium text-stone-700 mb-1.5">
-              Storefront URL
+              Default storefront URL
             </label>
             <div className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3.5 py-2.5">
               <span className="text-sm font-mono text-stone-600">
@@ -119,16 +144,11 @@ export default async function SettingsPage({
               </span>
               <ExternalLink className="h-3.5 w-3.5 text-stone-400 ml-auto" />
             </div>
-            <p className="mt-1 text-xs text-stone-400">
-              Slug cannot be changed after creation.
-            </p>
+            <p className="mt-1 text-xs text-stone-400">Slug cannot be changed after creation.</p>
           </div>
 
           <div>
-            <label
-              htmlFor="themeColor"
-              className="block text-sm font-medium text-stone-700 mb-1.5"
-            >
+            <label htmlFor="themeColor" className="block text-sm font-medium text-stone-700 mb-1.5">
               Brand colour
             </label>
             <div className="flex items-center gap-3">
@@ -139,21 +159,15 @@ export default async function SettingsPage({
                 defaultValue={tenant.themeColor ?? "#1c1917"}
                 className="h-10 w-16 cursor-pointer rounded-lg border border-stone-300 bg-white p-1"
               />
-              <span className="text-sm text-stone-500">
-                Used on your public storefront
-              </span>
+              <span className="text-sm text-stone-500">Used on your public storefront</span>
             </div>
           </div>
         </div>
 
-        {/* About */}
         <div className="rounded-xl border border-stone-200 bg-white p-6 space-y-4">
           <h2 className="text-sm font-semibold text-stone-900">About page</h2>
           <div>
-            <label
-              htmlFor="aboutText"
-              className="block text-sm font-medium text-stone-700 mb-1.5"
-            >
+            <label htmlFor="aboutText" className="block text-sm font-medium text-stone-700 mb-1.5">
               About text
             </label>
             <textarea
@@ -175,15 +189,106 @@ export default async function SettingsPage({
         </button>
       </form>
 
-      {/* ── Payments / Stripe Connect ────────────────────────────────── */}
+      {/* ── Custom Domain ─────────────────────────────────────────────────── */}
+      <div className="mt-8 rounded-xl border border-stone-200 bg-white p-6 space-y-5">
+        <div className="flex items-center gap-2">
+          <Globe className="h-4 w-4 text-stone-500" />
+          <h2 className="text-sm font-semibold text-stone-900">Custom domain</h2>
+        </div>
+
+        <p className="text-sm text-stone-500">
+          Point your own domain (e.g.{" "}
+          <span className="font-mono text-stone-700">www.yourname.com</span>) to
+          your gallery. Add the CNAME record shown below in your DNS settings,
+          then click Verify.
+        </p>
+
+        {/* Domain input form */}
+        <DomainForm currentDomain={tenant.customDomain} />
+
+        {/* CNAME instructions — always show so tenants know what to add */}
+        {tenant.customDomain && (
+          <>
+            <div className="rounded-xl border border-stone-200 bg-stone-50 p-4 space-y-3">
+              <p className="text-xs font-semibold text-stone-600 uppercase tracking-wider">
+                DNS record to add
+              </p>
+              <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
+                <span className="text-stone-500 font-medium">Type</span>
+                <span className="font-mono text-stone-800">CNAME</span>
+                <span className="text-stone-500 font-medium">Name / Host</span>
+                <span className="font-mono text-stone-800">
+                  {tenant.customDomain.startsWith("www.") ? "www" : "@"}
+                </span>
+                <span className="text-stone-500 font-medium">Value / Target</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-stone-800">{CNAME_TARGET}</span>
+                  <Copy className="h-3.5 w-3.5 text-stone-400 shrink-0" />
+                </div>
+                <span className="text-stone-500 font-medium">TTL</span>
+                <span className="font-mono text-stone-800">3600</span>
+              </div>
+              <p className="text-xs text-stone-400">
+                DNS changes can take up to 48 hours to propagate worldwide.
+              </p>
+            </div>
+
+            {/* Verification status + action */}
+            <div className="flex items-center justify-between gap-4">
+              {tenant.customDomainVerified ? (
+                <div className="flex items-center gap-2 text-sm text-emerald-700">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>
+                    Verified — live at{" "}
+                    <span className="font-mono">{tenant.customDomain}</span>
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-amber-700">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>Not verified yet</span>
+                </div>
+              )}
+
+              <div className="flex gap-2 shrink-0">
+                <form action={verifyCustomDomain}>
+                  <button
+                    type="submit"
+                    className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 transition-colors"
+                  >
+                    {tenant.customDomainVerified ? "Re-verify" : "Verify now"}
+                  </button>
+                </form>
+                <form action={removeCustomDomain}>
+                  <button
+                    type="submit"
+                    className="rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+                  >
+                    Remove
+                  </button>
+                </form>
+              </div>
+            </div>
+
+            {/* TLS note */}
+            <p className="text-xs text-stone-400 leading-relaxed">
+              <strong className="text-stone-500">TLS / HTTPS:</strong> When deployed to Vercel,
+              SSL certificates are provisioned automatically for verified custom domains.
+              Add the domain in your Vercel project settings after verifying here.
+            </p>
+          </>
+        )}
+      </div>
+
+      {/* ── Payments / Stripe Connect ──────────────────────────────────────── */}
       <div className="mt-8 rounded-xl border border-stone-200 bg-white p-6 space-y-4">
-        <div className="flex items-center gap-2 mb-1">
+        <div className="flex items-center gap-2">
           <CreditCard className="h-4 w-4 text-stone-500" />
           <h2 className="text-sm font-semibold text-stone-900">Payments</h2>
         </div>
         <p className="text-sm text-stone-500">
-          Connect your Stripe account to accept payments on your storefront. A
-          platform fee of {platformFeePercent}% applies per transaction.
+          Connect your Stripe account to accept payments. A platform fee of{" "}
+          {platformFeePercent}% applies per transaction.
         </p>
 
         {stripeStatus === "active" ? (
@@ -195,7 +300,9 @@ export default async function SettingsPage({
           <div className="space-y-3">
             <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700">
               <AlertCircle className="h-4 w-4 shrink-0" />
-              <span>Stripe account setup incomplete. Complete onboarding to accept payments.</span>
+              <span>
+                Stripe account setup incomplete. Complete onboarding to accept payments.
+              </span>
             </div>
             <form action={startStripeOnboarding}>
               <button

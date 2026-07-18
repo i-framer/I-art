@@ -78,11 +78,29 @@ export async function POST(request: Request) {
 
     const feeAmount = calcApplicationFee(artwork.price);
 
-    // Determine base URL
+    // Build the base URL for Stripe success/cancel redirects.
+    // The Origin header is ONLY used if it exactly matches a verified allowed host.
+    // Using an unvalidated Origin would allow open-redirect phishing attacks.
     const replitDomain = process.env.REPLIT_DOMAINS?.split(",")[0];
-    const baseUrl = replitDomain
-      ? `https://${replitDomain}`
-      : (request.headers.get("origin") ?? "http://localhost:3000");
+    const platformBaseUrl =
+      process.env.NEXT_PUBLIC_SITE_URL ??
+      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ??
+      (replitDomain ? `https://${replitDomain}` : "http://localhost:3000");
+
+    // Allowlist: platform URL + tenant's verified custom domain
+    const allowedOrigins = new Set<string>([platformBaseUrl]);
+    if (process.env.NODE_ENV !== "production") {
+      allowedOrigins.add("http://localhost:3000");
+    }
+    if (tenant.customDomain && tenant.customDomainVerified) {
+      allowedOrigins.add(`https://${tenant.customDomain}`);
+    }
+
+    const requestOrigin = request.headers.get("origin");
+    const baseUrl =
+      requestOrigin && allowedOrigins.has(requestOrigin)
+        ? requestOrigin
+        : platformBaseUrl;
 
     const stripe = await getStripeClient();
 

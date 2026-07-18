@@ -102,6 +102,96 @@ export async function createInvite(
 }
 
 // ---------------------------------------------------------------------------
+// Custom domain management
+// ---------------------------------------------------------------------------
+
+const DOMAIN_RE =
+  /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i;
+
+export async function saveCustomDomain(
+  _prev: { error: string | null },
+  formData: FormData,
+): Promise<{ error: string | null }> {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  const rawDomain = (formData.get("customDomain") as string | null)
+    ?.trim()
+    .toLowerCase();
+
+  if (!rawDomain) {
+    return { error: "Please enter a domain name." };
+  }
+  if (!DOMAIN_RE.test(rawDomain)) {
+    return { error: "That doesn't look like a valid domain. Use the format: www.example.com" };
+  }
+
+  // Check the domain isn't already used by a different tenant
+  const existing = await db.query.tenantsTable.findFirst({
+    where: eq(tenantsTable.customDomain, rawDomain),
+  });
+  if (existing && existing.id !== session.tenantId) {
+    return { error: "This domain is already in use by another gallery." };
+  }
+
+  await db
+    .update(tenantsTable)
+    .set({ customDomain: rawDomain, customDomainVerified: false })
+    .where(eq(tenantsTable.id, session.tenantId));
+
+  redirect("/settings?domain_status=saved");
+}
+
+export async function removeCustomDomain() {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  await db
+    .update(tenantsTable)
+    .set({ customDomain: null, customDomainVerified: false })
+    .where(eq(tenantsTable.id, session.tenantId));
+
+  redirect("/settings");
+}
+
+export async function verifyCustomDomain(): Promise<void> {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  const tenant = await db.query.tenantsTable.findFirst({
+    where: eq(tenantsTable.id, session.tenantId),
+  });
+  if (!tenant?.customDomain) {
+    redirect("/settings");
+  }
+
+  const cnameTarget = process.env.CNAME_TARGET ?? "cname.i-art.com.au";
+
+  // Dynamic import so the dns module is only loaded server-side
+  const dns = await import("node:dns/promises");
+
+  let verified = false;
+  try {
+    const records = await dns.resolveCname(tenant.customDomain);
+    verified = records.some(
+      (r) =>
+        r.toLowerCase() === cnameTarget.toLowerCase() ||
+        r.toLowerCase() === `${cnameTarget.toLowerCase()}.`,
+    );
+  } catch {
+    // DNS resolution failed (NXDOMAIN, ENODATA, etc.)
+    verified = false;
+  }
+
+  await db
+    .update(tenantsTable)
+    .set({ customDomainVerified: verified })
+    .where(eq(tenantsTable.id, session.tenantId));
+
+  redirect(`/settings?domain_status=${verified ? "verified" : "unverified"}`);
+}
+
+// ---------------------------------------------------------------------------
 // Stripe Connect onboarding
 // ---------------------------------------------------------------------------
 export async function startStripeOnboarding() {
