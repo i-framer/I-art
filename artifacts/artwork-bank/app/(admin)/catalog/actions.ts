@@ -34,23 +34,33 @@ const artworkSchema = z.object({
   categoryIds: z.array(z.string()).optional(),
 });
 
+/**
+ * FormData.get() returns null for absent fields (e.g. unchecked checkboxes),
+ * but z.string().optional() only accepts undefined. Coerce null/empty → undefined.
+ */
+function field(formData: FormData, name: string): string | undefined {
+  const v = formData.get(name);
+  return typeof v === "string" && v !== "" ? v : undefined;
+}
+
 function parseArtworkFormData(formData: FormData) {
   const raw = {
-    title: formData.get("title"),
-    sku: formData.get("sku"),
-    status: formData.get("status"),
-    showInGallery: formData.get("showInGallery"),
-    medium: formData.get("medium"),
-    dimensionsW: formData.get("dimensionsW"),
-    dimensionsH: formData.get("dimensionsH"),
-    dimensionsD: formData.get("dimensionsD"),
-    condition: formData.get("condition") || undefined,
-    price: formData.get("price"),
-    isEdition: formData.get("isEdition"),
-    editionNumber: formData.get("editionNumber"),
-    totalEditions: formData.get("totalEditions"),
-    notes: formData.get("notes"),
-    representedArtistId: formData.get("representedArtistId") || undefined,
+    // Required fields: coerce null → "" so their min(1) messages fire instead of a type error
+    title: formData.get("title") ?? "",
+    sku: formData.get("sku") ?? "",
+    status: formData.get("status") ?? "",
+    showInGallery: field(formData, "showInGallery"),
+    medium: field(formData, "medium"),
+    dimensionsW: field(formData, "dimensionsW"),
+    dimensionsH: field(formData, "dimensionsH"),
+    dimensionsD: field(formData, "dimensionsD"),
+    condition: field(formData, "condition"),
+    price: field(formData, "price"),
+    isEdition: field(formData, "isEdition"),
+    editionNumber: field(formData, "editionNumber"),
+    totalEditions: field(formData, "totalEditions"),
+    notes: field(formData, "notes"),
+    representedArtistId: field(formData, "representedArtistId"),
     categoryIds: formData.getAll("categoryIds") as string[],
   };
   return artworkSchema.safeParse(raw);
