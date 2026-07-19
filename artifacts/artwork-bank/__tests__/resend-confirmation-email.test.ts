@@ -47,6 +47,7 @@ vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 
 import { db } from "@workspace/db";
 import { resendConfirmationEmail } from "@/app/(admin)/orders/[id]/actions";
+import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
 
 function form() {
   const fd = new FormData();
@@ -102,5 +103,43 @@ describe("resendConfirmationEmail (retry after failed webhook send)", () => {
     expect(update).toBeTruthy();
     expect(update.emailError).toContain("still down");
     expect(update.emailSentAt).toBeUndefined();
+  });
+
+  it("resets emailAttempts so the sweep resumes after exhausted retries", async () => {
+    // Order previously exhausted all automatic retries.
+    vi.mocked(db.query.ordersTable.findFirst).mockResolvedValue({
+      id: "order-1",
+      tenantId: "tenant-1",
+      buyerEmail: "buyer@example.com",
+      buyerName: "Buyer",
+      fulfillmentType: "SHIP",
+      emailError: "mailbox gone",
+      emailSentAt: null,
+      emailAttempts: MAX_EMAIL_ATTEMPTS,
+    } as any);
+    sendOrderConfirmation.mockRejectedValueOnce(new Error("still gone"));
+
+    await resendConfirmationEmail(form());
+
+    const update = state.updates.find((u) => "emailAttempts" in u);
+    expect(update).toBeTruthy();
+    // Reset below the cap makes the order eligible for the sweep again
+    // (the sweep selects orders with emailAttempts < MAX_EMAIL_ATTEMPTS).
+    expect(update.emailAttempts).toBe(1);
+    expect(update.emailAttempts).toBeLessThan(MAX_EMAIL_ATTEMPTS);
+    expect(update.emailError).toContain("still gone");
+    expect(update.emailSentAt).toBeUndefined();
+  });
+
+  it("does not touch emailAttempts on a successful manual resend", async () => {
+    sendOrderConfirmation.mockResolvedValueOnce(undefined);
+    await resendConfirmationEmail(form());
+
+    const update = state.updates.find((u) => "emailSentAt" in u);
+    expect(update).toBeTruthy();
+    expect(update.emailSentAt).toBeInstanceOf(Date);
+    expect(update.emailError).toBeNull();
+    // Success ends retries via emailSentAt; the attempt counter is left alone.
+    expect(update.emailAttempts).toBeUndefined();
   });
 });
