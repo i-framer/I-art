@@ -118,56 +118,68 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     session.customer_details?.email ?? (session as any).customer_email ?? "";
   const buyerName = session.customer_details?.name ?? null;
 
-  // Create order
-  const [order] = await db
-    .insert(ordersTable)
-    .values({
+  // Create order + order item + mark artwork SOLD atomically.
+  // If any step fails the whole transaction rolls back, the webhook returns
+  // 500, and Stripe retries — the idempotency check above makes the retry safe.
+  const order = await db.transaction(async (tx) => {
+    const [createdOrder] = await tx
+      .insert(ordersTable)
+      .values({
+        tenantId,
+        stripeSessionId: session.id,
+        stripePaymentIntentId:
+          typeof session.payment_intent === "string"
+            ? session.payment_intent
+            : null,
+        buyerEmail,
+        buyerName,
+        status: "PAID",
+        fulfillmentType: fulfillmentType as "SHIP" | "PICKUP" | "FRAMING_JOB",
+        totalCents: session.amount_total ?? 0,
+        applicationFeeCents: null,
+      })
+      .returning();
+
+    await tx.insert(orderItemsTable).values({
+      orderId: createdOrder.id,
+      artworkId,
       tenantId,
-      stripeSessionId: session.id,
-      stripePaymentIntentId:
-        typeof session.payment_intent === "string"
-          ? session.payment_intent
-          : null,
-      buyerEmail,
-      buyerName,
-      status: "PAID",
-      fulfillmentType: fulfillmentType as "SHIP" | "PICKUP" | "FRAMING_JOB",
-      totalCents: session.amount_total ?? 0,
-      applicationFeeCents: null,
-    })
-    .returning();
+      priceCents: artwork.price ?? session.amount_total ?? 0,
+      artworkTitle: artwork.title,
+      artworkSku: artwork.sku,
+    });
 
-  // Create order item
-  await db.insert(orderItemsTable).values({
-    orderId: order.id,
-    artworkId,
-    tenantId,
-    priceCents: artwork.price ?? session.amount_total ?? 0,
-    artworkTitle: artwork.title,
-    artworkSku: artwork.sku,
+    await tx
+      .update(artworksTable)
+      .set({ status: "SOLD" })
+      .where(eq(artworksTable.id, artworkId));
+
+    return createdOrder;
   });
-
-  // Mark artwork SOLD
-  await db
-    .update(artworksTable)
-    .set({ status: "SOLD" })
-    .where(eq(artworksTable.id, artworkId));
 
   // Fetch tenant (needed for email + iFramer)
   const tenant = await db.query.tenantsTable.findFirst({
     where: eq(tenantsTable.id, tenantId),
   });
 
-  // Send confirmation email (non-fatal)
+  // Send confirmation email (non-fatal — the order is already committed, so a
+  // failed email must not turn the webhook into a 500/Stripe retry loop)
   if (buyerEmail && tenant) {
-    await sendOrderConfirmation({
-      buyerEmail,
-      buyerName,
-      artworkTitle: artwork.title,
-      fulfillmentType,
-      orderRef: order.id.slice(0, 8).toUpperCase(),
-      tenantName: tenant.businessName,
-    });
+    try {
+      await sendOrderConfirmation({
+        buyerEmail,
+        buyerName,
+        artworkTitle: artwork.title,
+        fulfillmentType,
+        orderRef: order.id.slice(0, 8).toUpperCase(),
+        tenantName: tenant.businessName,
+      });
+    } catch (err) {
+      console.error(
+        `Order confirmation email failed for order ${order.id}:`,
+        (err as any)?.message ?? err,
+      );
+    }
   }
 
   // ── iFramer job creation ───────────────────────────────────────────────────
