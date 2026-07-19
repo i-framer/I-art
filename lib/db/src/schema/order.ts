@@ -47,6 +47,15 @@ export const ordersTable = pgTable("order", {
   // Automatic retry bookkeeping for the background email sweep
   emailAttempts: integer("email_attempts").default(0).notNull(),
   emailLastAttemptAt: timestamp("email_last_attempt_at", { withTimezone: true }),
+  // Buyer status-update email (fulfilled / tracking note changed).
+  // Non-null statusEmailQueuedAt means an update email is owed to the buyer;
+  // it is cleared once delivered. The sweep retries failures with backoff.
+  statusEmailQueuedAt: timestamp("status_email_queued_at", { withTimezone: true }),
+  statusEmailError: text("status_email_error"),
+  statusEmailAttempts: integer("status_email_attempts").default(0).notNull(),
+  statusEmailLastAttemptAt: timestamp("status_email_last_attempt_at", {
+    withTimezone: true,
+  }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

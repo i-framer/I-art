@@ -43,18 +43,23 @@ vi.mock("@workspace/db", () => ({
     emailSentAt: "emailSentAt",
     buyerEmail: "buyerEmail",
     emailAttempts: "emailAttempts",
+    statusEmailQueuedAt: "statusEmailQueuedAt",
+    statusEmailAttempts: "statusEmailAttempts",
   },
   orderItemsTable: { orderId: "orderId" },
   tenantsTable: { id: "id" },
 }));
 
 const sendOrderConfirmation = vi.hoisted(() => vi.fn());
+const sendOrderStatusUpdate = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/email", () => ({
   sendOrderConfirmation: (...args: any[]) => sendOrderConfirmation(...args),
+  sendOrderStatusUpdate: (...args: any[]) => sendOrderStatusUpdate(...args),
 }));
 
 import {
   sweepUnsentConfirmationEmails,
+  sweepUnsentStatusEmails,
   backoffMs,
   MAX_EMAIL_ATTEMPTS,
   BASE_BACKOFF_MS,
@@ -165,5 +170,77 @@ describe("sweepUnsentConfirmationEmails", () => {
     expect(MAX_EMAIL_ATTEMPTS).toBe(5);
     expect(backoffMs(1)).toBe(BASE_BACKOFF_MS);
     expect(backoffMs(3)).toBe(BASE_BACKOFF_MS * 4);
+  });
+});
+
+describe("sweepUnsentStatusEmails", () => {
+  function queuedOrder(overrides: Record<string, any> = {}) {
+    return order({
+      status: "FULFILLED",
+      trackingNote: "AusPost ABC123",
+      statusEmailQueuedAt: NOW,
+      statusEmailError: null,
+      statusEmailAttempts: 1,
+      statusEmailLastAttemptAt: null,
+      ...overrides,
+    });
+  }
+
+  it("sends the status update and clears the queue flag", async () => {
+    state.candidates = [queuedOrder()];
+    sendOrderStatusUpdate.mockResolvedValueOnce(undefined);
+
+    const result = await sweepUnsentStatusEmails(NOW);
+
+    expect(result).toEqual({ scanned: 1, sent: 1, failed: 0, skipped: 0 });
+    expect(sendOrderStatusUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        buyerEmail: "buyer@example.com",
+        artworkTitle: "Sunset",
+        status: "FULFILLED",
+        trackingNote: "AusPost ABC123",
+        tenantName: "Gallery",
+      }),
+    );
+    expect(state.updates).toEqual([
+      expect.objectContaining({
+        statusEmailQueuedAt: null,
+        statusEmailError: null,
+        statusEmailAttempts: 2,
+        statusEmailLastAttemptAt: NOW,
+      }),
+    ]);
+  });
+
+  it("records the error and keeps the email queued on failure", async () => {
+    state.candidates = [queuedOrder({ statusEmailAttempts: 2 })];
+    sendOrderStatusUpdate.mockRejectedValueOnce(new Error("resend down"));
+
+    const result = await sweepUnsentStatusEmails(NOW);
+
+    expect(result).toEqual({ scanned: 1, sent: 0, failed: 1, skipped: 0 });
+    expect(state.updates).toEqual([
+      expect.objectContaining({
+        statusEmailError: "resend down",
+        statusEmailAttempts: 3,
+        statusEmailLastAttemptAt: NOW,
+      }),
+    ]);
+    expect(state.updates[0].statusEmailQueuedAt).toBeUndefined();
+  });
+
+  it("skips orders still inside their backoff window", async () => {
+    state.candidates = [
+      queuedOrder({
+        statusEmailAttempts: 2,
+        statusEmailLastAttemptAt: new Date(NOW.getTime() - 3 * 60 * 1000),
+      }),
+    ];
+
+    const result = await sweepUnsentStatusEmails(NOW);
+
+    expect(result).toEqual({ scanned: 1, sent: 0, failed: 0, skipped: 1 });
+    expect(sendOrderStatusUpdate).not.toHaveBeenCalled();
+    expect(state.updates).toEqual([]);
   });
 });

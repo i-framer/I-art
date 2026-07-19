@@ -6,7 +6,10 @@
  * Imported from the root layout (Node.js runtime); a globalThis guard keeps
  * it a singleton across hot reloads and route compilations.
  */
-import { sweepUnsentConfirmationEmails } from "@/lib/email-sweep";
+import {
+  sweepUnsentConfirmationEmails,
+  sweepUnsentStatusEmails,
+} from "@/lib/email-sweep";
 
 const GLOBAL_KEY = "__artworkBankEmailSweepTimer" as const;
 
@@ -31,6 +34,16 @@ export function ensureEmailSweepScheduler(): void {
       }
     } catch (err: any) {
       console.error("Email sweep run failed:", err?.message ?? err);
+    }
+    try {
+      const result = await sweepUnsentStatusEmails();
+      if (result.sent || result.failed) {
+        console.log(
+          `Status email sweep: sent=${result.sent} failed=${result.failed} skipped=${result.skipped} scanned=${result.scanned}`,
+        );
+      }
+    } catch (err: any) {
+      console.error("Status email sweep run failed:", err?.message ?? err);
     }
   };
 

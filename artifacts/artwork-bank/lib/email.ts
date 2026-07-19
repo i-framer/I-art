@@ -177,6 +177,105 @@ export async function sendInquiryReply({
   }
 }
 
+/**
+ * Send a buyer an order status update (fulfilled and/or tracking note changed).
+ * Throws EmailSendError on failure so callers can record it for the retry sweep.
+ */
+export async function sendOrderStatusUpdate({
+  buyerEmail,
+  buyerName,
+  artworkTitle,
+  status,
+  trackingNote,
+  orderRef,
+  tenantName,
+  orderLookupUrl,
+}: {
+  buyerEmail: string;
+  buyerName: string | null;
+  artworkTitle: string;
+  status: string;
+  trackingNote?: string | null;
+  orderRef: string;
+  tenantName: string;
+  /** Absolute URL of the guest order-status lookup page, if available. */
+  orderLookupUrl?: string;
+}): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    throw new EmailSendError(
+      "RESEND_API_KEY is not configured — status update email not sent.",
+    );
+  }
+
+  const escapeHtml = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const isFulfilled = status === "FULFILLED";
+  const heading = isFulfilled ? "Your order is on its way" : "Order update";
+  const statusLine = isFulfilled
+    ? `Good news — your order for <strong>${escapeHtml(artworkTitle)}</strong> from <strong>${escapeHtml(tenantName)}</strong> has been marked as fulfilled.`
+    : `There's an update on your order for <strong>${escapeHtml(artworkTitle)}</strong> from <strong>${escapeHtml(tenantName)}</strong>.`;
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "orders@i-art.com.au",
+        to: buyerEmail,
+        subject: `Order update — ${artworkTitle}`,
+        html: `
+          <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+            <h2 style="color:#1c1917;">${heading}</h2>
+            <p>Hi ${escapeHtml(buyerName ?? "there")},</p>
+            <p>${statusLine}</p>
+            ${
+              trackingNote
+                ? `<div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
+                     <p style="margin:0 0 8px;"><strong>Tracking / delivery note</strong></p>
+                     <p style="margin:0;white-space:pre-line;">${escapeHtml(trackingNote)}</p>
+                   </div>`
+                : ""
+            }
+            <p style="margin-top:24px;padding:16px;background:#f5f5f4;border-radius:8px;">
+              Order reference: <code style="font-family:monospace;">${escapeHtml(orderRef)}</code>
+            </p>
+            ${
+              orderLookupUrl
+                ? `<p>You can check your order status any time — no account needed: <a href="${escapeHtml(orderLookupUrl)}" style="color:#1c1917;">Check order status</a> (use this email address and your order reference).</p>`
+                : ""
+            }
+            <p style="color:#78716c;font-size:14px;margin-top:24px;">
+              Thank you for supporting ${escapeHtml(tenantName)}.
+            </p>
+          </div>
+        `,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new EmailSendError(
+        `Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof EmailSendError) throw err;
+    throw new EmailSendError(
+      `Failed to send status update email: ${(err as any)?.message ?? String(err)}`,
+    );
+  }
+}
+
 export async function sendOrderConfirmation({
   buyerEmail,
   buyerName,

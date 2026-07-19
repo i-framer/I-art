@@ -7,7 +7,7 @@
  */
 import { db, ordersTable, orderItemsTable, tenantsTable } from "@workspace/db";
 import { and, eq, isNull, isNotNull, lt, ne } from "drizzle-orm";
-import { sendOrderConfirmation } from "@/lib/email";
+import { sendOrderConfirmation, sendOrderStatusUpdate } from "@/lib/email";
 
 /** Give up after this many failed attempts (initial send counts as one). */
 export const MAX_EMAIL_ATTEMPTS = 5;
@@ -111,6 +111,99 @@ export async function sweepUnsentConfirmationEmails(
           emailError: message,
           emailAttempts: order.emailAttempts + 1,
           emailLastAttemptAt: now,
+        })
+        .where(eq(ordersTable.id, order.id));
+      result.failed++;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Find orders with a queued (undelivered) buyer status-update email and retry
+ * sending. Mirrors the confirmation sweep: exponential backoff via
+ * statusEmailLastAttemptAt, capped at MAX_EMAIL_ATTEMPTS.
+ */
+export async function sweepUnsentStatusEmails(
+  now: Date = new Date(),
+): Promise<SweepResult> {
+  const candidates = await db.query.ordersTable.findMany({
+    where: and(
+      isNotNull(ordersTable.statusEmailQueuedAt),
+      isNotNull(ordersTable.buyerEmail),
+      ne(ordersTable.buyerEmail, ""),
+      lt(ordersTable.statusEmailAttempts, MAX_EMAIL_ATTEMPTS),
+    ),
+    limit: 50,
+  });
+
+  const result: SweepResult = {
+    scanned: candidates.length,
+    sent: 0,
+    failed: 0,
+    skipped: 0,
+  };
+
+  for (const order of candidates) {
+    if (
+      order.statusEmailLastAttemptAt &&
+      now.getTime() - order.statusEmailLastAttemptAt.getTime() <
+        backoffMs(order.statusEmailAttempts)
+    ) {
+      result.skipped++;
+      continue;
+    }
+
+    const [item, tenant] = await Promise.all([
+      db.query.orderItemsTable.findFirst({
+        where: eq(orderItemsTable.orderId, order.id),
+      }),
+      db.query.tenantsTable.findFirst({
+        where: eq(tenantsTable.id, order.tenantId),
+      }),
+    ]);
+
+    if (!item || !tenant) {
+      result.skipped++;
+      continue;
+    }
+
+    try {
+      await sendOrderStatusUpdate({
+        buyerEmail: order.buyerEmail,
+        buyerName: order.buyerName,
+        artworkTitle: item.artworkTitle,
+        status: order.status,
+        trackingNote: order.trackingNote,
+        orderRef: order.id.slice(0, 8).toUpperCase(),
+        tenantName: tenant.businessName,
+        orderLookupUrl: process.env.REPLIT_DEV_DOMAIN
+          ? `https://${process.env.REPLIT_DEV_DOMAIN}/t/${tenant.slug}/orders`
+          : undefined,
+      });
+      await db
+        .update(ordersTable)
+        .set({
+          statusEmailQueuedAt: null,
+          statusEmailError: null,
+          statusEmailAttempts: order.statusEmailAttempts + 1,
+          statusEmailLastAttemptAt: now,
+        })
+        .where(eq(ordersTable.id, order.id));
+      result.sent++;
+    } catch (err) {
+      const message = (err as any)?.message ?? String(err);
+      console.error(
+        `Email sweep: status update failed for order ${order.id} (attempt ${order.statusEmailAttempts + 1}/${MAX_EMAIL_ATTEMPTS}):`,
+        message,
+      );
+      await db
+        .update(ordersTable)
+        .set({
+          statusEmailError: message,
+          statusEmailAttempts: order.statusEmailAttempts + 1,
+          statusEmailLastAttemptAt: now,
         })
         .where(eq(ordersTable.id, order.id));
       result.failed++;
