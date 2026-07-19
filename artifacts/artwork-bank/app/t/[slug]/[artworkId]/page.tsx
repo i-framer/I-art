@@ -187,7 +187,7 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
               </div>
             ) : isReserved ? (
               <div className="w-full rounded-xl bg-amber-50 py-4 text-center text-amber-700 text-sm font-medium border border-amber-200">
-                Currently reserved — contact us for availability
+                Reserved — pending purchase
               </div>
             ) : !paymentsAvailable ? (
               <div className="w-full rounded-xl bg-stone-50 border border-stone-200 px-4 py-4 text-center">

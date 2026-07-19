@@ -24,137 +24,207 @@ export async function POST(request: Request) {
     };
 
     if (!artworkId || !slug || !fulfillmentType) {
-      return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing required fields." },
+        { status: 400 },
+      );
     }
     if (!VALID_FULFILLMENT_TYPES.includes(fulfillmentType as any)) {
-      return NextResponse.json({ error: "Invalid fulfillment type." }, { status: 400 });
-    }
-
-    const tenant = await getTenantBySlug(slug);
-    if (!tenant?.storefrontEnabled) {
-      return NextResponse.json({ error: "Store not available." }, { status: 400 });
-    }
-    if (!tenant.stripeAccountId) {
       return NextResponse.json(
-        { error: "This gallery is not accepting payments yet. Please contact them directly." },
+        { error: "Invalid fulfillment type." },
         { status: 400 },
       );
     }
 
-    // Artwork must be AVAILABLE and showInGallery
-    const artwork = await db.query.artworksTable.findFirst({
-      where: and(
-        eq(artworksTable.id, artworkId),
-        eq(artworksTable.tenantId, tenant.id),
-        eq(artworksTable.status, "AVAILABLE"),
-        eq(artworksTable.showInGallery, true),
-      ),
-    });
-
-    if (!artwork?.price) {
+    const tenant = await getTenantBySlug(slug);
+    if (!tenant?.storefrontEnabled) {
       return NextResponse.json(
-        { error: "This artwork is not available for purchase." },
+        { error: "Store not available." },
+        { status: 400 },
+      );
+    }
+    if (!tenant.stripeAccountId) {
+      return NextResponse.json(
+        {
+          error:
+            "This gallery is not accepting payments yet. Please contact them directly.",
+        },
         { status: 400 },
       );
     }
 
     // FRAMING_JOB only for FRAMER tenants
     if (fulfillmentType === "FRAMING_JOB" && tenant.type !== "FRAMER") {
-      return NextResponse.json({ error: "Invalid fulfillment type for this gallery." }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid fulfillment type for this gallery." },
+        { status: 400 },
+      );
     }
 
-    // Fetch primary image for Stripe display
-    const primaryImage = await db.query.artworkImagesTable.findFirst({
-      where: and(
-        eq(artworkImagesTable.artworkId, artworkId),
-        eq(artworkImagesTable.isPrimary, true),
-      ),
-    });
+    // Atomically reserve the artwork: the conditional UPDATE only succeeds if
+    // the row is still AVAILABLE, so two concurrent buyers can't both pass —
+    // the second buyer's update matches zero rows and they get a clear error
+    // before any Stripe session is created.
+    const [artwork] = await db
+      .update(artworksTable)
+      .set({ status: "RESERVED" })
+      .where(
+        and(
+          eq(artworksTable.id, artworkId),
+          eq(artworksTable.tenantId, tenant.id),
+          eq(artworksTable.status, "AVAILABLE"),
+          eq(artworksTable.showInGallery, true),
+        ),
+      )
+      .returning();
 
-    let imageUrl: string | undefined;
-    if (primaryImage) {
+    if (!artwork) {
+      return NextResponse.json(
+        { error: "This artwork is not available for purchase." },
+        { status: 400 },
+      );
+    }
+
+    // Helper to release the reservation if we fail before returning a
+    // checkout URL — only reverts if the row is still RESERVED.
+    const releaseReservation = async () => {
       try {
-        imageUrl = await getServeUrl(primaryImage.objectPath, 3600);
-      } catch {
-        // Non-fatal
-      }
-    }
-
-    const feeAmount = calcApplicationFee(artwork.price);
-
-    // Build the base URL for Stripe success/cancel redirects.
-    // The Origin header is ONLY used if it exactly matches a verified allowed host.
-    // Using an unvalidated Origin would allow open-redirect phishing attacks.
-    const replitDomain = process.env.REPLIT_DOMAINS?.split(",")[0];
-    const platformBaseUrl =
-      process.env.NEXT_PUBLIC_SITE_URL ??
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ??
-      (replitDomain ? `https://${replitDomain}` : "http://localhost:3000");
-
-    // Allowlist: platform URL + tenant's verified custom domain
-    const allowedOrigins = new Set<string>([platformBaseUrl]);
-    if (process.env.NODE_ENV !== "production") {
-      allowedOrigins.add("http://localhost:3000");
-    }
-    if (tenant.customDomain && tenant.customDomainVerified) {
-      allowedOrigins.add(`https://${tenant.customDomain}`);
-    }
-
-    const requestOrigin = request.headers.get("origin");
-    const baseUrl =
-      requestOrigin && allowedOrigins.has(requestOrigin)
-        ? requestOrigin
-        : platformBaseUrl;
-
-    let stripe;
-    try {
-      stripe = await getStripeClient();
-    } catch (err) {
-      if (err instanceof StripeNotConfiguredError) {
-        console.error("Checkout unavailable — Stripe not configured:", err.message);
-        return NextResponse.json(
-          { error: "Payments are not configured for this gallery. Please try again later or contact the gallery directly." },
-          { status: 503 },
+        await db
+          .update(artworksTable)
+          .set({ status: "AVAILABLE" })
+          .where(
+            and(
+              eq(artworksTable.id, artworkId),
+              eq(artworksTable.tenantId, tenant.id),
+              eq(artworksTable.status, "RESERVED"),
+            ),
+          );
+      } catch (revertErr) {
+        console.error(
+          `Failed to release reservation for artwork ${artworkId}:`,
+          (revertErr as any)?.message ?? revertErr,
         );
       }
+    };
+
+    // From here on the artwork is RESERVED. Any failure before we return a
+    // checkout URL must release the reservation — otherwise the piece would
+    // be stuck RESERVED with no Stripe session to expire and no webhook to
+    // revert it.
+    try {
+      if (!artwork.price) {
+        await releaseReservation();
+        return NextResponse.json(
+          { error: "This artwork is not available for purchase." },
+          { status: 400 },
+        );
+      }
+
+      // Fetch primary image for Stripe display
+      const primaryImage = await db.query.artworkImagesTable.findFirst({
+        where: and(
+          eq(artworkImagesTable.artworkId, artworkId),
+          eq(artworkImagesTable.isPrimary, true),
+        ),
+      });
+
+      let imageUrl: string | undefined;
+      if (primaryImage) {
+        try {
+          imageUrl = await getServeUrl(primaryImage.objectPath, 3600);
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      const feeAmount = calcApplicationFee(artwork.price);
+
+      // Build the base URL for Stripe success/cancel redirects.
+      // The Origin header is ONLY used if it exactly matches a verified allowed host.
+      // Using an unvalidated Origin would allow open-redirect phishing attacks.
+      const replitDomain = process.env.REPLIT_DOMAINS?.split(",")[0];
+      const platformBaseUrl =
+        process.env.NEXT_PUBLIC_SITE_URL ??
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ??
+        (replitDomain ? `https://${replitDomain}` : "http://localhost:3000");
+
+      // Allowlist: platform URL + tenant's verified custom domain
+      const allowedOrigins = new Set<string>([platformBaseUrl]);
+      if (process.env.NODE_ENV !== "production") {
+        allowedOrigins.add("http://localhost:3000");
+      }
+      if (tenant.customDomain && tenant.customDomainVerified) {
+        allowedOrigins.add(`https://${tenant.customDomain}`);
+      }
+
+      const requestOrigin = request.headers.get("origin");
+      const baseUrl =
+        requestOrigin && allowedOrigins.has(requestOrigin)
+          ? requestOrigin
+          : platformBaseUrl;
+
+      let stripe;
+      try {
+        stripe = await getStripeClient();
+      } catch (err) {
+        await releaseReservation();
+        if (err instanceof StripeNotConfiguredError) {
+          console.error(
+            "Checkout unavailable — Stripe not configured:",
+            err.message,
+          );
+          return NextResponse.json(
+            {
+              error:
+                "Payments are not configured for this gallery. Please try again later or contact the gallery directly.",
+            },
+            { status: 503 },
+          );
+        }
+        throw err;
+      }
+
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card"],
+        line_items: [
+          {
+            price_data: {
+              currency: "aud",
+              product_data: {
+                name: artwork.title,
+                ...(artwork.medium ? { description: artwork.medium } : {}),
+                ...(imageUrl ? { images: [imageUrl] } : {}),
+                metadata: { artworkId, sku: artwork.sku ?? "" },
+              },
+              unit_amount: artwork.price,
+            },
+            quantity: 1,
+          },
+        ],
+        mode: "payment",
+        success_url: `${baseUrl}/t/${slug}/order/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${baseUrl}/t/${slug}/${artworkId}?cancelled=1`,
+        payment_intent_data: {
+          application_fee_amount: feeAmount,
+          transfer_data: {
+            destination: tenant.stripeAccountId,
+          },
+        },
+        metadata: {
+          artworkId,
+          tenantId: tenant.id,
+          slug,
+          fulfillmentType,
+        },
+      });
+
+      return NextResponse.json({ url: session.url });
+    } catch (err) {
+      // Anything failed after the reservation was taken — release it so the
+      // artwork doesn't get stuck in RESERVED with no pending checkout.
+      await releaseReservation();
       throw err;
     }
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "aud",
-            product_data: {
-              name: artwork.title,
-              ...(artwork.medium ? { description: artwork.medium } : {}),
-              ...(imageUrl ? { images: [imageUrl] } : {}),
-              metadata: { artworkId, sku: artwork.sku ?? "" },
-            },
-            unit_amount: artwork.price,
-          },
-          quantity: 1,
-        },
-      ],
-      mode: "payment",
-      success_url: `${baseUrl}/t/${slug}/order/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${baseUrl}/t/${slug}/${artworkId}?cancelled=1`,
-      payment_intent_data: {
-        application_fee_amount: feeAmount,
-        transfer_data: {
-          destination: tenant.stripeAccountId,
-        },
-      },
-      metadata: {
-        artworkId,
-        tenantId: tenant.id,
-        slug,
-        fulfillmentType,
-      },
-    });
-
-    return NextResponse.json({ url: session.url });
   } catch (err: any) {
     console.error("Checkout session error:", err);
     return NextResponse.json(

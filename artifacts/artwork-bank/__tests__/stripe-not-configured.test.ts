@@ -20,7 +20,12 @@ vi.mock("@workspace/db", () => ({
     insert: vi.fn(),
     update: vi.fn(),
   },
-  artworksTable: { id: "id", tenantId: "tenantId", status: "status", showInGallery: "showInGallery" },
+  artworksTable: {
+    id: "id",
+    tenantId: "tenantId",
+    status: "status",
+    showInGallery: "showInGallery",
+  },
   artworkImagesTable: { artworkId: "artworkId", isPrimary: "isPrimary" },
   ordersTable: { stripeSessionId: "stripeSessionId", id: "id" },
   orderItemsTable: {},
@@ -91,14 +96,27 @@ describe("POST /api/stripe/checkout with missing Stripe credentials", () => {
       customDomain: null,
       customDomainVerified: false,
     } as any);
-    vi.mocked(db.query.artworksTable.findFirst).mockResolvedValue({
+    // The route now reserves via an atomic UPDATE ... RETURNING; mock the
+    // chain so it returns the artwork on the first call (reserve) and works
+    // as a plain awaited update on the release call.
+    const artworkRow = {
       id: "art-1",
       title: "Sunset",
       price: 10_000,
       medium: "Oil",
       sku: "SKU-1",
+    };
+    vi.mocked(db.update).mockReturnValue({
+      set: () => ({
+        where: () =>
+          Object.assign(Promise.resolve([artworkRow]), {
+            returning: async () => [artworkRow],
+          }),
+      }),
     } as any);
-    vi.mocked(db.query.artworkImagesTable.findFirst).mockResolvedValue(undefined as any);
+    vi.mocked(db.query.artworkImagesTable.findFirst).mockResolvedValue(
+      undefined as any,
+    );
 
     const res = await checkoutPOST(
       new Request("http://localhost/api/stripe/checkout", {
@@ -117,6 +135,61 @@ describe("POST /api/stripe/checkout with missing Stripe credentials", () => {
     expect(json.error).toBe(
       "Payments are not configured for this gallery. Please try again later or contact the gallery directly.",
     );
+  });
+});
+
+describe("POST /api/stripe/checkout reservation rollback", () => {
+  it("releases the RESERVED status when a failure happens after reservation", async () => {
+    vi.mocked(getTenantBySlug).mockResolvedValue({
+      id: "tenant-1",
+      storefrontEnabled: true,
+      stripeAccountId: "acct_123",
+      type: "GALLERY",
+      customDomain: null,
+      customDomainVerified: false,
+    } as any);
+
+    const artworkRow = {
+      id: "art-1",
+      title: "Sunset",
+      price: 10_000,
+      medium: "Oil",
+      sku: "SKU-1",
+    };
+    const setCalls: any[] = [];
+    vi.mocked(db.update).mockReturnValue({
+      set: (values: any) => {
+        setCalls.push(values);
+        return {
+          where: () =>
+            Object.assign(Promise.resolve([artworkRow]), {
+              returning: async () => [artworkRow],
+            }),
+        };
+      },
+    } as any);
+
+    // Fail after the reservation is taken (primary-image lookup throws)
+    vi.mocked(db.query.artworkImagesTable.findFirst).mockRejectedValue(
+      new Error("db connection lost"),
+    );
+
+    const res = await checkoutPOST(
+      new Request("http://localhost/api/stripe/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          artworkId: "art-1",
+          slug: "gallery",
+          fulfillmentType: "SHIP",
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(500);
+    // First update reserved the artwork; a later update must revert it.
+    expect(setCalls[0]).toEqual({ status: "RESERVED" });
+    expect(setCalls).toContainEqual({ status: "AVAILABLE" });
   });
 });
 
