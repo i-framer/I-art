@@ -83,6 +83,9 @@ export async function resendConfirmationEmail(
       .set({
         emailError: (err as any)?.message ?? String(err),
         emailLastAttemptAt: new Date(),
+        // A manual resend resets the retry budget so the background sweep
+        // resumes retrying even if the automatic attempts were exhausted.
+        emailAttempts: 1,
       })
       .where(eq(ordersTable.id, orderId));
   }

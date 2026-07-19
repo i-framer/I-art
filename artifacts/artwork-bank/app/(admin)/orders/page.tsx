@@ -6,6 +6,8 @@ import { db } from "@workspace/db";
 import { ordersTable, orderItemsTable } from "@workspace/db";
 import { and, eq, desc, count } from "drizzle-orm";
 import { formatPrice } from "@/lib/tenant-cache";
+import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
+import { AlertTriangle } from "lucide-react";
 
 export const metadata: Metadata = { title: "Orders" };
 
@@ -123,6 +125,9 @@ export default async function OrdersPage({
             <tbody className="divide-y divide-stone-100">
               {rows.map(({ order, artworkTitle }) => {
                 const badge = STATUS_STYLES[order.status];
+                const emailFailed =
+                  !order.emailSentAt &&
+                  order.emailAttempts >= MAX_EMAIL_ATTEMPTS;
                 return (
                   <tr
                     key={order.id}
@@ -155,11 +160,22 @@ export default async function OrdersPage({
                       {formatPrice(order.totalCents)}
                     </td>
                     <td className="px-5 py-3.5">
-                      {badge && (
-                        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${badge.cls}`}>
-                          {badge.label}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {badge && (
+                          <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${badge.cls}`}>
+                            {badge.label}
+                          </span>
+                        )}
+                        {emailFailed && (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700"
+                            title="Buyer confirmation email failed after all retry attempts"
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            Email failed
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

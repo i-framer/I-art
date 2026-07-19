@@ -12,7 +12,8 @@ import {
   saveTrackingNote,
   resendConfirmationEmail,
 } from "./actions";
-import { ArrowLeft, CheckCircle2, AlertCircle, Clock, Mail } from "lucide-react";
+import { ArrowLeft, CheckCircle2, AlertCircle, Clock, Mail, AlertTriangle } from "lucide-react";
+import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
 
 export const metadata: Metadata = { title: "Order Detail" };
 
@@ -171,6 +172,53 @@ export default async function OrderDetailPage({
                 </p>
               </div>
             </div>
+          ) : order.emailAttempts >= MAX_EMAIL_ATTEMPTS ? (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-red-800">
+                      Delivery permanently failed
+                    </p>
+                    <p className="text-xs text-red-700 mt-1 leading-relaxed">
+                      All {MAX_EMAIL_ATTEMPTS} automatic attempts to email{" "}
+                      <span className="font-medium">{order.buyerEmail}</span>{" "}
+                      failed. The buyer never received their order
+                      confirmation — consider contacting them directly, or try
+                      resending below.
+                    </p>
+                    {order.emailError && (
+                      <p className="text-xs text-red-600/80 mt-2 leading-relaxed break-words">
+                        Last error: {order.emailError}
+                      </p>
+                    )}
+                    {order.emailLastAttemptAt && (
+                      <p className="text-xs text-red-600/80 mt-1">
+                        Last attempt:{" "}
+                        {order.emailLastAttemptAt.toLocaleString("en-AU", {
+                          day: "numeric",
+                          month: "long",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <form action={resendConfirmationEmail} className="pl-8">
+                <input type="hidden" name="orderId" value={order.id} />
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-2 rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 transition-colors"
+                >
+                  <Mail className="h-4 w-4" />
+                  Resend confirmation email
+                </button>
+              </form>
+            </div>
           ) : (
             <div className="space-y-3">
               <div className="flex items-start gap-3">
@@ -190,6 +238,12 @@ export default async function OrderDetailPage({
                   {order.emailError && (
                     <p className="text-xs text-stone-500 mt-1 leading-relaxed break-words">
                       {order.emailError}
+                    </p>
+                  )}
+                  {order.emailAttempts > 0 && order.emailError && (
+                    <p className="text-xs text-stone-400 mt-1">
+                      Attempt {order.emailAttempts} of {MAX_EMAIL_ATTEMPTS} —
+                      automatic retries continue in the background.
                     </p>
                   )}
                 </div>
