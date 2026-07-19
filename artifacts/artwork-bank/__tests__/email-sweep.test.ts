@@ -27,6 +27,7 @@ vi.mock("@workspace/db", () => ({
         findFirst: vi.fn(async () => ({
           id: "tenant-1",
           businessName: "Gallery",
+          contactEmail: "gallery@example.com",
         })),
       },
     },
@@ -52,9 +53,12 @@ vi.mock("@workspace/db", () => ({
 
 const sendOrderConfirmation = vi.hoisted(() => vi.fn());
 const sendOrderStatusUpdate = vi.hoisted(() => vi.fn());
+const sendConfirmationFailureNotice = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/email", () => ({
   sendOrderConfirmation: (...args: any[]) => sendOrderConfirmation(...args),
   sendOrderStatusUpdate: (...args: any[]) => sendOrderStatusUpdate(...args),
+  sendConfirmationFailureNotice: (...args: any[]) =>
+    sendConfirmationFailureNotice(...args),
 }));
 
 import {
@@ -79,6 +83,7 @@ function order(overrides: Record<string, any> = {}) {
     emailError: "smtp down",
     emailAttempts: 1,
     emailLastAttemptAt: null,
+    emailFailureNotifiedAt: null,
     ...overrides,
   };
 }
@@ -159,6 +164,71 @@ describe("sweepUnsentConfirmationEmails", () => {
     const result = await sweepUnsentConfirmationEmails(NOW);
 
     expect(result.sent).toBe(1);
+  });
+
+  it("does not notify the gallery on a non-final failure", async () => {
+    state.candidates = [order({ emailAttempts: 2 })];
+    sendOrderConfirmation.mockRejectedValueOnce(new Error("still down"));
+
+    await sweepUnsentConfirmationEmails(NOW);
+
+    expect(sendConfirmationFailureNotice).not.toHaveBeenCalled();
+  });
+
+  it("notifies the gallery once when the final attempt fails", async () => {
+    state.candidates = [order({ emailAttempts: MAX_EMAIL_ATTEMPTS - 1 })];
+    sendOrderConfirmation.mockRejectedValueOnce(new Error("mailbox gone"));
+    sendConfirmationFailureNotice.mockResolvedValueOnce(undefined);
+
+    const result = await sweepUnsentConfirmationEmails(NOW);
+
+    expect(result.failed).toBe(1);
+    expect(sendConfirmationFailureNotice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        galleryEmail: "gallery@example.com",
+        buyerEmail: "buyer@example.com",
+        buyerName: "Buyer",
+        artworkTitle: "Sunset",
+        tenantName: "Gallery",
+        lastError: "mailbox gone",
+      }),
+    );
+    // Failure bookkeeping update, then the notified flag.
+    expect(state.updates).toEqual([
+      expect.objectContaining({
+        emailError: "mailbox gone",
+        emailAttempts: MAX_EMAIL_ATTEMPTS,
+      }),
+      { emailFailureNotifiedAt: NOW },
+    ]);
+  });
+
+  it("does not notify again if the gallery was already notified", async () => {
+    state.candidates = [
+      order({
+        emailAttempts: MAX_EMAIL_ATTEMPTS - 1,
+        emailFailureNotifiedAt: new Date(NOW.getTime() - 60 * 60 * 1000),
+      }),
+    ];
+    sendOrderConfirmation.mockRejectedValueOnce(new Error("still gone"));
+
+    await sweepUnsentConfirmationEmails(NOW);
+
+    expect(sendConfirmationFailureNotice).not.toHaveBeenCalled();
+  });
+
+  it("leaves the notified flag unset when the notice itself fails", async () => {
+    state.candidates = [order({ emailAttempts: MAX_EMAIL_ATTEMPTS - 1 })];
+    sendOrderConfirmation.mockRejectedValueOnce(new Error("mailbox gone"));
+    sendConfirmationFailureNotice.mockRejectedValueOnce(
+      new Error("resend down"),
+    );
+
+    const result = await sweepUnsentConfirmationEmails(NOW);
+
+    expect(result.failed).toBe(1);
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].emailFailureNotifiedAt).toBeUndefined();
   });
 
   it("caps retries: the query excludes orders at MAX_EMAIL_ATTEMPTS", async () => {

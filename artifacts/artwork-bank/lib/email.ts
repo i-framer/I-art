@@ -276,6 +276,88 @@ export async function sendOrderStatusUpdate({
   }
 }
 
+/**
+ * Notify the gallery that a buyer's confirmation email could not be delivered
+ * after all automatic retries. Throws EmailSendError on failure so callers
+ * can leave the "notified" flag unset and try again next sweep.
+ */
+export async function sendConfirmationFailureNotice({
+  galleryEmail,
+  buyerEmail,
+  buyerName,
+  artworkTitle,
+  orderRef,
+  tenantName,
+  lastError,
+}: {
+  galleryEmail: string;
+  buyerEmail: string;
+  buyerName: string | null;
+  artworkTitle: string;
+  orderRef: string;
+  tenantName: string;
+  /** The last delivery error recorded, if available. */
+  lastError?: string | null;
+}): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    throw new EmailSendError(
+      "RESEND_API_KEY is not configured — failure notice not sent.",
+    );
+  }
+
+  const escapeHtml = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "orders@i-art.com.au",
+        to: galleryEmail,
+        subject: `Action needed — buyer confirmation email failed (order ${orderRef})`,
+        html: `
+          <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+            <h2 style="color:#1c1917;">Buyer confirmation email could not be delivered</h2>
+            <p>We tried several times to send the order confirmation for <strong>${escapeHtml(artworkTitle)}</strong> on your ${escapeHtml(tenantName)} storefront, but every attempt failed. Automatic retries have stopped.</p>
+            <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
+              <p style="margin:0 0 8px;"><strong>Order reference:</strong> <code style="font-family:monospace;">${escapeHtml(orderRef)}</code></p>
+              <p style="margin:0 0 8px;"><strong>Buyer:</strong> ${escapeHtml(buyerName ?? "Unknown")} &lt;${escapeHtml(buyerEmail)}&gt;</p>
+              ${
+                lastError
+                  ? `<p style="margin:0;color:#78716c;font-size:13px;"><strong>Last error:</strong> ${escapeHtml(lastError.slice(0, 300))}</p>`
+                  : ""
+              }
+            </div>
+            <p>Please contact the buyer directly to confirm their order, or re-send the confirmation from your admin order page.</p>
+          </div>
+        `,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new EmailSendError(
+        `Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof EmailSendError) throw err;
+    throw new EmailSendError(
+      `Failed to send failure notice email: ${(err as any)?.message ?? String(err)}`,
+    );
+  }
+}
+
 export async function sendOrderConfirmation({
   buyerEmail,
   buyerName,

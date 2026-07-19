@@ -7,7 +7,11 @@
  */
 import { db, ordersTable, orderItemsTable, tenantsTable } from "@workspace/db";
 import { and, eq, isNull, isNotNull, lt, ne } from "drizzle-orm";
-import { sendOrderConfirmation, sendOrderStatusUpdate } from "@/lib/email";
+import {
+  sendOrderConfirmation,
+  sendOrderStatusUpdate,
+  sendConfirmationFailureNotice,
+} from "@/lib/email";
 import { getTenantUrl } from "@/lib/base-url";
 
 /** Give up after this many failed attempts (initial send counts as one). */
@@ -113,6 +117,38 @@ export async function sweepUnsentConfirmationEmails(
         })
         .where(eq(ordersTable.id, order.id));
       result.failed++;
+
+      // Final attempt just failed — notify the gallery once so they can
+      // reach the buyer directly.
+      if (
+        order.emailAttempts + 1 >= MAX_EMAIL_ATTEMPTS &&
+        !order.emailFailureNotifiedAt &&
+        tenant.contactEmail
+      ) {
+        try {
+          await sendConfirmationFailureNotice({
+            galleryEmail: tenant.contactEmail,
+            buyerEmail: order.buyerEmail,
+            buyerName: order.buyerName,
+            artworkTitle: item.artworkTitle,
+            orderRef: order.id.slice(0, 8).toUpperCase(),
+            tenantName: tenant.businessName,
+            lastError: message,
+          });
+          await db
+            .update(ordersTable)
+            .set({ emailFailureNotifiedAt: now })
+            .where(eq(ordersTable.id, order.id));
+        } catch (noticeErr) {
+          // Leave emailFailureNotifiedAt unset; since the order has now
+          // exhausted MAX_EMAIL_ATTEMPTS it won't be re-selected, so log
+          // loudly for the admin flagging UI to surface.
+          console.error(
+            `Email sweep: failed to notify gallery about exhausted retries for order ${order.id}:`,
+            (noticeErr as any)?.message ?? String(noticeErr),
+          );
+        }
+      }
     }
   }
 
