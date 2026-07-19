@@ -7,3 +7,4 @@ export * from "./artwork";
 export * from "./artworkImage";
 export * from "./artworkCategory";
 export * from "./order";
+export * from "./inquiry";

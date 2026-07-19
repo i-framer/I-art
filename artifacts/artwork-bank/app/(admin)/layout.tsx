@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   Image,
   ShoppingBag,
+  MessageSquare,
   Settings,
   LogOut,
   Palette,
@@ -18,6 +19,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/catalog", label: "Catalog", icon: Image },
   { href: "/orders", label: "Orders", icon: ShoppingBag },
+  { href: "/inquiries", label: "Inquiries", icon: MessageSquare },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

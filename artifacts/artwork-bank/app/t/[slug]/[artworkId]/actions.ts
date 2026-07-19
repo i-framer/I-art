@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@workspace/db";
-import { artworksTable } from "@workspace/db";
+import { artworksTable, inquiriesTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getTenantBySlug } from "@/lib/tenant-cache";
@@ -62,6 +62,29 @@ export async function submitInquiry(
     return { status: "error", error: "Artwork not found." };
   }
 
+  // Save the inquiry first so the lead isn't lost even if email fails.
+  let inquiryId: string | null = null;
+  try {
+    const [row] = await db
+      .insert(inquiriesTable)
+      .values({
+        tenantId: tenant.id,
+        artworkId: artwork.id,
+        artworkTitle: artwork.title,
+        buyerName: parsed.data.name,
+        buyerEmail: parsed.data.email,
+        message: parsed.data.message,
+      })
+      .returning({ id: inquiriesTable.id });
+    inquiryId = row?.id ?? null;
+  } catch (err) {
+    console.error("Failed to save inquiry", err);
+    return {
+      status: "error",
+      error: `Your message could not be sent right now. Please email the gallery directly at ${tenant.contactEmail}.`,
+    };
+  }
+
   const domain = process.env.REPLIT_DEV_DOMAIN;
   const artworkUrl = domain
     ? `https://${domain}/t/${slug}/${artworkId}`
@@ -79,10 +102,18 @@ export async function submitInquiry(
   });
 
   if (!sent) {
-    return {
-      status: "error",
-      error: `Your message could not be sent right now. Please email the gallery directly at ${tenant.contactEmail}.`,
-    };
+    // The inquiry is saved — record the email failure but treat the
+    // submission as received so the lead isn't discouraged.
+    if (inquiryId) {
+      try {
+        await db
+          .update(inquiriesTable)
+          .set({ emailError: "Email delivery failed" })
+          .where(eq(inquiriesTable.id, inquiryId));
+      } catch (err) {
+        console.error("Failed to record inquiry email error", err);
+      }
+    }
   }
 
   return { status: "sent", error: "" };
