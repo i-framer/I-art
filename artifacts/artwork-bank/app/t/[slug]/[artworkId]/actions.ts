@@ -44,7 +44,11 @@ export async function submitInquiry(
     forwardedFor?.split(",")[0]?.trim() ||
     headerList.get("x-real-ip") ||
     "unknown";
-  if (!checkRateLimit(`inquiry:${ip}`, { limit: 5, windowMs: 10 * 60_000 })) {
+  const allowed = await checkRateLimit(`inquiry:${ip}`, {
+    limit: 5,
+    windowMs: 10 * 60_000,
+  });
+  if (!allowed) {
     return {
       status: "error",
       error:
