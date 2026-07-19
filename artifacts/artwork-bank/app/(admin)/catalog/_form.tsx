@@ -1,7 +1,6 @@
 "use client";
 
 import { useActionState, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   createArtwork,
@@ -49,7 +48,6 @@ export function ArtworkForm({
   tenantType,
 }: Props) {
   const isEdit = !!artwork;
-  const router = useRouter();
 
   // Main form state
   const action = isEdit

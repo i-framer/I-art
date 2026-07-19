@@ -177,7 +177,7 @@ export async function verifyCustomDomain(): Promise<void> {
   // Dynamic import so the dns module is only loaded server-side
   const dns = await import("node:dns/promises");
 
-  let verified = false;
+  let verified: boolean;
   try {
     const records = await dns.resolveCname(tenant.customDomain);
     verified = records.some(

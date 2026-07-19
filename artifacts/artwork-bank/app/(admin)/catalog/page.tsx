@@ -19,8 +19,6 @@ import {
   inArray,
   desc,
   count,
-  asc,
-  sql,
 } from "drizzle-orm";
 import { Plus, FolderOpen, Users } from "lucide-react";
 import { CatalogFilters } from "./_filters";

@@ -8,7 +8,7 @@ import {
   artworkCategoriesTable,
   artworkCategoryOnArtworkTable,
 } from "@workspace/db";
-import { and, eq, inArray, desc, count, ne } from "drizzle-orm";
+import { and, eq, inArray, desc, count } from "drizzle-orm";
 import { getTenantBySlug, formatPrice } from "@/lib/tenant-cache";
 import { getServeUrl } from "@/lib/object-storage";
 
@@ -130,7 +130,7 @@ function buildUrl(base: string, params: Record<string, string | undefined>) {
 }
 
 function renderPage({
-  tenant,
+  tenant: _tenant,
   themeColor,
   base,
   categories,
@@ -138,7 +138,7 @@ function renderPage({
   total,
   page,
   sp,
-  slug,
+  slug: _slug,
 }: {
   tenant: Tenant;
   themeColor: string;

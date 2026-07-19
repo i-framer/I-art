@@ -91,7 +91,7 @@ export async function submitInquiry(
   }
 
   // Save the inquiry first so the lead isn't lost even if email fails.
-  let inquiryId: string | null = null;
+  let inquiryId: string | null;
   try {
     const [row] = await db
       .insert(inquiriesTable)

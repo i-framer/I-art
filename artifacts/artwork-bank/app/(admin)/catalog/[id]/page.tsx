@@ -11,7 +11,7 @@ import {
   representedArtistsTable,
   tenantsTable,
 } from "@workspace/db";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { ArtworkForm } from "../_form";
 import { ChevronRight } from "lucide-react";
 

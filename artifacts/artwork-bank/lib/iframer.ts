@@ -83,7 +83,7 @@ export async function createIFramerJob(
   }
 
   if (!res.ok) {
-    let detail = "";
+    let detail: string;
     try {
       const body = await res.json();
       detail = body?.message ?? body?.error ?? JSON.stringify(body);

@@ -4,7 +4,6 @@ import { artworksTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { getTenantBySlug } from "@/lib/tenant-cache";
 
-const VISIBLE_STATUSES = ["AVAILABLE", "SOLD", "RESERVED"];
 const BASE_DOMAIN = "https://i-art.com.au";
 
 export default async function sitemap({

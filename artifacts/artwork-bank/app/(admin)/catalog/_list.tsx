@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { deleteArtwork, bulkUpdateStatus } from "./actions";
-import type { Artwork, ArtworkImage, ArtworkCategory, RepresentedArtist } from "@workspace/db";
+import type { Artwork, ArtworkImage, ArtworkCategory } from "@workspace/db";
 import { Pencil, Trash2, Loader2 } from "lucide-react";
 
 type ArtworkRow = {
@@ -47,7 +47,11 @@ export function ArtworkList({ rows, tenantType }: Props) {
 
   function toggleOne(id: string) {
     const next = new Set(selected);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
     setSelected(next);
   }
 

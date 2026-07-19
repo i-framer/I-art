@@ -6,7 +6,6 @@ import {
   artworkCategoryOnArtworkTable,
 } from "@workspace/db";
 import { eq, and, count } from "drizzle-orm";
-import { z } from "zod";
 import { getSession } from "@/lib/auth";
 import type { ArtworkCategory } from "@workspace/db";
 

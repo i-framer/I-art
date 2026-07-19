@@ -7,7 +7,7 @@ import {
   artworkImagesTable,
   representedArtistsTable,
 } from "@workspace/db";
-import { and, asc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getTenantBySlug, formatPrice, formatDimensions } from "@/lib/tenant-cache";
 import { getServeUrl } from "@/lib/object-storage";
 import { isStripeConfigured } from "@/lib/stripe";
