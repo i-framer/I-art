@@ -167,6 +167,22 @@ export default async function SettingsPage({
               <span className="text-sm text-stone-500">Used on your public storefront</span>
             </div>
           </div>
+          <div>
+            <label htmlFor="contactEmail" className="block text-sm font-medium text-stone-700 mb-1.5">
+              Contact email
+            </label>
+            <input
+              id="contactEmail"
+              name="contactEmail"
+              type="email"
+              defaultValue={tenant.contactEmail ?? ""}
+              placeholder="hello@yourgallery.com"
+              className="w-full rounded-lg border border-stone-300 bg-white px-3.5 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-900/10 transition-colors"
+            />
+            <p className="mt-1 text-xs text-stone-400">
+              Buyer inquiries are sent here when online payments are unavailable.
+            </p>
+          </div>
         </div>
 
         <div className="rounded-xl border border-stone-200 bg-white p-6 space-y-4">

@@ -9,6 +9,86 @@ const FULFILLMENT_TEXT: Record<string, string> = {
   FRAMING_JOB: "Your framing job has been received. The framer will contact you with next steps.",
 };
 
+/**
+ * Send a buyer inquiry about an artwork to the gallery's contact email.
+ * Returns true if the email was accepted by Resend, false otherwise.
+ */
+export async function sendArtworkInquiry({
+  galleryEmail,
+  buyerName,
+  buyerEmail,
+  message,
+  artworkTitle,
+  artworkSku,
+  artworkUrl,
+  tenantName,
+}: {
+  galleryEmail: string;
+  buyerName: string;
+  buyerEmail: string;
+  message: string;
+  artworkTitle: string;
+  artworkSku: string;
+  artworkUrl: string;
+  tenantName: string;
+}): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.log(
+      `[Email skipped — RESEND_API_KEY not set] Inquiry about "${artworkTitle}" from ${buyerEmail} to ${galleryEmail}`,
+    );
+    return false;
+  }
+
+  const escapeHtml = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "inquiries@i-art.com.au",
+        to: galleryEmail,
+        reply_to: buyerEmail,
+        subject: `Inquiry about "${artworkTitle}" (${artworkSku})`,
+        html: `
+          <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+            <h2 style="color:#1c1917;">New artwork inquiry</h2>
+            <p>A buyer has asked about <strong>${escapeHtml(artworkTitle)}</strong> (SKU ${escapeHtml(artworkSku)}) on your ${escapeHtml(tenantName)} storefront.</p>
+            <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
+              <p style="margin:0 0 8px;"><strong>From:</strong> ${escapeHtml(buyerName)} &lt;${escapeHtml(buyerEmail)}&gt;</p>
+              <p style="margin:0;white-space:pre-line;">${escapeHtml(message)}</p>
+            </div>
+            <p><a href="${escapeHtml(artworkUrl)}" style="color:#1c1917;">View the artwork</a></p>
+            <p style="color:#78716c;font-size:14px;margin-top:24px;">
+              Reply to this email to respond to the buyer directly.
+            </p>
+          </div>
+        `,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(`Resend error ${res.status}:`, body);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("Failed to send inquiry email:", err);
+    return false;
+  }
+}
+
 export async function sendOrderConfirmation({
   buyerEmail,
   buyerName,

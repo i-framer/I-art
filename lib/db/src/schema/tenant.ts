@@ -23,6 +23,7 @@ export const tenantsTable = pgTable("tenant", {
     .notNull()
     .default(false),
   storefrontEnabled: boolean("storefront_enabled").notNull().default(true),
+  contactEmail: text("contact_email"),
   logoUrl: text("logo_url"),
   themeColor: text("theme_color"),
   aboutText: text("about_text"),

@@ -13,6 +13,7 @@ import { getServeUrl } from "@/lib/object-storage";
 import { isStripeConfigured } from "@/lib/stripe";
 import { ImageCarousel } from "../_components/image-carousel";
 import { BuyNowButton } from "../_components/buy-now-button";
+import { InquiryForm } from "../_components/inquiry-form";
 
 type Props = {
   params: Promise<{ slug: string; artworkId: string }>;
@@ -193,10 +194,31 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
                 <p className="text-sm font-medium text-stone-700">
                   Online payments are currently unavailable for this gallery.
                 </p>
-                <p className="mt-1 text-xs text-stone-500">
-                  Please contact {tenant.businessName} directly to purchase this
-                  piece.
-                </p>
+                {tenant.contactEmail ? (
+                  <>
+                    <p className="mt-1 text-xs text-stone-500">
+                      Ask {tenant.businessName} about this piece and they'll get
+                      back to you, or email{" "}
+                      <a
+                        href={`mailto:${tenant.contactEmail}?subject=${encodeURIComponent(`Inquiry about "${artwork.title}" (${artwork.sku})`)}`}
+                        className="underline underline-offset-2 hover:text-stone-700"
+                      >
+                        {tenant.contactEmail}
+                      </a>{" "}
+                      directly.
+                    </p>
+                    <InquiryForm
+                      slug={slug}
+                      artworkId={artworkId}
+                      themeColor={themeColor}
+                    />
+                  </>
+                ) : (
+                  <p className="mt-1 text-xs text-stone-500">
+                    Please contact {tenant.businessName} directly to purchase
+                    this piece.
+                  </p>
+                )}
               </div>
             ) : (
               <BuyNowButton
