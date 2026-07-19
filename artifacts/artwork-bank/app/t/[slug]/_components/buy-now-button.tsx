@@ -47,11 +47,21 @@ export function BuyNowButton({
           fulfillmentType: fulfillment,
         }),
       });
-      const data = await res.json();
-      if (data.url) {
+      let data: { url?: string; error?: string } = {};
+      try {
+        data = await res.json();
+      } catch {
+        // Non-JSON response body — fall through to status-based message
+      }
+      if (res.ok && data.url) {
         window.location.href = data.url;
       } else {
-        setError(data.error ?? "Something went wrong. Please try again.");
+        setError(
+          data.error ??
+            (res.status === 503
+              ? "Payments are temporarily unavailable for this gallery. Please try again later or contact the gallery directly."
+              : "Something went wrong. Please try again."),
+        );
         setLoading(false);
       }
     } catch {
