@@ -21,6 +21,7 @@ export const inquiriesTable = pgTable("inquiry", {
   message: text("message").notNull(),
   emailError: text("email_error"),
   status: inquiryStatusEnum("status").default("NEW").notNull(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

@@ -8,8 +8,8 @@ import {
   inquiryRepliesTable,
   tenantsTable,
 } from "@workspace/db";
-import { eq, desc, count, and, inArray, asc } from "drizzle-orm";
-import { setInquiryStatus } from "./actions";
+import { eq, desc, count, and, inArray, asc, isNull, isNotNull } from "drizzle-orm";
+import { setInquiryStatus, setInquiryArchived } from "./actions";
 import { ReplyForm } from "./reply-form";
 
 export const metadata: Metadata = { title: "Inquiries" };
@@ -27,6 +27,7 @@ const FILTERS = [
   { key: "all", label: "All" },
   { key: "new", label: "New" },
   { key: "handled", label: "Handled" },
+  { key: "archived", label: "Archived" },
 ] as const;
 
 type FilterKey = (typeof FILTERS)[number]["key"];
@@ -43,16 +44,21 @@ export default async function InquiriesPage({
   const page = Math.max(1, parseInt(sp.page ?? "1", 10));
   const offset = (page - 1) * PAGE_SIZE;
   const filter: FilterKey =
-    sp.status === "new" || sp.status === "handled" ? sp.status : "all";
+    sp.status === "new" || sp.status === "handled" || sp.status === "archived"
+      ? sp.status
+      : "all";
 
   const tenantWhere = eq(inquiriesTable.tenantId, session.tenantId);
   const where =
-    filter === "all"
-      ? tenantWhere
-      : and(
-          tenantWhere,
-          eq(inquiriesTable.status, filter === "new" ? "NEW" : "HANDLED"),
-        );
+    filter === "archived"
+      ? and(tenantWhere, isNotNull(inquiriesTable.archivedAt))
+      : filter === "all"
+        ? and(tenantWhere, isNull(inquiriesTable.archivedAt))
+        : and(
+            tenantWhere,
+            isNull(inquiriesTable.archivedAt),
+            eq(inquiriesTable.status, filter === "new" ? "NEW" : "HANDLED"),
+          );
 
   const [rows, [countRow], [newCountRow], tenant] = await Promise.all([
     db
@@ -66,7 +72,13 @@ export default async function InquiriesPage({
     db
       .select({ count: count() })
       .from(inquiriesTable)
-      .where(and(tenantWhere, eq(inquiriesTable.status, "NEW"))),
+      .where(
+        and(
+          tenantWhere,
+          eq(inquiriesTable.status, "NEW"),
+          isNull(inquiriesTable.archivedAt),
+        ),
+      ),
     db.query.tenantsTable.findFirst({
       where: eq(tenantsTable.id, session.tenantId),
     }),
@@ -144,7 +156,9 @@ export default async function InquiriesPage({
               ? "No inquiries yet. When buyers send a message from an artwork page, it will appear here."
               : filter === "new"
                 ? "No new inquiries. You're all caught up!"
-                : "No handled inquiries yet."}
+                : filter === "handled"
+                  ? "No handled inquiries yet."
+                  : "No archived inquiries."}
           </p>
         </div>
       ) : (
@@ -164,7 +178,11 @@ export default async function InquiriesPage({
                     <p className="font-medium text-stone-900">
                       {inq.buyerName}
                     </p>
-                    {inq.status === "NEW" ? (
+                    {inq.archivedAt ? (
+                      <span className="inline-flex rounded-full bg-stone-200 px-2 py-0.5 text-[10px] font-medium text-stone-600">
+                        Archived
+                      </span>
+                    ) : inq.status === "NEW" ? (
                       <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
                         New
                       </span>
@@ -212,6 +230,20 @@ export default async function InquiriesPage({
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  <form action={setInquiryArchived}>
+                    <input type="hidden" name="inquiryId" value={inq.id} />
+                    <input
+                      type="hidden"
+                      name="archived"
+                      value={inq.archivedAt ? "false" : "true"}
+                    />
+                    <button
+                      type="submit"
+                      className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-50"
+                    >
+                      {inq.archivedAt ? "Unarchive" : "Archive"}
+                    </button>
+                  </form>
                   <form action={setInquiryStatus}>
                     <input type="hidden" name="inquiryId" value={inq.id} />
                     <input

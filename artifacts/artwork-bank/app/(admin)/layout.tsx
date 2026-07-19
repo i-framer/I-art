@@ -4,7 +4,7 @@ import { getSession } from "@/lib/auth";
 import { logout } from "@/app/(auth)/actions";
 import { db } from "@workspace/db";
 import { inquiriesTable, tenantsTable } from "@workspace/db";
-import { eq, and, count } from "drizzle-orm";
+import { eq, and, count, isNull } from "drizzle-orm";
 import {
   LayoutDashboard,
   Image,
@@ -45,6 +45,7 @@ export default async function AdminLayout({
         and(
           eq(inquiriesTable.tenantId, session.tenantId),
           eq(inquiriesTable.status, "NEW"),
+          isNull(inquiriesTable.archivedAt),
         ),
       ),
   ]);

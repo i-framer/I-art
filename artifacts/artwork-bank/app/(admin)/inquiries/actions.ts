@@ -38,6 +38,32 @@ export async function setInquiryStatus(formData: FormData): Promise<void> {
   revalidatePath("/", "layout");
 }
 
+export async function setInquiryArchived(formData: FormData): Promise<void> {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  const inquiryId = formData.get("inquiryId") as string;
+  const archived = formData.get("archived") as string;
+  if (!inquiryId || (archived !== "true" && archived !== "false")) {
+    throw new Error("Invalid request.");
+  }
+
+  const result = await db
+    .update(inquiriesTable)
+    .set({ archivedAt: archived === "true" ? new Date() : null })
+    .where(
+      and(
+        eq(inquiriesTable.id, inquiryId),
+        eq(inquiriesTable.tenantId, session.tenantId),
+      ),
+    )
+    .returning({ id: inquiriesTable.id });
+  if (result.length === 0) throw new Error("Inquiry not found.");
+
+  revalidatePath("/inquiries");
+  revalidatePath("/", "layout");
+}
+
 export type ReplyState = {
   status: "idle" | "sent" | "error";
   message?: string;
