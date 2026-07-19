@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ensureEmailSweepScheduler } from "@/lib/email-sweep-scheduler";
+
+// Start the background confirmation-email sweep (no-op if already running).
+ensureEmailSweepScheduler();
 
 export const metadata: Metadata = {
   title: {

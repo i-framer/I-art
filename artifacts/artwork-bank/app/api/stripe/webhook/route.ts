@@ -178,7 +178,12 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       });
       await db
         .update(ordersTable)
-        .set({ emailSentAt: new Date(), emailError: null })
+        .set({
+          emailSentAt: new Date(),
+          emailError: null,
+          emailAttempts: 1,
+          emailLastAttemptAt: new Date(),
+        })
         .where(eq(ordersTable.id, order.id));
     } catch (err) {
       const message = (err as any)?.message ?? String(err);
@@ -189,7 +194,11 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
       try {
         await db
           .update(ordersTable)
-          .set({ emailError: message })
+          .set({
+            emailError: message,
+            emailAttempts: 1,
+            emailLastAttemptAt: new Date(),
+          })
           .where(eq(ordersTable.id, order.id));
       } catch (dbErr) {
         console.error(

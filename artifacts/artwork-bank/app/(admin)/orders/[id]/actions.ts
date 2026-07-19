@@ -71,12 +71,19 @@ export async function resendConfirmationEmail(
     });
     await db
       .update(ordersTable)
-      .set({ emailSentAt: new Date(), emailError: null })
+      .set({
+        emailSentAt: new Date(),
+        emailError: null,
+        emailLastAttemptAt: new Date(),
+      })
       .where(eq(ordersTable.id, orderId));
   } catch (err) {
     await db
       .update(ordersTable)
-      .set({ emailError: (err as any)?.message ?? String(err) })
+      .set({
+        emailError: (err as any)?.message ?? String(err),
+        emailLastAttemptAt: new Date(),
+      })
       .where(eq(ordersTable.id, orderId));
   }
 

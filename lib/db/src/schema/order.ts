@@ -44,6 +44,9 @@ export const ordersTable = pgTable("order", {
   // Buyer confirmation email delivery tracking
   emailSentAt: timestamp("email_sent_at", { withTimezone: true }),
   emailError: text("email_error"),
+  // Automatic retry bookkeeping for the background email sweep
+  emailAttempts: integer("email_attempts").default(0).notNull(),
+  emailLastAttemptAt: timestamp("email_last_attempt_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
