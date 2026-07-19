@@ -104,6 +104,7 @@ export async function sendOrderConfirmation({
   fulfillmentType,
   orderRef,
   tenantName,
+  orderLookupUrl,
 }: {
   buyerEmail: string;
   buyerName: string | null;
@@ -111,6 +112,8 @@ export async function sendOrderConfirmation({
   fulfillmentType: string;
   orderRef: string;
   tenantName: string;
+  /** Absolute URL of the guest order-status lookup page, if available. */
+  orderLookupUrl?: string;
 }): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
 
@@ -145,6 +148,11 @@ export async function sendOrderConfirmation({
             <p style="margin-top:24px;padding:16px;background:#f5f5f4;border-radius:8px;">
               Order reference: <code style="font-family:monospace;">${orderRef}</code>
             </p>
+            ${
+              orderLookupUrl
+                ? `<p>You can check your order status any time — no account needed: <a href="${orderLookupUrl}" style="color:#1c1917;">Check order status</a> (use this email address and your order reference).</p>`
+                : ""
+            }
             <p style="color:#78716c;font-size:14px;margin-top:24px;">
               Thank you for supporting ${tenantName}.
             </p>

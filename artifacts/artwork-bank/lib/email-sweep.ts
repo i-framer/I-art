@@ -85,6 +85,9 @@ export async function sweepUnsentConfirmationEmails(
         fulfillmentType: order.fulfillmentType,
         orderRef: order.id.slice(0, 8).toUpperCase(),
         tenantName: tenant.businessName,
+        orderLookupUrl: process.env.REPLIT_DEV_DOMAIN
+          ? `https://${process.env.REPLIT_DEV_DOMAIN}/t/${tenant.slug}/orders`
+          : undefined,
       });
       await db
         .update(ordersTable)

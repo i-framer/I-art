@@ -28,6 +28,7 @@ export default async function OrderSuccessPage({ params, searchParams }: Props) 
   let buyerName: string | null = null;
   let buyerEmail: string | null = null;
   let artworkTitle: string | null = null;
+  let orderRef: string | null = null;
 
   if (session_id) {
     // Try DB first (fast, webhook may have already fired)
@@ -41,6 +42,7 @@ export default async function OrderSuccessPage({ params, searchParams }: Props) 
     if (order) {
       buyerName = order.buyerName;
       buyerEmail = order.buyerEmail;
+      orderRef = order.id.slice(0, 8).toUpperCase();
       const item = await db.query.orderItemsTable.findFirst({
         where: eq(orderItemsTable.orderId, order.id),
       });
@@ -103,6 +105,16 @@ export default async function OrderSuccessPage({ params, searchParams }: Props) 
           style={{ backgroundColor: themeColor }}
         >
           Continue Browsing
+        </Link>
+        <Link
+          href={
+            orderRef && buyerEmail
+              ? `/t/${slug}/orders?email=${encodeURIComponent(buyerEmail)}&ref=${encodeURIComponent(orderRef)}`
+              : `/t/${slug}/orders`
+          }
+          className="rounded-xl border border-stone-300 px-6 py-3 text-sm font-semibold text-stone-700 transition-colors hover:bg-stone-50"
+        >
+          Check Order Status
         </Link>
       </div>
     </div>
