@@ -7,7 +7,6 @@ const ADMIN_PATHS = ["/dashboard", "/settings", "/orders", "/catalog"];
  * Custom domains are anything else (e.g. www.janeart.com).
  */
 const PLATFORM_DOMAIN_SUFFIXES = [
-  ".i-art.com.au",
   ".replit.dev",
   ".replit.app",
   ".repl.co",
@@ -33,7 +32,28 @@ const CUSTOM_DOMAIN_PASSTHROUGH_PREFIXES = [
   "/sitemap.xml",
 ];
 
+/** Host of the configured site URL (if any) — treated as a platform domain. */
+function getConfiguredPlatformHost(): string | null {
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  if (!siteUrl) return null;
+  try {
+    return new URL(siteUrl).hostname;
+  } catch {
+    return null;
+  }
+}
+
 function isPlatformDomain(host: string): boolean {
+  const configuredHost = getConfiguredPlatformHost();
+  if (
+    configuredHost &&
+    (host === configuredHost || host.endsWith(`.${configuredHost}`))
+  ) {
+    return true;
+  }
+  if (process.env.VERCEL_URL && host === process.env.VERCEL_URL.split(":")[0]) {
+    return true;
+  }
   return PLATFORM_DOMAIN_SUFFIXES.some(
     (suffix) => host === suffix.replace(/^\./, "") || host.endsWith(suffix),
   );

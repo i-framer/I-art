@@ -13,6 +13,7 @@ import {
   Store,
 } from "lucide-react";
 import Link from "next/link";
+import { getTenantUrl } from "@/lib/base-url";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -28,6 +29,8 @@ export default async function DashboardPage() {
   const teamMembers = await db.query.tenantUsersTable.findMany({
     where: eq(tenantUsersTable.tenantId, session.tenantId),
   });
+
+  const storefrontUrl = getTenantUrl(tenant);
 
   const stats = [
     {
@@ -89,7 +92,11 @@ export default async function DashboardPage() {
           >
             /t/{tenant.slug}
           </Link>
-          <span className="ml-3 text-xs text-amber-500">(production: {tenant.slug}.i-art.com.au)</span>
+          {storefrontUrl && (
+            <span className="ml-3 text-xs text-amber-500">
+              (production: {storefrontUrl.replace(/^https?:\/\//, "")})
+            </span>
+          )}
         </div>
         <span className="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded-full font-medium shrink-0">
           {tenant.storefrontEnabled ? "Active" : "Disabled"}

@@ -11,6 +11,29 @@ export class EmailSendError extends Error {
   }
 }
 
+/**
+ * Sender addresses come from configuration so the platform can run on any
+ * domain without failing DMARC/SPF:
+ * - EMAIL_FROM_INQUIRIES / EMAIL_FROM_ORDERS — per-purpose overrides
+ * - EMAIL_FROM — shared fallback for both
+ * - "onboarding@resend.dev" — Resend's sandbox sender (dev/testing only)
+ */
+function getInquiriesFrom(): string {
+  return (
+    process.env.EMAIL_FROM_INQUIRIES ??
+    process.env.EMAIL_FROM ??
+    "onboarding@resend.dev"
+  );
+}
+
+function getOrdersFrom(): string {
+  return (
+    process.env.EMAIL_FROM_ORDERS ??
+    process.env.EMAIL_FROM ??
+    "onboarding@resend.dev"
+  );
+}
+
 const FULFILLMENT_TEXT: Record<string, string> = {
   SHIP: "Your artwork will be shipped to you. The gallery will be in touch with tracking details.",
   PICKUP: "You've chosen to collect in person. The gallery will contact you to arrange pickup.",
@@ -64,7 +87,7 @@ export async function sendArtworkInquiry({
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "inquiries@i-art.com.au",
+        from: getInquiriesFrom(),
         to: galleryEmail,
         reply_to: buyerEmail,
         subject: `Inquiry about "${artworkTitle}" (${artworkSku})`,
@@ -142,7 +165,7 @@ export async function sendInquiryReply({
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "inquiries@i-art.com.au",
+        from: getInquiriesFrom(),
         to: buyerEmail,
         ...(galleryEmail ? { reply_to: galleryEmail } : {}),
         subject: `Re: Inquiry about "${artworkTitle}" — ${tenantName}`,
@@ -230,7 +253,7 @@ export async function sendOrderStatusUpdate({
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "orders@i-art.com.au",
+        from: getOrdersFrom(),
         to: buyerEmail,
         subject: `Order update — ${artworkTitle}`,
         html: `
@@ -322,7 +345,7 @@ export async function sendConfirmationFailureNotice({
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "orders@i-art.com.au",
+        from: getOrdersFrom(),
         to: galleryEmail,
         subject: `Action needed — buyer confirmation email failed (order ${orderRef})`,
         html: `
@@ -397,7 +420,7 @@ export async function sendOrderConfirmation({
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "orders@i-art.com.au",
+        from: getOrdersFrom(),
         to: buyerEmail,
         subject: `Order confirmed — ${artworkTitle}`,
         html: `

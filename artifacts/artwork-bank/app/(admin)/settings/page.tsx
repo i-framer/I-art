@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { getStripeClient } from "@/lib/stripe";
 import { CNAME_TARGET } from "@/lib/tenant-cache";
+import { getPlatformBaseUrl } from "@/lib/base-url";
 import { DomainForm } from "./_components/domain-form";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -145,7 +146,12 @@ export default async function SettingsPage({
             </label>
             <div className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3.5 py-2.5">
               <span className="text-sm font-mono text-stone-600">
-                {tenant.slug}.i-art.com.au
+                {(() => {
+                  const base = getPlatformBaseUrl();
+                  return base
+                    ? `${base.replace(/^https?:\/\//, "")}/t/${tenant.slug}`
+                    : `/t/${tenant.slug}`;
+                })()}
               </span>
               <ExternalLink className="h-3.5 w-3.5 text-stone-400 ml-auto" />
             </div>
