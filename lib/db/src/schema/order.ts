@@ -41,6 +41,9 @@ export const ordersTable = pgTable("order", {
   // iFramer integration (FRAMING_JOB orders only)
   iframerJobId: text("iframer_job_id"),
   iframerJobError: text("iframer_job_error"),
+  // Buyer confirmation email delivery tracking
+  emailSentAt: timestamp("email_sent_at", { withTimezone: true }),
+  emailError: text("email_error"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

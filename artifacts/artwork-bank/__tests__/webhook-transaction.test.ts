@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 const state = vi.hoisted(() => ({
   committed: [] as string[],
   failOn: null as string | null, // e.g. "insert:orderItems"
+  directUpdates: [] as any[], // db.update(...).set(vals) outside the transaction
 }));
 
 const tables = vi.hoisted(() => ({
@@ -67,7 +68,10 @@ vi.mock("@workspace/db", () => ({
       throw new Error("order writes must go through db.transaction");
     }),
     update: vi.fn(() => ({
-      set: () => ({ where: () => Promise.resolve() }),
+      set: (vals: any) => {
+        state.directUpdates.push(vals);
+        return { where: () => Promise.resolve() };
+      },
     })),
   },
   ...tables,
@@ -129,6 +133,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.committed.length = 0;
   state.failOn = null;
+  state.directUpdates.length = 0;
   process.env.STRIPE_WEBHOOK_DEV_BYPASS = "true";
   mockHeaders.mockResolvedValue(new Headers());
   vi.mocked(db.query.ordersTable.findFirst).mockResolvedValue(undefined as any);
@@ -201,5 +206,25 @@ describe("checkout.session.completed transactional handling", () => {
       "insert:orderItems",
       "update:artworks",
     ]);
+  });
+
+  it("records emailSentAt when the confirmation email succeeds", async () => {
+    sendOrderConfirmation.mockResolvedValueOnce(undefined);
+    const res = await post();
+    expect(res.status).toBe(200);
+    const emailUpdate = state.directUpdates.find((u) => "emailSentAt" in u);
+    expect(emailUpdate).toBeTruthy();
+    expect(emailUpdate.emailSentAt).toBeInstanceOf(Date);
+    expect(emailUpdate.emailError).toBeNull();
+  });
+
+  it("persists emailError (not just a log) when the confirmation email fails", async () => {
+    sendOrderConfirmation.mockRejectedValueOnce(new Error("smtp down"));
+    const res = await post();
+    expect(res.status).toBe(200);
+    const emailUpdate = state.directUpdates.find((u) => "emailError" in u);
+    expect(emailUpdate).toBeTruthy();
+    expect(emailUpdate.emailError).toContain("smtp down");
+    expect(emailUpdate.emailSentAt).toBeUndefined();
   });
 });

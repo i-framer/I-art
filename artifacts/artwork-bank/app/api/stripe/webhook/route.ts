@@ -163,7 +163,9 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   });
 
   // Send confirmation email (non-fatal — the order is already committed, so a
-  // failed email must not turn the webhook into a 500/Stripe retry loop)
+  // failed email must not turn the webhook into a 500/Stripe retry loop).
+  // Success and failure are both persisted so unsent emails can be retried
+  // from the admin order page.
   if (buyerEmail && tenant) {
     try {
       await sendOrderConfirmation({
@@ -174,11 +176,27 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         orderRef: order.id.slice(0, 8).toUpperCase(),
         tenantName: tenant.businessName,
       });
+      await db
+        .update(ordersTable)
+        .set({ emailSentAt: new Date(), emailError: null })
+        .where(eq(ordersTable.id, order.id));
     } catch (err) {
+      const message = (err as any)?.message ?? String(err);
       console.error(
         `Order confirmation email failed for order ${order.id}:`,
-        (err as any)?.message ?? err,
+        message,
       );
+      try {
+        await db
+          .update(ordersTable)
+          .set({ emailError: message })
+          .where(eq(ordersTable.id, order.id));
+      } catch (dbErr) {
+        console.error(
+          `Failed to record email error for order ${order.id}:`,
+          (dbErr as any)?.message ?? dbErr,
+        );
+      }
     }
   }
 

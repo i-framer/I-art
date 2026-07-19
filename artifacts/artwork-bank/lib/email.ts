@@ -3,6 +3,14 @@
  * Gracefully skips sending if RESEND_API_KEY is not set (dev / testing).
  */
 
+/** Thrown when a confirmation email cannot be sent; callers should persist the failure so it can be retried. */
+export class EmailSendError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EmailSendError";
+  }
+}
+
 const FULFILLMENT_TEXT: Record<string, string> = {
   SHIP: "Your artwork will be shipped to you. The gallery will be in touch with tracking details.",
   PICKUP: "You've chosen to collect in person. The gallery will contact you to arrange pickup.",
@@ -107,10 +115,11 @@ export async function sendOrderConfirmation({
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
-    console.log(
-      `[Email skipped — RESEND_API_KEY not set] Order ${orderRef} for ${buyerEmail}`,
+    // Throw so callers record the miss (emailError) instead of silently
+    // dropping the buyer's confirmation — it can be re-sent once configured.
+    throw new EmailSendError(
+      "RESEND_API_KEY is not configured — confirmation email not sent.",
     );
-    return;
   }
 
   const fulfillmentText =
@@ -146,10 +155,14 @@ export async function sendOrderConfirmation({
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      console.error(`Resend error ${res.status}:`, body);
+      throw new EmailSendError(
+        `Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
+      );
     }
   } catch (err) {
-    // Non-fatal — log and continue
-    console.error("Failed to send confirmation email:", err);
+    if (err instanceof EmailSendError) throw err;
+    throw new EmailSendError(
+      `Failed to send confirmation email: ${(err as any)?.message ?? String(err)}`,
+    );
   }
 }

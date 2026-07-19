@@ -6,8 +6,13 @@ import { db } from "@workspace/db";
 import { ordersTable, orderItemsTable, tenantsTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { formatPrice } from "@/lib/tenant-cache";
-import { markFulfilled, markCancelled, saveTrackingNote } from "./actions";
-import { ArrowLeft, CheckCircle2, AlertCircle, Clock } from "lucide-react";
+import {
+  markFulfilled,
+  markCancelled,
+  saveTrackingNote,
+  resendConfirmationEmail,
+} from "./actions";
+import { ArrowLeft, CheckCircle2, AlertCircle, Clock, Mail } from "lucide-react";
 
 export const metadata: Metadata = { title: "Order Detail" };
 
@@ -140,6 +145,66 @@ export default async function OrderDetailPage({
             <p className="text-xs text-stone-400 mt-1 text-right">
               Platform fee: {formatPrice(order.applicationFeeCents)}
             </p>
+          )}
+        </div>
+
+        {/* ── Confirmation email status ────────────────────────────────────── */}
+        <div className="rounded-xl border border-stone-200 bg-white p-6">
+          <h2 className="text-sm font-semibold text-stone-900 mb-4">
+            Confirmation email
+          </h2>
+          {order.emailSentAt ? (
+            <div className="flex items-start gap-3">
+              <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-emerald-700">
+                  Sent to {order.buyerEmail}
+                </p>
+                <p className="text-xs text-stone-500 mt-0.5">
+                  {order.emailSentAt.toLocaleString("en-AU", {
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                {order.emailError ? (
+                  <AlertCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                ) : (
+                  <Clock className="h-5 w-5 text-stone-400 shrink-0 mt-0.5" />
+                )}
+                <div className="min-w-0">
+                  <p
+                    className={`text-sm font-medium ${order.emailError ? "text-red-700" : "text-stone-500"}`}
+                  >
+                    {order.emailError
+                      ? "Sending failed"
+                      : "Not sent yet"}
+                  </p>
+                  {order.emailError && (
+                    <p className="text-xs text-stone-500 mt-1 leading-relaxed break-words">
+                      {order.emailError}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <form action={resendConfirmationEmail} className="pl-8">
+                <input type="hidden" name="orderId" value={order.id} />
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-2 rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 transition-colors"
+                >
+                  <Mail className="h-4 w-4" />
+                  Resend confirmation email
+                </button>
+              </form>
+            </div>
           )}
         </div>
 
