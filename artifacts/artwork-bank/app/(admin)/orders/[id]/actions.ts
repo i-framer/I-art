@@ -8,6 +8,7 @@ import { and, eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth";
 import { orderItemsTable, tenantsTable } from "@workspace/db";
 import { sendOrderConfirmation, sendOrderStatusUpdate } from "@/lib/email";
+import { getTenantUrl } from "@/lib/base-url";
 
 async function requireOwnership(orderId: string) {
   const session = await getSession();
@@ -62,9 +63,7 @@ async function notifyBuyerOfUpdate(orderId: string): Promise<void> {
       trackingNote: order.trackingNote,
       orderRef: order.id.slice(0, 8).toUpperCase(),
       tenantName: tenant.businessName,
-      orderLookupUrl: process.env.REPLIT_DEV_DOMAIN
-        ? `https://${process.env.REPLIT_DEV_DOMAIN}/t/${tenant.slug}/orders`
-        : undefined,
+      orderLookupUrl: getTenantUrl(tenant, "/orders"),
     });
     await db
       .update(ordersTable)

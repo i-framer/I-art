@@ -8,6 +8,7 @@
 import { db, ordersTable, orderItemsTable, tenantsTable } from "@workspace/db";
 import { and, eq, isNull, isNotNull, lt, ne } from "drizzle-orm";
 import { sendOrderConfirmation, sendOrderStatusUpdate } from "@/lib/email";
+import { getTenantUrl } from "@/lib/base-url";
 
 /** Give up after this many failed attempts (initial send counts as one). */
 export const MAX_EMAIL_ATTEMPTS = 5;
@@ -85,9 +86,7 @@ export async function sweepUnsentConfirmationEmails(
         fulfillmentType: order.fulfillmentType,
         orderRef: order.id.slice(0, 8).toUpperCase(),
         tenantName: tenant.businessName,
-        orderLookupUrl: process.env.REPLIT_DEV_DOMAIN
-          ? `https://${process.env.REPLIT_DEV_DOMAIN}/t/${tenant.slug}/orders`
-          : undefined,
+        orderLookupUrl: getTenantUrl(tenant, "/orders"),
       });
       await db
         .update(ordersTable)
@@ -178,9 +177,7 @@ export async function sweepUnsentStatusEmails(
         trackingNote: order.trackingNote,
         orderRef: order.id.slice(0, 8).toUpperCase(),
         tenantName: tenant.businessName,
-        orderLookupUrl: process.env.REPLIT_DEV_DOMAIN
-          ? `https://${process.env.REPLIT_DEV_DOMAIN}/t/${tenant.slug}/orders`
-          : undefined,
+        orderLookupUrl: getTenantUrl(tenant, "/orders"),
       });
       await db
         .update(ordersTable)

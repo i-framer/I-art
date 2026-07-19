@@ -8,6 +8,7 @@ import { headers } from "next/headers";
 import { getTenantBySlug } from "@/lib/tenant-cache";
 import { sendArtworkInquiry } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getTenantUrl } from "@/lib/base-url";
 
 export type InquiryState = {
   status: "idle" | "sent" | "error";
@@ -113,10 +114,8 @@ export async function submitInquiry(
     };
   }
 
-  const domain = process.env.REPLIT_DEV_DOMAIN;
-  const artworkUrl = domain
-    ? `https://${domain}/t/${slug}/${artworkId}`
-    : `/t/${slug}/${artworkId}`;
+  const artworkUrl =
+    getTenantUrl(tenant, `/${artworkId}`) ?? `/t/${slug}/${artworkId}`;
 
   const sent = await sendArtworkInquiry({
     galleryEmail: tenant.contactEmail,

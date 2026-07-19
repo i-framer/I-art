@@ -14,6 +14,7 @@ import {
   StripeNotConfiguredError,
 } from "@/lib/stripe";
 import { sendOrderConfirmation } from "@/lib/email";
+import { getTenantUrl } from "@/lib/base-url";
 import { createIFramerJob, IFramerError } from "@/lib/iframer";
 import type Stripe from "stripe";
 
@@ -167,7 +168,6 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   // Success and failure are both persisted so unsent emails can be retried
   // from the admin order page.
   if (buyerEmail && tenant) {
-    const domain = process.env.REPLIT_DEV_DOMAIN;
     try {
       await sendOrderConfirmation({
         buyerEmail,
@@ -176,9 +176,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         fulfillmentType,
         orderRef: order.id.slice(0, 8).toUpperCase(),
         tenantName: tenant.businessName,
-        orderLookupUrl: domain
-          ? `https://${domain}/t/${tenant.slug}/orders`
-          : undefined,
+        orderLookupUrl: getTenantUrl(tenant, "/orders"),
       });
       await db
         .update(ordersTable)
