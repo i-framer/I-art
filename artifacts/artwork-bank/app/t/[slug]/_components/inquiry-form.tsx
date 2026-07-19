@@ -37,6 +37,19 @@ export function InquiryForm({
 
   return (
     <form action={formAction} className="mt-4 space-y-3 text-left">
+      {/* Honeypot field — hidden from real users, catches bots that fill every input. */}
+      <div aria-hidden="true" className="absolute -left-[9999px] top-auto h-px w-px overflow-hidden">
+        <label>
+          Website
+          <input
+            name="website"
+            type="text"
+            tabIndex={-1}
+            autoComplete="off"
+            defaultValue=""
+          />
+        </label>
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <input
           name="name"

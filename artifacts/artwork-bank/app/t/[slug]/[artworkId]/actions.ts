@@ -4,8 +4,10 @@ import { db } from "@workspace/db";
 import { artworksTable, inquiriesTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { headers } from "next/headers";
 import { getTenantBySlug } from "@/lib/tenant-cache";
 import { sendArtworkInquiry } from "@/lib/email";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export type InquiryState = {
   status: "idle" | "sent" | "error";
@@ -28,6 +30,28 @@ export async function submitInquiry(
   _prev: InquiryState,
   formData: FormData,
 ): Promise<InquiryState> {
+  // Honeypot: real users never fill this hidden field. If a bot does,
+  // pretend the submission succeeded but silently drop it.
+  const honeypot = formData.get("website");
+  if (typeof honeypot === "string" && honeypot.trim() !== "") {
+    return { status: "sent", error: "" };
+  }
+
+  // Per-IP rate limit: max 5 inquiries per 10 minutes.
+  const headerList = await headers();
+  const forwardedFor = headerList.get("x-forwarded-for");
+  const ip =
+    forwardedFor?.split(",")[0]?.trim() ||
+    headerList.get("x-real-ip") ||
+    "unknown";
+  if (!checkRateLimit(`inquiry:${ip}`, { limit: 5, windowMs: 10 * 60_000 })) {
+    return {
+      status: "error",
+      error:
+        "You've sent several inquiries in a short time. Please wait a few minutes and try again.",
+    };
+  }
+
   const parsed = inquirySchema.safeParse({
     name: formData.get("name"),
     email: formData.get("email"),
