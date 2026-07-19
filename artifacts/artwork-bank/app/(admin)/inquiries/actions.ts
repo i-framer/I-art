@@ -2,7 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { db, inquiriesTable, tenantsTable } from "@workspace/db";
+import {
+  db,
+  inquiriesTable,
+  inquiryRepliesTable,
+  tenantsTable,
+} from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth";
 import { sendInquiryReply, EmailSendError } from "@/lib/email";
@@ -93,6 +98,12 @@ export async function replyToInquiry(
         : "Failed to send reply. Please try again.";
     return { status: "error", message };
   }
+
+  await db.insert(inquiryRepliesTable).values({
+    tenantId: session.tenantId,
+    inquiryId,
+    message: replyMessage,
+  });
 
   await db
     .update(inquiriesTable)

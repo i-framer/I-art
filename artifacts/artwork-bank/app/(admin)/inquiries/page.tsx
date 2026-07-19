@@ -3,8 +3,12 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { db } from "@workspace/db";
-import { inquiriesTable, tenantsTable } from "@workspace/db";
-import { eq, desc, count, and } from "drizzle-orm";
+import {
+  inquiriesTable,
+  inquiryRepliesTable,
+  tenantsTable,
+} from "@workspace/db";
+import { eq, desc, count, and, inArray, asc } from "drizzle-orm";
 import { setInquiryStatus } from "./actions";
 import { ReplyForm } from "./reply-form";
 
@@ -67,6 +71,29 @@ export default async function InquiriesPage({
       where: eq(tenantsTable.id, session.tenantId),
     }),
   ]);
+
+  const replies =
+    rows.length > 0
+      ? await db
+          .select()
+          .from(inquiryRepliesTable)
+          .where(
+            and(
+              eq(inquiryRepliesTable.tenantId, session.tenantId),
+              inArray(
+                inquiryRepliesTable.inquiryId,
+                rows.map((r) => r.id),
+              ),
+            ),
+          )
+          .orderBy(asc(inquiryRepliesTable.sentAt))
+      : [];
+  const repliesByInquiry = new Map<string, typeof replies>();
+  for (const reply of replies) {
+    const list = repliesByInquiry.get(reply.inquiryId);
+    if (list) list.push(reply);
+    else repliesByInquiry.set(reply.inquiryId, [reply]);
+  }
 
   const total = countRow?.count ?? 0;
   const newCount = newCountRow?.count ?? 0;
@@ -210,6 +237,28 @@ export default async function InquiriesPage({
                   </form>
                 </div>
               </div>
+              {(repliesByInquiry.get(inq.id) ?? []).length > 0 && (
+                <div className="mt-3 border-t border-stone-100 pt-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-stone-400">
+                    Replies sent
+                  </p>
+                  <div className="mt-2 space-y-2">
+                    {(repliesByInquiry.get(inq.id) ?? []).map((reply) => (
+                      <div
+                        key={reply.id}
+                        className="rounded-lg bg-stone-50 p-3"
+                      >
+                        <p className="text-xs text-stone-500">
+                          {formatDate(reply.sentAt)}
+                        </p>
+                        <p className="mt-1 whitespace-pre-wrap text-sm text-stone-700">
+                          {reply.message}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="mt-3 border-t border-stone-100 pt-3">
                 <ReplyForm inquiryId={inq.id} buyerName={inq.buyerName} />
               </div>

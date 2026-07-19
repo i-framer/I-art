@@ -8,4 +8,5 @@ export * from "./artworkImage";
 export * from "./artworkCategory";
 export * from "./order";
 export * from "./inquiry";
+export * from "./inquiryReply";
 export * from "./rateLimitEvent";
