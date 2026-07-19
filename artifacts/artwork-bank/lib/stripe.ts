@@ -74,6 +74,19 @@ async function getStripeCredentials(): Promise<{
   };
 }
 
+/**
+ * Returns true when Stripe credentials are available (connector or env var).
+ * Used for pre-flight availability checks — never throws.
+ */
+export async function isStripeConfigured(): Promise<boolean> {
+  try {
+    await getStripeCredentials();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Returns a fresh authenticated Stripe client. */
 export async function getStripeClient(): Promise<Stripe> {
   const { secretKey } = await getStripeCredentials();

@@ -10,6 +10,7 @@ import {
 import { and, asc, eq } from "drizzle-orm";
 import { getTenantBySlug, formatPrice, formatDimensions } from "@/lib/tenant-cache";
 import { getServeUrl } from "@/lib/object-storage";
+import { isStripeConfigured } from "@/lib/stripe";
 import { ImageCarousel } from "../_components/image-carousel";
 import { BuyNowButton } from "../_components/buy-now-button";
 
@@ -97,6 +98,11 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
     })),
   );
 
+  // Payment availability: tenant must have a connected Stripe account and
+  // the platform's Stripe credentials must be configured.
+  const paymentsAvailable =
+    Boolean(tenant.stripeAccountId) && (await isStripeConfigured());
+
   const isSold = artwork.status === "SOLD";
   const isReserved = artwork.status === "RESERVED";
   const dimensions = formatDimensions(artwork.dimensionsW, artwork.dimensionsH, artwork.dimensionsD);
@@ -181,6 +187,16 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
             ) : isReserved ? (
               <div className="w-full rounded-xl bg-amber-50 py-4 text-center text-amber-700 text-sm font-medium border border-amber-200">
                 Currently reserved — contact us for availability
+              </div>
+            ) : !paymentsAvailable ? (
+              <div className="w-full rounded-xl bg-stone-50 border border-stone-200 px-4 py-4 text-center">
+                <p className="text-sm font-medium text-stone-700">
+                  Online payments are currently unavailable for this gallery.
+                </p>
+                <p className="mt-1 text-xs text-stone-500">
+                  Please contact {tenant.businessName} directly to purchase this
+                  piece.
+                </p>
               </div>
             ) : (
               <BuyNowButton
