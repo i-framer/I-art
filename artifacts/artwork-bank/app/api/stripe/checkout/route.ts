@@ -9,6 +9,7 @@ import {
   StripeNotConfiguredError,
 } from "@/lib/stripe";
 import { getServeUrl } from "@/lib/object-storage";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,28 @@ const VALID_FULFILLMENT_TYPES = ["SHIP", "PICKUP", "FRAMING_JOB"] as const;
 
 export async function POST(request: Request) {
   try {
+    // Per-IP rate limit: max 5 checkout attempts per 10 minutes, using the
+    // same shared database-backed limiter as the inquiry form so the limit
+    // holds across all server instances.
+    const forwardedFor = request.headers.get("x-forwarded-for");
+    const ip =
+      forwardedFor?.split(",")[0]?.trim() ||
+      request.headers.get("x-real-ip") ||
+      "unknown";
+    const allowed = await checkRateLimit(`checkout:${ip}`, {
+      limit: 5,
+      windowMs: 10 * 60_000,
+    });
+    if (!allowed) {
+      return NextResponse.json(
+        {
+          error:
+            "You've started several checkouts in a short time. Please wait a few minutes and try again.",
+        },
+        { status: 429 },
+      );
+    }
+
     const body = await request.json();
     const { artworkId, slug, fulfillmentType } = body as {
       artworkId: string;

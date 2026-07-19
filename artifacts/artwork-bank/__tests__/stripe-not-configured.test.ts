@@ -36,6 +36,11 @@ vi.mock("@/lib/tenant-cache", () => ({
   getTenantBySlug: vi.fn(),
 }));
 
+// Rate limiter hits the real Postgres pool; allow everything in these tests.
+vi.mock("@/lib/rate-limit", () => ({
+  checkRateLimit: vi.fn(async () => true),
+}));
+
 vi.mock("@/lib/object-storage", () => ({
   getServeUrl: vi.fn(),
 }));
