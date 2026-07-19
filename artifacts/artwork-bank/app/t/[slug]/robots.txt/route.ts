@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getTenantBySlug } from "@/lib/tenant-cache";
-
-const BASE_DOMAIN = "https://i-art.com.au";
+import { getTenantUrl } from "@/lib/base-url";
 
 export async function GET(
   _req: NextRequest,
@@ -16,10 +15,8 @@ export async function GET(
     });
   }
 
-  const tenantBase =
-    tenant.customDomainVerified && tenant.customDomain
-      ? `https://${tenant.customDomain}`
-      : `${BASE_DOMAIN}/t/${slug}`;
+  // Verified custom domain > platform base URL (resolved per environment)
+  const tenantBase = getTenantUrl(tenant);
 
   const body = [
     "User-agent: *",
@@ -29,8 +26,7 @@ export async function GET(
     "Disallow: /settings/",
     "Disallow: /catalog/",
     "",
-    `Sitemap: ${tenantBase}/sitemap.xml`,
-    "",
+    ...(tenantBase ? [`Sitemap: ${tenantBase}/sitemap.xml`, ""] : []),
   ].join("\n");
 
   return new NextResponse(body, {

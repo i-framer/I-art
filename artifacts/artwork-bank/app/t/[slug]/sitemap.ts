@@ -3,8 +3,7 @@ import { db } from "@workspace/db";
 import { artworksTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { getTenantBySlug } from "@/lib/tenant-cache";
-
-const BASE_DOMAIN = "https://i-art.com.au";
+import { getTenantUrl } from "@/lib/base-url";
 
 export default async function sitemap({
   params,
@@ -14,10 +13,9 @@ export default async function sitemap({
   const tenant = await getTenantBySlug(params.slug);
   if (!tenant) return [];
 
-  // Use custom domain if verified, otherwise the dev path
-  const tenantBase = tenant.customDomainVerified && tenant.customDomain
-    ? `https://${tenant.customDomain}`
-    : `${BASE_DOMAIN}/t/${params.slug}`;
+  // Verified custom domain > platform base URL (resolved per environment)
+  const tenantBase = getTenantUrl(tenant);
+  if (!tenantBase) return [];
 
   const artworks = await db
     .select({ id: artworksTable.id, updatedAt: artworksTable.updatedAt })
