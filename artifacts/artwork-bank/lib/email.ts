@@ -97,6 +97,86 @@ export async function sendArtworkInquiry({
   }
 }
 
+/**
+ * Send a gallery's reply to a buyer inquiry.
+ * Throws EmailSendError on failure so callers can surface it.
+ */
+export async function sendInquiryReply({
+  buyerEmail,
+  buyerName,
+  replyMessage,
+  originalMessage,
+  artworkTitle,
+  tenantName,
+  galleryEmail,
+}: {
+  buyerEmail: string;
+  buyerName: string;
+  replyMessage: string;
+  originalMessage: string;
+  artworkTitle: string;
+  tenantName: string;
+  /** Gallery contact email used as reply-to, if available. */
+  galleryEmail?: string | null;
+}): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    throw new EmailSendError(
+      "RESEND_API_KEY is not configured — reply not sent.",
+    );
+  }
+
+  const escapeHtml = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "inquiries@i-art.com.au",
+        to: buyerEmail,
+        ...(galleryEmail ? { reply_to: galleryEmail } : {}),
+        subject: `Re: Inquiry about "${artworkTitle}" — ${tenantName}`,
+        html: `
+          <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+            <p>Hi ${escapeHtml(buyerName)},</p>
+            <p><strong>${escapeHtml(tenantName)}</strong> has replied to your inquiry about <strong>${escapeHtml(artworkTitle)}</strong>:</p>
+            <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
+              <p style="margin:0;white-space:pre-line;">${escapeHtml(replyMessage)}</p>
+            </div>
+            <p style="color:#78716c;font-size:13px;">Your original message:</p>
+            <blockquote style="margin:0 0 24px;padding:12px 16px;border-left:3px solid #e7e5e4;color:#78716c;font-size:13px;white-space:pre-line;">${escapeHtml(originalMessage)}</blockquote>
+            <p style="color:#78716c;font-size:14px;">
+              Reply to this email to continue the conversation with ${escapeHtml(tenantName)}.
+            </p>
+          </div>
+        `,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new EmailSendError(
+        `Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof EmailSendError) throw err;
+    throw new EmailSendError(
+      `Failed to send reply email: ${(err as any)?.message ?? String(err)}`,
+    );
+  }
+}
+
 export async function sendOrderConfirmation({
   buyerEmail,
   buyerName,

@@ -6,6 +6,7 @@ import { db } from "@workspace/db";
 import { inquiriesTable, tenantsTable } from "@workspace/db";
 import { eq, desc, count, and } from "drizzle-orm";
 import { setInquiryStatus } from "./actions";
+import { ReplyForm } from "./reply-form";
 
 export const metadata: Metadata = { title: "Inquiries" };
 
@@ -183,29 +184,34 @@ export default async function InquiriesPage({
                     </span>
                   )}
                 </div>
-                <form action={setInquiryStatus}>
-                  <input type="hidden" name="inquiryId" value={inq.id} />
-                  <input
-                    type="hidden"
-                    name="status"
-                    value={inq.status === "NEW" ? "HANDLED" : "NEW"}
-                  />
-                  {inq.status === "NEW" ? (
-                    <button
-                      type="submit"
-                      className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-700"
-                    >
-                      Mark as handled
-                    </button>
-                  ) : (
-                    <button
-                      type="submit"
-                      className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-50"
-                    >
-                      Mark as new
-                    </button>
-                  )}
-                </form>
+                <div className="flex items-center gap-2">
+                  <form action={setInquiryStatus}>
+                    <input type="hidden" name="inquiryId" value={inq.id} />
+                    <input
+                      type="hidden"
+                      name="status"
+                      value={inq.status === "NEW" ? "HANDLED" : "NEW"}
+                    />
+                    {inq.status === "NEW" ? (
+                      <button
+                        type="submit"
+                        className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-700"
+                      >
+                        Mark as handled
+                      </button>
+                    ) : (
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-50"
+                      >
+                        Mark as new
+                      </button>
+                    )}
+                  </form>
+                </div>
+              </div>
+              <div className="mt-3 border-t border-stone-100 pt-3">
+                <ReplyForm inquiryId={inq.id} buyerName={inq.buyerName} />
               </div>
             </div>
           ))}
