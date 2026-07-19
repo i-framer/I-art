@@ -29,4 +29,5 @@ export async function setInquiryStatus(formData: FormData): Promise<void> {
   if (result.length === 0) throw new Error("Inquiry not found.");
 
   revalidatePath("/inquiries");
+  revalidatePath("/", "layout");
 }

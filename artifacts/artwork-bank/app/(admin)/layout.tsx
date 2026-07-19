@@ -3,8 +3,8 @@ import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { logout } from "@/app/(auth)/actions";
 import { db } from "@workspace/db";
-import { tenantsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { inquiriesTable, tenantsTable } from "@workspace/db";
+import { eq, and, count } from "drizzle-orm";
 import {
   LayoutDashboard,
   Image,
@@ -34,9 +34,22 @@ export default async function AdminLayout({
     redirect("/login");
   }
 
-  const tenant = await db.query.tenantsTable.findFirst({
-    where: eq(tenantsTable.id, session.tenantId),
-  });
+  const [tenant, [newInquiriesRow]] = await Promise.all([
+    db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, session.tenantId),
+    }),
+    db
+      .select({ count: count() })
+      .from(inquiriesTable)
+      .where(
+        and(
+          eq(inquiriesTable.tenantId, session.tenantId),
+          eq(inquiriesTable.status, "NEW"),
+        ),
+      ),
+  ]);
+
+  const newInquiries = newInquiriesRow?.count ?? 0;
 
   if (!tenant) {
     redirect("/login");
@@ -76,7 +89,12 @@ export default async function AdminLayout({
               className="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-stone-300 hover:bg-stone-800 hover:text-white transition-colors"
             >
               <Icon className="h-4 w-4 shrink-0" />
-              <span>{label}</span>
+              <span className="flex-1">{label}</span>
+              {href === "/inquiries" && newInquiries > 0 && (
+                <span className="ml-auto inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-semibold text-stone-900">
+                  {newInquiries > 99 ? "99+" : newInquiries}
+                </span>
+              )}
             </Link>
           ))}
         </nav>
