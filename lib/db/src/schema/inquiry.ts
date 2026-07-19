@@ -1,7 +1,9 @@
-import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { tenantsTable } from "./tenant";
 import { artworksTable } from "./artwork";
+
+export const inquiryStatusEnum = pgEnum("inquiry_status", ["NEW", "HANDLED"]);
 
 export const inquiriesTable = pgTable("inquiry", {
   id: text("id")
@@ -18,6 +20,7 @@ export const inquiriesTable = pgTable("inquiry", {
   buyerEmail: text("buyer_email").notNull(),
   message: text("message").notNull(),
   emailError: text("email_error"),
+  status: inquiryStatusEnum("status").default("NEW").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
