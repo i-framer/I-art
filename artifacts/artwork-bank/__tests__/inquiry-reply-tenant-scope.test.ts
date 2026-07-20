@@ -245,6 +245,7 @@ describe("replyToInquiry send flow", () => {
       {
         tenantId: "tenant-A",
         inquiryId: "inq-1",
+        sentByUserId: "user-1",
         message: "It's available!",
       },
     ]);

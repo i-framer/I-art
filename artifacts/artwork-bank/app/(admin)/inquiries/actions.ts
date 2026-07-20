@@ -128,6 +128,7 @@ export async function replyToInquiry(
   await db.insert(inquiryRepliesTable).values({
     tenantId: session.tenantId,
     inquiryId,
+    sentByUserId: session.userId,
     message: replyMessage,
   });
 

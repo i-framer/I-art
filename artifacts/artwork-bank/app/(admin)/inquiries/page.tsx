@@ -7,6 +7,7 @@ import {
   inquiriesTable,
   inquiryRepliesTable,
   tenantsTable,
+  usersTable,
 } from "@workspace/db";
 import { eq, desc, count, and, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 import { setInquiryStatus, setInquiryArchived } from "./actions";
@@ -87,8 +88,18 @@ export default async function InquiriesPage({
   const replies =
     rows.length > 0
       ? await db
-          .select()
+          .select({
+            id: inquiryRepliesTable.id,
+            inquiryId: inquiryRepliesTable.inquiryId,
+            message: inquiryRepliesTable.message,
+            sentAt: inquiryRepliesTable.sentAt,
+            senderEmail: usersTable.email,
+          })
           .from(inquiryRepliesTable)
+          .leftJoin(
+            usersTable,
+            eq(inquiryRepliesTable.sentByUserId, usersTable.id),
+          )
           .where(
             and(
               eq(inquiryRepliesTable.tenantId, session.tenantId),
@@ -282,6 +293,14 @@ export default async function InquiriesPage({
                       >
                         <p className="text-xs text-stone-500">
                           {formatDate(reply.sentAt)}
+                          {reply.senderEmail && (
+                            <>
+                              {" · "}
+                              <span className="font-medium text-stone-600">
+                                {reply.senderEmail}
+                              </span>
+                            </>
+                          )}
                         </p>
                         <p className="mt-1 whitespace-pre-wrap text-sm text-stone-700">
                           {reply.message}
