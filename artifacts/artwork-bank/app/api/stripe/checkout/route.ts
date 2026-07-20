@@ -209,6 +209,10 @@ export async function POST(request: Request) {
 
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ["card"],
+        // Expire abandoned checkouts after 30 minutes (Stripe's minimum)
+        // instead of the 24h default, so the checkout.session.expired webhook
+        // releases the RESERVED artwork back to AVAILABLE much sooner.
+        expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
         line_items: [
           {
             price_data: {
