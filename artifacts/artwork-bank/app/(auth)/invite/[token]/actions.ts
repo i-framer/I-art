@@ -9,7 +9,7 @@ import {
   tenantUsersTable,
   staffInvitesTable,
 } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, verifyPassword } from "@/lib/auth";
 import { sessionOptions, type SessionData } from "@/lib/session";
@@ -76,6 +76,23 @@ export async function acceptInvite(
     user = newUser;
   }
 
+  // Atomically claim the invite: only one concurrent acceptance can flip
+  // acceptedAt from NULL. If no row is returned, someone else already used it.
+  const claimed = await db
+    .update(staffInvitesTable)
+    .set({ acceptedAt: new Date() })
+    .where(
+      and(
+        eq(staffInvitesTable.id, invite.id),
+        isNull(staffInvitesTable.acceptedAt),
+      ),
+    )
+    .returning({ id: staffInvitesTable.id });
+
+  if (claimed.length === 0) {
+    return { error: "This invite has already been used." };
+  }
+
   const existing = await db.query.tenantUsersTable.findFirst({
     where: and(
       eq(tenantUsersTable.tenantId, invite.tenantId),
@@ -90,11 +107,6 @@ export async function acceptInvite(
       role: invite.role,
     });
   }
-
-  await db
-    .update(staffInvitesTable)
-    .set({ acceptedAt: new Date() })
-    .where(eq(staffInvitesTable.id, invite.id));
 
   const cookieStore = await cookies();
   const session = await getIronSession<SessionData>(cookieStore, sessionOptions);

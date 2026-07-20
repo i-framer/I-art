@@ -12,6 +12,8 @@ const state = vi.hoisted(() => ({
   inviteFindWhere: null as any,
   session: {} as Record<string, any>,
   sessionSaved: false,
+  // queue of row arrays returned by successive update(...).returning() calls
+  updateReturnRows: [] as any[][],
 }));
 
 const tables = vi.hoisted(() => ({
@@ -57,7 +59,11 @@ vi.mock("@workspace/db", () => ({
       set: (vals: any) => ({
         where: (where: any) => {
           state.updates.push({ table, vals, where });
-          return Promise.resolve();
+          const rows = state.updateReturnRows.shift() ?? [{ id: "invite-1" }];
+          return {
+            returning: () => Promise.resolve(rows),
+            then: (resolve: any) => resolve(undefined),
+          };
         },
       }),
     })),
@@ -136,6 +142,7 @@ beforeEach(() => {
   state.inviteFindWhere = null;
   state.session = {};
   state.sessionSaved = false;
+  state.updateReturnRows.length = 0;
   inviteFindFirst.mockResolvedValue(validInvite);
   userFindFirst.mockResolvedValue(undefined);
   tenantUserFindFirst.mockResolvedValue(undefined);
@@ -274,6 +281,45 @@ describe("acceptInvite token rejection", () => {
     expect(state.inserts).toEqual([]);
     expect(state.updates).toEqual([]);
     expect(state.sessionSaved).toBe(false);
+  });
+
+  it("fails cleanly when a concurrent acceptance already claimed the invite (atomic UPDATE affects no row)", async () => {
+    // The read passes (acceptedAt still null in the snapshot), but the
+    // guarded UPDATE finds the row already claimed and returns no rows.
+    state.updateReturnRows.push([]);
+
+    const res = await acceptInvite({ error: "" }, inviteForm());
+    expect(res.error).toMatch(/already been used/);
+
+    // no enrollment and no session when the atomic claim loses the race
+    expect(
+      state.inserts.filter((i) => i.table === tables.tenantUsersTable),
+    ).toEqual([]);
+    expect(state.sessionSaved).toBe(false);
+
+    // the claim attempt was the guarded update
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].table).toBe(tables.staffInvitesTable);
+  });
+
+  it("only enrolls into tenantUsers after the atomic claim succeeds (claim happens before insert)", async () => {
+    const order: string[] = [];
+    const origPush = state.updates.push.bind(state.updates);
+    state.updates.push = (...args: any[]) => {
+      order.push("claim");
+      return origPush(...args);
+    };
+    const origInsertPush = state.inserts.push.bind(state.inserts);
+    state.inserts.push = (...args: any[]) => {
+      if (args[0]?.table === tables.tenantUsersTable) order.push("enroll");
+      return origInsertPush(...args);
+    };
+
+    await expect(
+      acceptInvite({ error: "" }, inviteForm()),
+    ).rejects.toThrow("REDIRECT:/dashboard");
+
+    expect(order).toEqual(["claim", "enroll"]);
   });
 
   it("looks the invite up by its token only", async () => {
