@@ -26,9 +26,29 @@ export const getTenantByCustomDomain = cache(async (domain: string) => {
   });
 });
 
-/** The CNAME target tenants must point their domain to. */
-export const CNAME_TARGET =
-  process.env.CNAME_TARGET ?? "cname.i-art.com.au";
+import { getPlatformBaseUrl } from "./base-url";
+
+/**
+ * The CNAME target tenants must point their domain to.
+ *
+ * Priority:
+ * 1. CNAME_TARGET env var — explicit override (e.g. a dedicated cname host)
+ * 2. The host of the platform's configured base URL (see lib/base-url.ts)
+ * 3. null — no target can be resolved; the settings UI should prompt the
+ *    operator to configure CNAME_TARGET instead of showing a wrong host.
+ */
+export function getCnameTarget(): string | null {
+  const explicit = process.env.CNAME_TARGET?.trim();
+  if (explicit) return explicit.toLowerCase().replace(/\.$/, "");
+
+  const base = getPlatformBaseUrl();
+  if (!base) return null;
+  try {
+    return new URL(base).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
 
 // Re-export pure formatting utilities so existing server-component imports
 // continue to work without pulling the DB into client bundles.

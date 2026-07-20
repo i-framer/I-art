@@ -172,7 +172,12 @@ export async function verifyCustomDomain(): Promise<void> {
     redirect("/settings");
   }
 
-  const cnameTarget = process.env.CNAME_TARGET ?? "cname.i-art.com.au";
+  const { getCnameTarget } = await import("@/lib/tenant-cache");
+  const cnameTarget = getCnameTarget();
+  if (!cnameTarget) {
+    // No CNAME target can be resolved — verification cannot succeed.
+    redirect("/settings?domain_status=no_cname_target");
+  }
 
   // Dynamic import so the dns module is only loaded server-side
   const dns = await import("node:dns/promises");

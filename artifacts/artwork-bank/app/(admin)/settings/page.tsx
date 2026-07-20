@@ -21,7 +21,7 @@ import {
   Copy,
 } from "lucide-react";
 import { getStripeClient } from "@/lib/stripe";
-import { CNAME_TARGET } from "@/lib/tenant-cache";
+import { getCnameTarget } from "@/lib/tenant-cache";
 import { getPlatformBaseUrl } from "@/lib/base-url";
 import { DomainForm } from "./_components/domain-form";
 
@@ -57,6 +57,7 @@ export default async function SettingsPage({
   }
 
   const platformFeePercent = process.env.PLATFORM_FEE_PERCENT ?? "5";
+  const cnameTarget = getCnameTarget();
 
   return (
     <div className="px-8 py-8 max-w-2xl">
@@ -108,6 +109,12 @@ export default async function SettingsPage({
       {domain_status === "saved" && (
         <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
           Domain saved. Add the CNAME record below, then click &ldquo;Verify&rdquo;.
+        </div>
+      )}
+      {domain_status === "no_cname_target" && (
+        <div className="mb-6 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          The platform&apos;s CNAME target isn&apos;t configured, so domains can&apos;t be
+          verified. Set the CNAME_TARGET environment variable (or a platform base URL) and try again.
         </div>
       )}
       {domain_status === "verified" && (
@@ -249,8 +256,12 @@ export default async function SettingsPage({
                 </span>
                 <span className="text-stone-500 font-medium">Value / Target</span>
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-stone-800">{CNAME_TARGET}</span>
-                  <Copy className="h-3.5 w-3.5 text-stone-400 shrink-0" />
+                  <span className="font-mono text-stone-800">
+                    {cnameTarget ?? "— not configured —"}
+                  </span>
+                  {cnameTarget && (
+                    <Copy className="h-3.5 w-3.5 text-stone-400 shrink-0" />
+                  )}
                 </div>
                 <span className="text-stone-500 font-medium">TTL</span>
                 <span className="font-mono text-stone-800">3600</span>
