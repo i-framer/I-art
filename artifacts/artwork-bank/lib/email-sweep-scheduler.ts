@@ -10,6 +10,7 @@ import {
   sweepUnsentConfirmationEmails,
   sweepUnsentStatusEmails,
 } from "@/lib/email-sweep";
+import { sweepStaleReservations } from "@/lib/reservation-sweep";
 
 const GLOBAL_KEY = "__artworkBankEmailSweepTimer" as const;
 
@@ -44,6 +45,18 @@ export function ensureEmailSweepScheduler(): void {
       }
     } catch (err: any) {
       console.error("Status email sweep run failed:", err?.message ?? err);
+    }
+    // Safety net: release artworks stuck RESERVED when Stripe's
+    // checkout.session.expired webhook was never delivered.
+    try {
+      const result = await sweepStaleReservations();
+      if (result.released) {
+        console.log(
+          `Reservation sweep: released=${result.released} ids=${result.ids.join(",")}`,
+        );
+      }
+    } catch (err: any) {
+      console.error("Reservation sweep run failed:", err?.message ?? err);
     }
   };
 
