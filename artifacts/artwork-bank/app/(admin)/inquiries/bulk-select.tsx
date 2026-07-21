@@ -8,7 +8,7 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
-import { bulkSetInquiriesArchived } from "./actions";
+import { bulkSetInquiriesArchived, bulkSetInquiriesStatus } from "./actions";
 
 type SelectionContextValue = {
   selected: Set<string>;
@@ -78,28 +78,56 @@ export function BulkActionBar({
   mode: "archive" | "unarchive";
 }) {
   const { selected, setAll } = useSelection();
-  const [isPending, startTransition] = useTransition();
+  const [pendingAction, setPendingAction] = useState<
+    "archive" | "handled" | "new" | null
+  >(null);
+  const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   const selectedOnPage = pageIds.filter((id) => selected.has(id));
   const allSelected =
     pageIds.length > 0 && selectedOnPage.length === pageIds.length;
 
-  const run = () => {
+  const runAction = (
+    action: "archive" | "handled" | "new",
+    fn: () => Promise<void>,
+    failureMessage: string,
+  ) => {
     setError(null);
+    setPendingAction(action);
     startTransition(async () => {
       try {
-        await bulkSetInquiriesArchived(selectedOnPage, mode === "archive");
+        await fn();
         setAll(selectedOnPage, false);
       } catch {
-        setError(
-          mode === "archive"
-            ? "Failed to archive selected inquiries. Please try again."
-            : "Failed to unarchive selected inquiries. Please try again.",
-        );
+        setError(failureMessage);
+      } finally {
+        setPendingAction(null);
       }
     });
   };
+
+  const isPending = pendingAction !== null;
+  const countSuffix =
+    selectedOnPage.length > 0 ? ` (${selectedOnPage.length})` : "";
+
+  const runArchive = () =>
+    runAction(
+      "archive",
+      () => bulkSetInquiriesArchived(selectedOnPage, mode === "archive"),
+      mode === "archive"
+        ? "Failed to archive selected inquiries. Please try again."
+        : "Failed to unarchive selected inquiries. Please try again.",
+    );
+
+  const runStatus = (status: "NEW" | "HANDLED") =>
+    runAction(
+      status === "HANDLED" ? "handled" : "new",
+      () => bulkSetInquiriesStatus(selectedOnPage, status),
+      status === "HANDLED"
+        ? "Failed to mark selected inquiries as handled. Please try again."
+        : "Failed to mark selected inquiries as new. Please try again.",
+    );
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-stone-200 bg-white px-4 py-2.5">
@@ -115,16 +143,36 @@ export function BulkActionBar({
       <button
         type="button"
         disabled={selectedOnPage.length === 0 || isPending}
-        onClick={run}
+        onClick={() => runStatus("HANDLED")}
         className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {isPending
+        {pendingAction === "handled"
+          ? "Marking as handled…"
+          : `Mark selected as handled${countSuffix}`}
+      </button>
+      <button
+        type="button"
+        disabled={selectedOnPage.length === 0 || isPending}
+        onClick={() => runStatus("NEW")}
+        className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {pendingAction === "new"
+          ? "Marking as new…"
+          : `Mark selected as new${countSuffix}`}
+      </button>
+      <button
+        type="button"
+        disabled={selectedOnPage.length === 0 || isPending}
+        onClick={runArchive}
+        className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {pendingAction === "archive"
           ? mode === "archive"
             ? "Archiving…"
             : "Unarchiving…"
           : mode === "archive"
-            ? `Archive selected${selectedOnPage.length > 0 ? ` (${selectedOnPage.length})` : ""}`
-            : `Unarchive selected${selectedOnPage.length > 0 ? ` (${selectedOnPage.length})` : ""}`}
+            ? `Archive selected${countSuffix}`
+            : `Unarchive selected${countSuffix}`}
       </button>
       {error && (
         <span className="text-xs font-medium text-red-700">{error}</span>

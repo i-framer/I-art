@@ -95,6 +95,41 @@ export async function bulkSetInquiriesArchived(
   revalidatePath("/", "layout");
 }
 
+export async function bulkSetInquiriesStatus(
+  inquiryIds: string[],
+  status: "NEW" | "HANDLED",
+): Promise<void> {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  if (status !== "NEW" && status !== "HANDLED") {
+    throw new Error("Invalid request.");
+  }
+
+  const ids = Array.from(
+    new Set(inquiryIds.filter((id) => typeof id === "string" && id.length > 0)),
+  );
+  if (ids.length === 0) {
+    throw new Error("No inquiries selected.");
+  }
+  if (ids.length > 200) {
+    throw new Error("Too many inquiries selected at once.");
+  }
+
+  await db
+    .update(inquiriesTable)
+    .set({ status })
+    .where(
+      and(
+        inArray(inquiriesTable.id, ids),
+        eq(inquiriesTable.tenantId, session.tenantId),
+      ),
+    );
+
+  revalidatePath("/inquiries");
+  revalidatePath("/", "layout");
+}
+
 export type ReplyState = {
   status: "idle" | "sent" | "error";
   message?: string;
