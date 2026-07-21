@@ -11,6 +11,7 @@ import { eq, and } from "drizzle-orm";
 import {
   getStripeClient,
   getStripeWebhookSecret,
+  calcApplicationFee,
   StripeNotConfiguredError,
 } from "@/lib/stripe";
 import { sendOrderConfirmation } from "@/lib/email";
@@ -137,7 +138,14 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         status: "PAID",
         fulfillmentType: fulfillmentType as "SHIP" | "PICKUP" | "FRAMING_JOB",
         totalCents: session.amount_total ?? 0,
-        applicationFeeCents: null,
+        // Persist the platform commission actually charged on this sale.
+        // Checkout sets application_fee_amount = calcApplicationFee(price),
+        // and amount_total equals the artwork price, so recomputing here
+        // matches the fee Stripe collected.
+        applicationFeeCents:
+          session.amount_total != null
+            ? calcApplicationFee(session.amount_total)
+            : null,
       })
       .returning();
 

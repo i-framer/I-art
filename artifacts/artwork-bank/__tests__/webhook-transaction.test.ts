@@ -80,6 +80,7 @@ vi.mock("@workspace/db", () => ({
 vi.mock("@/lib/stripe", () => ({
   getStripeClient: vi.fn(),
   getStripeWebhookSecret: vi.fn().mockResolvedValue(null),
+  calcApplicationFee: (cents: number) => Math.round(cents * 0.05),
   StripeNotConfiguredError: class StripeNotConfiguredError extends Error {},
 }));
 
