@@ -12,6 +12,11 @@ import {
 import { eq, desc, count, and, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 import { setInquiryStatus, setInquiryArchived } from "./actions";
 import { ReplyForm } from "./reply-form";
+import {
+  BulkSelectionProvider,
+  BulkActionBar,
+  SelectInquiryCheckbox,
+} from "./bulk-select";
 
 export const metadata: Metadata = { title: "Inquiries" };
 
@@ -173,16 +178,24 @@ export default async function InquiriesPage({
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {rows.map((inq) => (
-            <div
-              key={inq.id}
-              className={`rounded-xl border bg-white p-5 ${
-                inq.status === "NEW"
-                  ? "border-amber-300 border-l-4"
-                  : "border-stone-200"
-              }`}
-            >
+        <BulkSelectionProvider>
+          <BulkActionBar
+            pageIds={rows.map((r) => r.id)}
+            mode={filter === "archived" ? "unarchive" : "archive"}
+          />
+          <div className="space-y-4">
+            {rows.map((inq) => (
+              <div
+                key={inq.id}
+                className={`rounded-xl border bg-white p-5 ${
+                  inq.status === "NEW"
+                    ? "border-amber-300 border-l-4"
+                    : "border-stone-200"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <SelectInquiryCheckbox id={inq.id} />
+                  <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <div className="flex items-center gap-2">
@@ -313,9 +326,12 @@ export default async function InquiriesPage({
               <div className="mt-3 border-t border-stone-100 pt-3">
                 <ReplyForm inquiryId={inq.id} buyerName={inq.buyerName} />
               </div>
-            </div>
-          ))}
-        </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </BulkSelectionProvider>
       )}
 
       {totalPages > 1 && (
