@@ -1,0 +1,139 @@
+
+can we transfer this over to the artwork marketplace we are already building.
+
+3 minutes ago
+Evaluating marketplace readiness
+
+Evaluating marketplace readiness
+Let me check what artwork marketplace work already exists before updating the plans.
+
+
+3 actions
+There's no artwork marketplace artifact here yet — it needs to be created first, then Tasks 2, 3, and 4 slot in as sections of it. I'll restructure everything: a core marketplace task that the other three depend on, and archive Task #1 since i-framer covers it.
+
+
+5 actions
+Now let me update all the tasks — create the core marketplace task and wire up the dependencies.
+
+
+7 actions
+Here's the restructured plan:
+
+Task #5 — Artwork Marketplace Core is the starting point. It builds the app itself — the shell, navigation, database, and the Art Bank section. Tasks #2, #3, and #4 are locked behind it and become unlocked once the core is done.
+
+Task #5  Artwork Marketplace — Core App     ← build this first
+   ├── Task #2  Exhibition & Show Planner   ← unlocks after #5
+   ├── Task #3  Consignment & Commission    ← unlocks after #5
+   └── Task #4  Certificates & Labelling   ← unlocks after #5
+
+Task #1 (CRM) can be archived — it's already covered by i-framer. You can do that from the tasks panel.
+
+Once you accept Task #5 and kick it off, the core marketplace gets built with the nav already wired to the future sections (shown as "coming soon"). Then #2, #3, and #4 can be tackled in any order — either one at a time or in parallel.
+
+Ready to switch to build mode and start on Task #5?
+
+
+Worked for 1 minute
+ok just write a small spec for each and i will paste them into the other replit app we are laready working on
+
+2 minutes ago
+Specifying marketplace tasks
+
+Specifying marketplace tasks
+Here are the four specs, ready to paste:
+
+Task #5 — Artwork Marketplace Core App
+What it is: The foundation of the marketplace — app shell, database, and the Art Bank section.
+
+Database tables needed:
+
+artists — id, name, bio, contact_email, phone, created_at
+artworks — id, artist_id (FK), title, medium, dimensions, year, edition_info, price, status (available/sold/consigned/reserved), image_url, notes, created_at
+image_attachments — id, artwork_id (FK), url, sort_order
+API endpoints:
+
+GET/POST /api/artists
+GET/PUT/DELETE /api/artists/:id
+GET/POST /api/artworks
+GET/PUT/DELETE /api/artworks/:id
+POST /api/artworks/:id/images
+UI — what to build:
+
+Sidebar nav with links: Art Bank, Exhibitions (coming soon), Consignment (coming soon), Certificates (coming soon)
+Art Bank page — searchable/filterable grid of artworks (image thumbnail, title, artist, price, status badge)
+Add/Edit artwork form — image upload, all fields, artist picker (linked to artists table)
+Artists page — list of artists with add/edit form
+Task #2 — Exhibition & Show Planner
+What it is: A section of the marketplace for planning gallery shows — floor plans, artwork placement, hang lists, and guest lists.
+
+Database tables needed:
+
+shows — id, title, description, venue, start_date, end_date, status (upcoming/active/archived)
+show_rooms — id, show_id (FK), name, width_cm, height_cm
+show_walls — id, room_id (FK), name, width_cm, height_cm, position (north/south/east/west/other)
+show_placements — id, wall_id (FK), artwork_id (FK), position_x, position_y, hang_height_cm, notes
+show_guests — id, show_id (FK), name, email, rsvp_status (pending/yes/no)
+show_milestones — id, show_id (FK), title, due_date, completed
+API endpoints:
+
+GET/POST /api/shows
+GET/PUT/DELETE /api/shows/:id
+GET/POST /api/shows/:id/rooms
+GET/POST /api/rooms/:id/walls
+GET/POST /api/walls/:id/placements
+GET/POST /api/shows/:id/guests
+GET/POST /api/shows/:id/milestones
+UI — what to build:
+
+Shows list (upcoming / archived) with create show button
+Show detail page with tabs: Floor Plan · Hang List · Guests · Timeline
+Floor Plan tab — 2D interactive canvas; define rooms and walls; drag artworks from a side panel onto walls; auto-display calculated hang height
+Hang List tab — auto-generated printable list: artwork title, artist, dimensions, wall, position, hang height
+Guests tab — add guests by name/email; mark RSVP status
+Timeline tab — add milestones with due dates; check them off as complete
+Task #3 — Consignment & Commission Tracker
+What it is: A section of the marketplace for managing artwork consigned by artists — agreements, sales splits, and payment statements.
+
+Database tables needed:
+
+consignment_agreements — id, artist_id (FK), gallery_split_pct, artist_split_pct, minimum_price, start_date, end_date, notes, status (active/expired/cancelled)
+consignment_items — id, agreement_id (FK), artwork_id (FK), intake_date, return_date, status (on_consignment/sold/returned)
+consignment_sales — id, consignment_item_id (FK), sale_date, sale_price, gallery_amount, artist_amount, payment_status (unpaid/paid)
+artist_payments — id, artist_id (FK), amount, payment_date, payment_method, notes, covers sale ids (JSON array)
+API endpoints:
+
+GET/POST /api/consignment-agreements
+GET/PUT/DELETE /api/consignment-agreements/:id
+POST /api/consignment-agreements/:id/items — link an artwork
+POST /api/consignment-items/:id/sale — record a sale (auto-calculates split)
+GET /api/artists/:id/statement?from=&to= — artist payment statement
+GET /api/consignment/dashboard — expiring agreements + unpaid balances summary
+UI — what to build:
+
+Consignment section with two tabs: Agreements · Payments Dashboard
+Agreements tab — list of active agreements with artist name, split, expiry, and number of works on consignment; create/edit agreement form; link artworks from art bank to an agreement
+Record Sale flow — from a consignment item, record a sale price; system displays the auto-calculated artist vs gallery split; staff confirms and logs it
+Artist Statement page — filterable by artist and date range; shows each sale, amounts, and payment status; printable/PDF export
+Payments Dashboard — cards showing: agreements expiring in 30 days, total outstanding artist payments broken down by artist
+Task #4 — Certificate of Authenticity & Artwork Labelling
+What it is: A section of the marketplace for generating branded COAs and artwork labels from any artwork record, with a public QR-linked artwork page.
+
+Database tables needed:
+
+certificates — id, artwork_id (FK), certificate_number (unique), issued_date, issued_to (buyer name, optional), notes
+brand_settings — id (single row), shop_name, logo_url, primary_colour, address, phone, email, website
+API endpoints:
+
+GET/POST /api/certificates — issue a certificate for an artwork
+GET /api/certificates/:id/coa-pdf — generate and return COA as PDF
+GET /api/certificates/:id/label-pdf — generate and return label as PDF
+GET /api/artworks/:id/public — public artwork page (no auth required)
+GET/PUT /api/settings/brand — retrieve and update brand settings
+UI — what to build:
+
+Certificates section — list of all issued certificates with artwork, issue date, and certificate number; search by artwork or artist
+Issue Certificate flow — from any artwork record (or from the Certificates section), pick the artwork, optionally enter buyer name; system generates a unique certificate number and logs it
+COA preview & download — shows a preview of the generated COA and a Download PDF button; COA includes: artwork image, title, artist, medium, dimensions, year, edition, certificate number, issue date, gallery branding
+Label preview & download — compact label PDF in two sizes (wall label and backing board); includes title, artist, medium, dimensions, price, and a QR code
+Brand Settings page — upload logo, set shop name, colours, address, and contact info; changes apply instantly to all generated documents
+Public artwork page (/artworks/:id/public) — no login required; shows artwork image, title, artist, medium, dimensions, exhibition history, and gallery contact; linked from QR code on every label
