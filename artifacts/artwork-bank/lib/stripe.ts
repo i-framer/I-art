@@ -37,6 +37,17 @@ async function getStripeCredentials(): Promise<{
     return { secretKey, webhookSecret: process.env.STRIPE_WEBHOOK_SECRET };
   }
 
+  // Falls back to STRIPE_SECRET_KEY when the connector fails for any reason
+  // (unreachable, non-OK response, or not connected), so the same code runs
+  // on Vercel or any host with plain env vars.
+  const envFallback = (reason: string) => {
+    const secretKey = process.env.STRIPE_SECRET_KEY;
+    if (secretKey) {
+      return { secretKey, webhookSecret: process.env.STRIPE_WEBHOOK_SECRET };
+    }
+    throw new StripeNotConfiguredError(reason);
+  };
+
   let resp: Response;
   try {
     resp = await fetch(
@@ -48,13 +59,13 @@ async function getStripeCredentials(): Promise<{
       },
     );
   } catch (err: any) {
-    throw new StripeNotConfiguredError(
+    return envFallback(
       `Stripe connector unreachable: ${err?.message ?? String(err)}`,
     );
   }
 
   if (!resp.ok) {
-    throw new StripeNotConfiguredError(
+    return envFallback(
       `Failed to fetch Stripe credentials: ${resp.status} ${resp.statusText}`,
     );
   }
@@ -63,8 +74,8 @@ async function getStripeCredentials(): Promise<{
   const settings = data.items?.[0]?.settings;
 
   if (!settings?.secret_key) {
-    throw new StripeNotConfiguredError(
-      "Stripe integration not connected. Connect Stripe via the Integrations tab.",
+    return envFallback(
+      "Stripe integration not connected. Connect Stripe via the Integrations tab or set STRIPE_SECRET_KEY.",
     );
   }
 

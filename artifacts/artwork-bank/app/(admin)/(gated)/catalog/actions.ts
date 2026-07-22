@@ -12,6 +12,7 @@ import {
 import { eq, and, inArray, asc } from "drizzle-orm";
 import { z } from "zod";
 import { getSession } from "@/lib/auth";
+import { deleteObject } from "@/lib/object-storage";
 import type { ArtworkImage } from "@workspace/db";
 
 export type ArtworkFormState = { error: string };
@@ -266,6 +267,12 @@ export async function deleteArtworkImage(imageId: string): Promise<ArtworkImage[
   await db
     .delete(artworkImagesTable)
     .where(eq(artworkImagesTable.id, imageId));
+
+  // Best-effort removal of the underlying stored file — the DB row is the
+  // source of truth, so a storage failure must not fail the action.
+  deleteObject(image.objectPath).catch((err) =>
+    console.error("Failed to delete stored image:", err),
+  );
 
   // If deleted image was primary, make the first remaining one primary
   const remaining = await getImagesForArtwork(image.artworkId);

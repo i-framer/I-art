@@ -17,6 +17,11 @@ export function getPlatformBaseUrl(): string | null {
   if (process.env.NEXT_PUBLIC_SITE_URL) {
     return process.env.NEXT_PUBLIC_SITE_URL.replace(/\/$/, "");
   }
+  // Vercel production custom/production domain (stable across deployments)
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
+  // Vercel preview deployment URL
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
   const replitDomain = process.env.REPLIT_DOMAINS?.split(",")[0]?.trim();
   if (replitDomain) return `https://${replitDomain}`;

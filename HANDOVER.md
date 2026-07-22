@@ -42,6 +42,7 @@ Seed logins: `jane@janesmith.studio` / `password123` (ARTIST), `admin@frameworks
 
 - Domains registered: **i-art.com.au** and **i-art.au** (redirect `i-art.au` → `i-art.com.au`)
 - Recommendation: **Vercel** for the Next.js app — first-class wildcard subdomains (`*.i-art.com.au`) plus a domains API for tenants' custom domains — with a managed Postgres provider. AWS is viable but more ops overhead.
+- **The app is Vercel-ready** — see `artifacts/artwork-bank/DEPLOY.md` for the full guide (env vars, Blob storage, DNS/wildcard setup, cron config, Stripe webhook). Storage, base URLs, Stripe credentials, and the sweeps all work from plain env vars; Replit-specific infra is only used when its env vars are present.
 - Production Stripe setup needed at launch: register the webhook endpoint (checkout + subscription events), set `STRIPE_WEBHOOK_SECRET`, optionally pin `SUBSCRIPTION_PRICE_ID`.
 
 ## Getting started

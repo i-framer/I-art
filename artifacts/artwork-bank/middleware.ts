@@ -10,6 +10,7 @@ const PLATFORM_DOMAIN_SUFFIXES = [
   ".replit.dev",
   ".replit.app",
   ".repl.co",
+  ".vercel.app",
   "localhost",
 ];
 
@@ -71,9 +72,35 @@ function getInternalBaseUrl(): string {
   return `http://127.0.0.1:${process.env.PORT ?? 3000}`;
 }
 
+/**
+ * Tenant subdomain of the configured platform host, e.g.
+ * "jane.i-art.com.au" with NEXT_PUBLIC_SITE_URL=https://i-art.com.au → "jane".
+ * Returns null for the apex host, "www", and multi-level subdomains.
+ */
+function getTenantSubdomain(host: string): string | null {
+  const configuredHost = getConfiguredPlatformHost();
+  if (!configuredHost || !host.endsWith(`.${configuredHost}`)) return null;
+  const sub = host.slice(0, host.length - configuredHost.length - 1);
+  if (!sub || sub === "www" || sub.includes(".")) return null;
+  return sub;
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const host = (request.headers.get("host") ?? "").split(":")[0]; // strip port
+
+  // ── 0. Tenant subdomain rewrite (wildcard *.platform-domain) ───────────────
+  // e.g. jane.i-art.com.au/about → /t/jane/about
+  const tenantSub = getTenantSubdomain(host);
+  if (
+    tenantSub &&
+    !CUSTOM_DOMAIN_PASSTHROUGH_PREFIXES.some((p) => pathname.startsWith(p))
+  ) {
+    const rewriteUrl = request.nextUrl.clone();
+    rewriteUrl.pathname =
+      pathname === "/" ? `/t/${tenantSub}` : `/t/${tenantSub}${pathname}`;
+    return NextResponse.rewrite(rewriteUrl);
+  }
 
   // ── 1. Custom domain resolution ────────────────────────────────────────────
   // Only attempt for non-platform hosts and non-passthrough paths.

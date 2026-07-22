@@ -77,16 +77,29 @@ export function ArtworkForm({
     try {
       const urlRes = await fetch("/api/storage/upload-url", { method: "POST" });
       if (!urlRes.ok) throw new Error("Failed to get upload URL");
-      const { uploadURL, objectPath } = (await urlRes.json()) as {
-        uploadURL: string;
-        objectPath: string;
-      };
-      const uploadRes = await fetch(uploadURL, {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": file.type },
-      });
-      if (!uploadRes.ok) throw new Error("Upload failed");
+      const { provider, uploadURL, objectPath, pathname } =
+        (await urlRes.json()) as {
+          provider: "replit" | "vercel-blob";
+          uploadURL?: string;
+          objectPath: string;
+          pathname?: string;
+        };
+      if (provider === "vercel-blob") {
+        // Direct browser → Blob store upload (token issued by our API route)
+        const { upload } = await import("@vercel/blob/client");
+        await upload(pathname!, file, {
+          access: "public",
+          handleUploadUrl: "/api/storage/blob-upload",
+          contentType: file.type,
+        });
+      } else {
+        const uploadRes = await fetch(uploadURL!, {
+          method: "PUT",
+          body: file,
+          headers: { "Content-Type": file.type },
+        });
+        if (!uploadRes.ok) throw new Error("Upload failed");
+      }
       const updated = await addArtworkImage(artwork.id, objectPath, file.name);
       setImages(updated);
     } catch {

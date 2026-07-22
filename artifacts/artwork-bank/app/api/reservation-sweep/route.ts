@@ -12,15 +12,22 @@ import { sweepStaleReservations } from "@/lib/reservation-sweep";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(request: Request) {
-  const secret = process.env.RESERVATION_SWEEP_SECRET;
-  if (secret) {
-    const auth = request.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+function isAuthorized(request: Request): boolean {
+  // Accept the sweep secret or Vercel's CRON_SECRET (Vercel cron sends
+  // "Authorization: Bearer $CRON_SECRET" and can only issue GET requests).
+  const secrets = [
+    process.env.RESERVATION_SWEEP_SECRET,
+    process.env.CRON_SECRET,
+  ].filter(Boolean);
+  if (secrets.length === 0) return true; // no secret configured — open (dev)
+  const auth = request.headers.get("authorization");
+  return secrets.some((s) => auth === `Bearer ${s}`);
+}
 
+async function runSweep(request: Request) {
+  if (!isAuthorized(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const result = await sweepStaleReservations();
     return NextResponse.json(result);
@@ -28,4 +35,13 @@ export async function POST(request: Request) {
     console.error("Reservation sweep failed:", err?.message ?? err);
     return NextResponse.json({ error: "Sweep failed" }, { status: 500 });
   }
+}
+
+export async function POST(request: Request) {
+  return runSweep(request);
+}
+
+/** GET is used by Vercel cron (crons can only issue GET requests). */
+export async function GET(request: Request) {
+  return runSweep(request);
 }
