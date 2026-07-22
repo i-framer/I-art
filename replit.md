@@ -42,4 +42,5 @@ _Populate as you build — sharp edges, "always run X before Y" rules._
 
 ## Pointers
 
+- `HANDOVER.md` (repo root) — developer handover: goal, stack, what's built, pricing model, hosting plan, getting started
 - See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
