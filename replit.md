@@ -10,6 +10,7 @@ _Replace the heading above with the project's name, and this line with one sente
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
+- Optional env: `PLATFORM_ADMIN_EMAILS` — comma-separated allowlist of platform-owner emails; grants access to `/platform` (tenant billing comp page) in Artwork Bank. Unset = nobody has access (fails closed)
 
 ## Stack
 
