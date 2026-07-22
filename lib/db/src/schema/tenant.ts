@@ -29,6 +29,13 @@ export const tenantsTable = pgTable("tenant", {
   aboutText: text("about_text"),
   stripeAccountId: text("stripe_account_id"),
   iframerAccountId: text("iframer_account_id"),
+  // ── Platform subscription billing (charged by the platform account, not Connect) ──
+  stripeCustomerId: text("stripe_customer_id").unique(),
+  stripeSubscriptionId: text("stripe_subscription_id").unique(),
+  /** Mirrors Stripe subscription status: active, trialing, past_due, canceled, ... */
+  subscriptionStatus: text("subscription_status"),
+  /** Manual comp flag — bypasses the paywall (future i-Framer premium bundle hook). */
+  billingExempt: boolean("billing_exempt").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

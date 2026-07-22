@@ -1,4 +1,5 @@
 "use server";
+import { requireActiveBillingAccess } from "@/lib/billing";
 
 import { db } from "@workspace/db";
 import { representedArtistsTable, artworksTable } from "@workspace/db";
@@ -20,6 +21,7 @@ export async function createRepresentedArtist(
 ): Promise<ArtistState> {
   const session = await getSession();
   if (!session.userId) return { error: "Not authenticated." };
+  await requireActiveBillingAccess(session.tenantId);
 
   const parsed = artistSchema.safeParse({
     name: formData.get("name"),
@@ -47,6 +49,7 @@ export async function updateRepresentedArtist(
 ): Promise<ArtistState> {
   const session = await getSession();
   if (!session.userId) return { error: "Not authenticated." };
+  await requireActiveBillingAccess(session.tenantId);
 
   const parsed = artistSchema.safeParse({
     name: formData.get("name"),
@@ -79,6 +82,7 @@ export async function deleteRepresentedArtist(
 ): Promise<{ error: string }> {
   const session = await getSession();
   if (!session.userId) return { error: "Not authenticated." };
+  await requireActiveBillingAccess(session.tenantId);
 
   // Check if artworks are linked to this artist
   const [usage] = await db

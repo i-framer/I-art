@@ -7,7 +7,7 @@ import {
   removeTeamMember,
   type InviteResultState,
 } from "@/app/(admin)/settings/actions";
-import { Users, UserPlus, Copy, Check, Trash2 } from "lucide-react";
+import { Users, UserPlus, Copy, Check, Trash2, CreditCard } from "lucide-react";
 
 const initialState: InviteResultState = {
   error: "",
@@ -155,6 +155,13 @@ export default function TeamPageClient({
         >
           <Users className="h-3.5 w-3.5" />
           Team
+        </Link>
+        <Link
+          href="/settings/billing"
+          className="px-4 py-2.5 text-sm font-medium text-stone-500 hover:text-stone-700 transition-colors flex items-center gap-1.5"
+        >
+          <CreditCard className="h-3.5 w-3.5" />
+          Billing
         </Link>
       </div>
 

@@ -1,4 +1,5 @@
 "use server";
+import { requireActiveBillingAccess } from "@/lib/billing";
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -13,6 +14,7 @@ import { getTenantUrl } from "@/lib/base-url";
 async function requireOwnership(orderId: string) {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  await requireActiveBillingAccess(session.tenantId);
   const order = await db.query.ordersTable.findFirst({
     where: and(
       eq(ordersTable.id, orderId),

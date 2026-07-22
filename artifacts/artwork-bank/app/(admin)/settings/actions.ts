@@ -259,6 +259,94 @@ export async function startStripeOnboarding() {
   redirect(accountLink.url);
 }
 
+// ── Platform subscription billing ─────────────────────────────────────────────
+
+function getBillingBaseUrl(): string {
+  const replitDomain = process.env.REPLIT_DOMAINS?.split(",")[0];
+  return (
+    process.env.NEXT_PUBLIC_SITE_URL ??
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ??
+    (replitDomain ? `https://${replitDomain}` : "http://localhost:3000")
+  );
+}
+
+export async function startSubscriptionCheckout() {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  const tenant = await db.query.tenantsTable.findFirst({
+    where: eq(tenantsTable.id, session.tenantId),
+  });
+  if (!tenant) redirect("/login");
+
+  const { getStripeClient } = await import("@/lib/stripe");
+  const { getSubscriptionPriceId } = await import("@/lib/billing");
+
+  let stripe;
+  try {
+    stripe = await getStripeClient();
+  } catch {
+    redirect("/settings/billing?billing=not_configured");
+  }
+  const stripeClient = stripe!;
+
+  // Reuse (or create) the tenant's platform Stripe customer
+  let customerId = tenant.stripeCustomerId;
+  if (!customerId) {
+    const customer = await stripeClient.customers.create({
+      name: tenant.businessName,
+      ...(tenant.contactEmail ? { email: tenant.contactEmail } : {}),
+      metadata: { tenantId: tenant.id },
+    });
+    customerId = customer.id;
+    await db
+      .update(tenantsTable)
+      .set({ stripeCustomerId: customerId })
+      .where(eq(tenantsTable.id, tenant.id));
+  }
+
+  const priceId = await getSubscriptionPriceId(stripeClient);
+  const baseUrl = getBillingBaseUrl();
+
+  const checkout = await stripeClient.checkout.sessions.create({
+    mode: "subscription",
+    customer: customerId,
+    line_items: [{ price: priceId, quantity: 1 }],
+    success_url: `${baseUrl}/settings/billing?billing=subscribed`,
+    cancel_url: `${baseUrl}/settings/billing?billing=cancelled`,
+    metadata: { billingTenantId: tenant.id },
+    subscription_data: { metadata: { billingTenantId: tenant.id } },
+  });
+
+  redirect(checkout.url!);
+}
+
+export async function openBillingPortal() {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  const tenant = await db.query.tenantsTable.findFirst({
+    where: eq(tenantsTable.id, session.tenantId),
+  });
+  if (!tenant?.stripeCustomerId) redirect("/settings/billing");
+
+  const { getStripeClient } = await import("@/lib/stripe");
+
+  let stripe;
+  try {
+    stripe = await getStripeClient();
+  } catch {
+    redirect("/settings/billing?billing=not_configured");
+  }
+
+  const portal = await stripe!.billingPortal.sessions.create({
+    customer: tenant.stripeCustomerId,
+    return_url: `${getBillingBaseUrl()}/settings/billing`,
+  });
+
+  redirect(portal.url);
+}
+
 export async function removeTeamMember(userId: string) {
   const session = await getSession();
   if (!session.userId) return;

@@ -6,6 +6,13 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
+// Billing is validated separately (billing-access.test.ts); tenant-scope tests
+// run with the subscription guard stubbed out.
+vi.mock("@/lib/billing", () => ({
+  requireActiveBillingAccess: vi.fn(async () => {}),
+  hasActiveAccess: () => true,
+}));
+
 const state = vi.hoisted(() => ({
   updates: [] as { table: any; vals: any; where: any }[],
   deletes: [] as { table: any; where: any }[],
@@ -98,7 +105,7 @@ import {
   deleteArtworkImage,
   setPrimaryImage,
   reorderImages,
-} from "@/app/(admin)/catalog/actions";
+} from "@/app/(admin)/(gated)/catalog/actions";
 import { and, eq, inArray } from "drizzle-orm";
 
 const noError = { error: "" };

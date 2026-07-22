@@ -6,6 +6,13 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
+// Billing is validated separately (billing-access.test.ts); tenant-scope tests
+// run with the subscription guard stubbed out.
+vi.mock("@/lib/billing", () => ({
+  requireActiveBillingAccess: vi.fn(async () => {}),
+  hasActiveAccess: () => true,
+}));
+
 const state = vi.hoisted(() => ({
   updates: [] as any[],
 }));
@@ -46,7 +53,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 
 import { db } from "@workspace/db";
-import { resendConfirmationEmail } from "@/app/(admin)/orders/[id]/actions";
+import { resendConfirmationEmail } from "@/app/(admin)/(gated)/orders/[id]/actions";
 import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
 
 function form() {

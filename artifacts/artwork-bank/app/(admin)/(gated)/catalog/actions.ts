@@ -1,4 +1,5 @@
 "use server";
+import { requireActiveBillingAccess } from "@/lib/billing";
 
 import { redirect } from "next/navigation";
 import { db } from "@workspace/db";
@@ -95,6 +96,7 @@ export async function createArtwork(
 ): Promise<ArtworkFormState> {
   const session = await getSession();
   if (!session.userId) return { error: "Not authenticated." };
+  await requireActiveBillingAccess(session.tenantId);
 
   const parsed = parseArtworkFormData(formData);
   if (!parsed.success) {
@@ -131,6 +133,7 @@ export async function updateArtwork(
 ): Promise<ArtworkFormState> {
   const session = await getSession();
   if (!session.userId) return { error: "Not authenticated." };
+  await requireActiveBillingAccess(session.tenantId);
 
   const existing = await db.query.artworksTable.findFirst({
     where: and(
@@ -177,6 +180,7 @@ export async function updateArtwork(
 export async function deleteArtwork(id: string): Promise<void> {
   const session = await getSession();
   if (!session.userId) return;
+  await requireActiveBillingAccess(session.tenantId);
 
   await db
     .delete(artworksTable)
@@ -191,6 +195,7 @@ export async function bulkUpdateStatus(
 ): Promise<void> {
   const session = await getSession();
   if (!session.userId || ids.length === 0) return;
+  await requireActiveBillingAccess(session.tenantId);
 
   await db
     .update(artworksTable)
@@ -219,6 +224,7 @@ export async function addArtworkImage(
 ): Promise<ArtworkImage[]> {
   const session = await getSession();
   if (!session.userId) throw new Error("Not authenticated");
+  await requireActiveBillingAccess(session.tenantId);
 
   const artwork = await db.query.artworksTable.findFirst({
     where: and(
@@ -247,6 +253,7 @@ export async function addArtworkImage(
 export async function deleteArtworkImage(imageId: string): Promise<ArtworkImage[]> {
   const session = await getSession();
   if (!session.userId) throw new Error("Not authenticated");
+  await requireActiveBillingAccess(session.tenantId);
 
   const image = await db.query.artworkImagesTable.findFirst({
     where: and(
@@ -279,6 +286,7 @@ export async function setPrimaryImage(
 ): Promise<ArtworkImage[]> {
   const session = await getSession();
   if (!session.userId) throw new Error("Not authenticated");
+  await requireActiveBillingAccess(session.tenantId);
 
   const artwork = await db.query.artworksTable.findFirst({
     where: and(
@@ -314,6 +322,7 @@ export async function reorderImages(
 ): Promise<ArtworkImage[]> {
   const session = await getSession();
   if (!session.userId) throw new Error("Not authenticated");
+  await requireActiveBillingAccess(session.tenantId);
 
   const artwork = await db.query.artworksTable.findFirst({
     where: and(

@@ -10,6 +10,13 @@
  * - The admin sidebar "new" badge count must exclude archived inquiries.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// Billing is validated separately (billing-access.test.ts); tenant-scope tests
+// run with the subscription guard stubbed out.
+vi.mock("@/lib/billing", () => ({
+  requireActiveBillingAccess: vi.fn(async () => {}),
+  hasActiveAccess: () => true,
+}));
 import * as React from "react";
 
 // The page/layout server components are compiled with the classic JSX
@@ -90,6 +97,9 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => new Headers()),
+}));
 vi.mock("next/navigation", () => ({
   redirect: vi.fn((url: string) => {
     throw new Error(`REDIRECT:${url}`);
@@ -97,8 +107,8 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/app/(auth)/actions", () => ({ logout: vi.fn() }));
 
-import { setInquiryArchived } from "@/app/(admin)/inquiries/actions";
-import InquiriesPage from "@/app/(admin)/inquiries/page";
+import { setInquiryArchived } from "@/app/(admin)/(gated)/inquiries/actions";
+import InquiriesPage from "@/app/(admin)/(gated)/inquiries/page";
 import AdminLayout from "@/app/(admin)/layout";
 import { and, eq, isNull, isNotNull } from "drizzle-orm";
 

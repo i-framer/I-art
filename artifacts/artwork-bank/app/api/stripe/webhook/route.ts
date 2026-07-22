@@ -76,9 +76,22 @@ export async function POST(request: Request) {
 
   try {
     if (event.type === "checkout.session.completed") {
-      await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session);
+      const session = event.data.object as Stripe.Checkout.Session;
+      if (session.mode === "subscription") {
+        await handleSubscriptionCheckoutCompleted(session);
+      } else {
+        await handleCheckoutCompleted(session);
+      }
     } else if (event.type === "checkout.session.expired") {
       await handleCheckoutExpired(event.data.object as Stripe.Checkout.Session);
+    } else if (
+      event.type === "customer.subscription.created" ||
+      event.type === "customer.subscription.updated" ||
+      event.type === "customer.subscription.deleted"
+    ) {
+      await handleSubscriptionEvent(event.data.object as Stripe.Subscription);
+    } else if (event.type === "invoice.payment_failed") {
+      await handleInvoicePaymentFailed(event.data.object as Stripe.Invoice);
     }
   } catch (err: any) {
     console.error("Webhook handler error:", err);
@@ -86,6 +99,91 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ received: true });
+}
+
+// ── Platform subscription billing ─────────────────────────────────────────────
+
+/** Tenant subscribed via Checkout — link Stripe IDs and mark active. */
+async function handleSubscriptionCheckoutCompleted(
+  session: Stripe.Checkout.Session,
+) {
+  const tenantId = session.metadata?.billingTenantId;
+  if (!tenantId) {
+    console.error("Subscription checkout missing billingTenantId:", session.id);
+    return;
+  }
+
+  const customerId =
+    typeof session.customer === "string"
+      ? session.customer
+      : session.customer?.id ?? null;
+  const subscriptionId =
+    typeof session.subscription === "string"
+      ? session.subscription
+      : session.subscription?.id ?? null;
+
+  // Order-safety: customer.subscription.* events are the source of truth for
+  // status. Only mark active here when this checkout introduces a NEW
+  // subscription — if a subscription event for the same subscription already
+  // wrote a status (e.g. an out-of-order `deleted` → canceled), keep it.
+  const tenant = await db.query.tenantsTable.findFirst({
+    where: eq(tenantsTable.id, tenantId),
+    columns: { subscriptionStatus: true, stripeSubscriptionId: true },
+  });
+  const isNewSubscription =
+    !tenant?.subscriptionStatus ||
+    (subscriptionId != null && tenant.stripeSubscriptionId !== subscriptionId);
+
+  await db
+    .update(tenantsTable)
+    .set({
+      ...(customerId ? { stripeCustomerId: customerId } : {}),
+      ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
+      ...(isNewSubscription ? { subscriptionStatus: "active" } : {}),
+    })
+    .where(eq(tenantsTable.id, tenantId));
+}
+
+/** Mirror Stripe's subscription status onto the owning tenant. */
+async function handleSubscriptionEvent(subscription: Stripe.Subscription) {
+  const status =
+    subscription.status === "canceled" ? "canceled" : subscription.status;
+
+  const tenantId = subscription.metadata?.billingTenantId;
+  const customerId =
+    typeof subscription.customer === "string"
+      ? subscription.customer
+      : subscription.customer?.id;
+
+  // Prefer metadata (set at checkout), fall back to matching by customer/sub ID
+  const where = tenantId
+    ? eq(tenantsTable.id, tenantId)
+    : customerId
+      ? eq(tenantsTable.stripeCustomerId, customerId)
+      : eq(tenantsTable.stripeSubscriptionId, subscription.id);
+
+  await db
+    .update(tenantsTable)
+    .set({
+      subscriptionStatus: status,
+      stripeSubscriptionId: subscription.id,
+      ...(customerId ? { stripeCustomerId: customerId } : {}),
+    })
+    .where(where);
+}
+
+/** A subscription invoice failed to collect — flag the tenant as past_due. */
+async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
+  const customerId =
+    typeof invoice.customer === "string"
+      ? invoice.customer
+      : invoice.customer?.id;
+  if (!customerId) return;
+
+  await db
+    .update(tenantsTable)
+    .set({ subscriptionStatus: "past_due" })
+    .where(eq(tenantsTable.stripeCustomerId, customerId));
 }
 
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {

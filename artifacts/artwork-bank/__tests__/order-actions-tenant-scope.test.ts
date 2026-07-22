@@ -7,6 +7,13 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
+// Billing is validated separately (billing-access.test.ts); tenant-scope tests
+// run with the subscription guard stubbed out.
+vi.mock("@/lib/billing", () => ({
+  requireActiveBillingAccess: vi.fn(async () => {}),
+  hasActiveAccess: () => true,
+}));
+
 const state = vi.hoisted(() => ({
   updates: [] as { vals: any; where: any }[],
   orderFindWhere: null as any,
@@ -80,7 +87,7 @@ import {
   markCancelled,
   resendConfirmationEmail,
   saveTrackingNote,
-} from "@/app/(admin)/orders/[id]/actions";
+} from "@/app/(admin)/(gated)/orders/[id]/actions";
 import { and, eq } from "drizzle-orm";
 
 function formData(entries: Record<string, string>) {

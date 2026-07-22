@@ -1,4 +1,5 @@
 "use server";
+import { requireActiveBillingAccess } from "@/lib/billing";
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -15,6 +16,7 @@ import { sendInquiryReply, EmailSendError } from "@/lib/email";
 export async function setInquiryStatus(formData: FormData): Promise<void> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  await requireActiveBillingAccess(session.tenantId);
 
   const inquiryId = formData.get("inquiryId") as string;
   const status = formData.get("status") as string;
@@ -41,6 +43,7 @@ export async function setInquiryStatus(formData: FormData): Promise<void> {
 export async function setInquiryArchived(formData: FormData): Promise<void> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  await requireActiveBillingAccess(session.tenantId);
 
   const inquiryId = formData.get("inquiryId") as string;
   const archived = formData.get("archived") as string;
@@ -70,6 +73,7 @@ export async function bulkSetInquiriesArchived(
 ): Promise<void> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  await requireActiveBillingAccess(session.tenantId);
 
   const ids = Array.from(
     new Set(inquiryIds.filter((id) => typeof id === "string" && id.length > 0)),
@@ -101,6 +105,7 @@ export async function bulkSetInquiriesStatus(
 ): Promise<void> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  await requireActiveBillingAccess(session.tenantId);
 
   if (status !== "NEW" && status !== "HANDLED") {
     throw new Error("Invalid request.");
@@ -141,6 +146,7 @@ export async function replyToInquiry(
 ): Promise<ReplyState> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  await requireActiveBillingAccess(session.tenantId);
 
   const inquiryId = formData.get("inquiryId") as string;
   const replyMessage = ((formData.get("replyMessage") as string) ?? "").trim();

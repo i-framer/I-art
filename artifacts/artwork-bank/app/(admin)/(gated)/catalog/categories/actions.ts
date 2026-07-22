@@ -1,4 +1,5 @@
 "use server";
+import { requireActiveBillingAccess } from "@/lib/billing";
 
 import { db } from "@workspace/db";
 import {
@@ -17,6 +18,7 @@ export async function createCategory(
 ): Promise<CategoryState> {
   const session = await getSession();
   if (!session.userId) return { error: "Not authenticated." };
+  await requireActiveBillingAccess(session.tenantId);
 
   const name = (formData.get("name") as string)?.trim();
   if (!name || name.length < 1) return { error: "Category name is required." };
@@ -37,6 +39,7 @@ export async function renameCategory(
 ): Promise<CategoryState> {
   const session = await getSession();
   if (!session.userId) return { error: "Not authenticated." };
+  await requireActiveBillingAccess(session.tenantId);
 
   const name = (formData.get("name") as string)?.trim();
   if (!name || name.length < 1) return { error: "Category name is required." };
@@ -57,6 +60,7 @@ export async function renameCategory(
 export async function deleteCategory(id: string): Promise<{ error: string }> {
   const session = await getSession();
   if (!session.userId) return { error: "Not authenticated." };
+  await requireActiveBillingAccess(session.tenantId);
 
   // Check if any artworks are assigned to this category
   const [usage] = await db
