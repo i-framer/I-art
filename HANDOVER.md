@@ -67,4 +67,14 @@ Key places:
 
 See the project task list (Replit) for the queue. Highlights: refunds from order detail, automatic Vercel domain provisioning, iFramer job status sync into Artwork Bank, live inquiry badge updates, production subscription-billing setup, platform-owner comp tooling, and several "verify on a real database" hardening tasks.
 
+### Planned major additions (specs transferred 22 July 2026)
+
+Three new tenant-scoped admin sections are planned as project tasks — full specs live in the task descriptions (Tasks #81–#83) and the original pasted spec in `attached_assets/`:
+
+1. **Exhibition & Show Planner** — plan gallery shows: rooms/walls, 2D floor plan with drag-and-drop artwork placement and hang heights, printable hang lists, guest/RSVP tracking, milestone timeline.
+2. **Consignment & Commission Tracker** — consignment agreements per represented artist (split %, dates), link catalog artworks, record sales with auto-calculated artist/gallery splits (linking storefront orders where applicable), artist statements, payments dashboard.
+3. **Certificates of Authenticity & Labelling** — issue COAs with unique certificate numbers, branded COA + wall/backing-board label PDFs, QR codes linking to the artwork's public storefront page, extended brand settings.
+
+Adaptation notes vs. the original spec: everything must be tenant-scoped and behind the subscription paywall; "artists" map to the existing represented-artists records (no new artists table); the marketplace core the spec assumed ("Task #5") is already built here. The new developer should review these tasks and decide sequencing.
+
 Dev notes: the Stripe webhook accepts unsigned events only when `STRIPE_WEBHOOK_DEV_BYPASS=true` outside production; Stripe credentials come from the Replit connector (or `STRIPE_SECRET_KEY` fallback).
