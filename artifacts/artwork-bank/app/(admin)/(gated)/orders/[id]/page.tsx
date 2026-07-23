@@ -11,8 +11,9 @@ import {
   markCancelled,
   saveTrackingNote,
   resendConfirmationEmail,
+  refundOrder,
 } from "./actions";
-import { ArrowLeft, CheckCircle2, AlertCircle, Clock, Mail, AlertTriangle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, AlertCircle, Clock, Mail, AlertTriangle, Undo2 } from "lucide-react";
 import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
 
 export const metadata: Metadata = { title: "Order Detail" };
@@ -32,13 +33,16 @@ const FULFILLMENT_LABELS: Record<string, string> = {
 
 export default async function OrderDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ refunded?: string; refund_error?: string }>;
 }) {
   const session = await getSession();
   if (!session.userId) redirect("/login");
 
   const { id } = await params;
+  const { refunded, refund_error: refundError } = await searchParams;
 
   const [order, items, tenant] = await Promise.all([
     db.query.ordersTable.findFirst({
@@ -61,6 +65,9 @@ export default async function OrderDetailPage({
   const badge = STATUS_STYLES[order.status];
   const canFulfil = order.status === "PAID";
   const canCancel = order.status === "PAID" || order.status === "PENDING";
+  const canRefund =
+    (order.status === "PAID" || order.status === "FULFILLED") &&
+    Boolean(order.stripePaymentIntentId);
   const isFramingJob = order.fulfillmentType === "FRAMING_JOB";
   const hasIFramer = Boolean(tenant?.iframerAccountId);
 
@@ -101,6 +108,28 @@ export default async function OrderDetailPage({
       </div>
 
       <div className="space-y-6">
+        {/* Refund result banners */}
+        {refunded === "1" && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 flex items-start gap-3">
+            <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
+            <p className="text-sm font-medium text-emerald-800">
+              Refund issued successfully. The order has been cancelled and the
+              buyer will receive the funds via Stripe.
+            </p>
+          </div>
+        )}
+        {refundError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4 flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-red-800">Refund failed</p>
+              <p className="text-xs text-red-700 mt-1 leading-relaxed break-words">
+                {refundError}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Customer */}
         <div className="rounded-xl border border-stone-200 bg-white p-6">
           <h2 className="text-sm font-semibold text-stone-900 mb-4">Customer</h2>
@@ -340,7 +369,7 @@ export default async function OrderDetailPage({
         </div>
 
         {/* Status actions */}
-        {(canFulfil || canCancel) && (
+        {(canFulfil || canCancel || canRefund) && (
           <div className="rounded-xl border border-stone-200 bg-white p-6">
             <h2 className="text-sm font-semibold text-stone-900 mb-4">
               Update status
@@ -368,7 +397,25 @@ export default async function OrderDetailPage({
                   </button>
                 </form>
               )}
+              {canRefund && (
+                <form action={refundOrder}>
+                  <input type="hidden" name="orderId" value={order.id} />
+                  <button
+                    type="submit"
+                    className="inline-flex items-center gap-2 rounded-lg border border-red-300 px-5 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50 transition-colors"
+                  >
+                    <Undo2 className="h-4 w-4" />
+                    Refund
+                  </button>
+                </form>
+              )}
             </div>
+            {canRefund && (
+              <p className="text-xs text-stone-400 mt-3">
+                Refund issues a full refund via Stripe and marks the order as
+                cancelled.
+              </p>
+            )}
           </div>
         )}
 

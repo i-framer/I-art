@@ -10,6 +10,7 @@ import { getSession } from "@/lib/auth";
 import { orderItemsTable, tenantsTable } from "@workspace/db";
 import { sendOrderConfirmation, sendOrderStatusUpdate } from "@/lib/email";
 import { getTenantUrl } from "@/lib/base-url";
+import { getStripeClient, StripeNotConfiguredError } from "@/lib/stripe";
 
 async function requireOwnership(orderId: string) {
   const session = await getSession();
@@ -109,6 +110,41 @@ export async function markCancelled(formData: FormData): Promise<void> {
     .where(eq(ordersTable.id, orderId));
   revalidatePath(`/orders/${orderId}`);
   revalidatePath("/orders");
+}
+
+export async function refundOrder(formData: FormData): Promise<void> {
+  const orderId = formData.get("orderId") as string;
+  const order = await requireOwnership(orderId);
+
+  if (order.status !== "PAID" && order.status !== "FULFILLED") {
+    redirect(`/orders/${orderId}?refund_error=${encodeURIComponent("Only paid or fulfilled orders can be refunded.")}`);
+  }
+  if (!order.stripePaymentIntentId) {
+    redirect(`/orders/${orderId}?refund_error=${encodeURIComponent("This order has no Stripe payment attached, so it can't be refunded here.")}`);
+  }
+
+  try {
+    const stripe = await getStripeClient();
+    await stripe.refunds.create({
+      payment_intent: order.stripePaymentIntentId,
+    });
+  } catch (err) {
+    const message =
+      err instanceof StripeNotConfiguredError
+        ? "Payments are unavailable right now — Stripe is not configured."
+        : ((err as any)?.message ?? String(err));
+    redirect(`/orders/${orderId}?refund_error=${encodeURIComponent(message)}`);
+  }
+
+  await db
+    .update(ordersTable)
+    .set({ status: "CANCELLED" })
+    .where(eq(ordersTable.id, orderId));
+  await notifyBuyerOfUpdate(orderId);
+
+  revalidatePath(`/orders/${orderId}`);
+  revalidatePath("/orders");
+  redirect(`/orders/${orderId}?refunded=1`);
 }
 
 export async function resendConfirmationEmail(
