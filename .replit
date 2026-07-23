@@ -75,3 +75,6 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.development]
+
+[userenv.shared]
+PLATFORM_ADMIN_EMAILS = "jane@janesmith.studio"

@@ -35,6 +35,7 @@ async function seed() {
         themeColor: "#b45309",
         aboutText:
           "Contemporary oil paintings celebrating light and the Australian landscape. Based in Melbourne, available for commissions.",
+        billingExempt: true,
       })
       .returning();
 
@@ -58,6 +59,13 @@ async function seed() {
     console.log(`   Login: jane@janesmith.studio / ${DEMO_PASSWORD}`);
   } else {
     console.log(`ℹ️  ARTIST tenant already exists (slug: ${artistSlug})`);
+    if (!existingArtist.billingExempt) {
+      await db
+        .update(tenantsTable)
+        .set({ billingExempt: true })
+        .where(eq(tenantsTable.id, existingArtist.id));
+      console.log("   ↳ marked billingExempt = true");
+    }
   }
 
   // --- FRAMER tenant ---
@@ -76,6 +84,7 @@ async function seed() {
         themeColor: "#1c1917",
         aboutText:
           "Custom framing and fine art gallery in Surry Hills. Representing over 40 Australian artists on consignment.",
+        billingExempt: true,
       })
       .returning();
 
@@ -99,6 +108,13 @@ async function seed() {
     console.log(`   Login: admin@frameworks.com.au / ${DEMO_PASSWORD}`);
   } else {
     console.log(`ℹ️  FRAMER tenant already exists (slug: ${framerSlug})`);
+    if (!existingFramer.billingExempt) {
+      await db
+        .update(tenantsTable)
+        .set({ billingExempt: true })
+        .where(eq(tenantsTable.id, existingFramer.id));
+      console.log("   ↳ marked billingExempt = true");
+    }
   }
 
   console.log("\n✨ Seed complete!");
