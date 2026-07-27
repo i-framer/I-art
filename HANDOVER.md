@@ -30,7 +30,17 @@ The full product spec lives in `attached_assets/` (see the "Artwork Bank" pasted
 - iFramer job creation for `FRAMING_JOB` orders (tenants with `iframerAccountId`)
 - Email retry sweep endpoint, rate limiting on checkout/inquiries, extensive tenant-isolation tests
 
-Seed logins: `jane@janesmith.studio` / `password123` (ARTIST), `admin@frameworks.com.au` (FRAMER).
+### Test galleries & logins (development)
+
+Three tenants exist in the dev database, all comped (`billing_exempt = true`) so the subscription paywall doesn't block admin access. Admin login is at `/login`; storefronts are at `/t/{slug}`.
+
+| Gallery | Type | Slug | Admin login | Password |
+|---|---|---|---|---|
+| Jane Smith Studio | ARTIST | `jane-smith-studio` | `jane@janesmith.studio` | `password123` |
+| Frame Works Sydney | FRAMER | `frame-works-sydney` | `admin@frameworks.com.au` | `password123` |
+| Anokah | ARTIST | `anokah` | `mark@anokah.com.au` | (Mark's own account — ask him, or use a seeded login) |
+
+The first two are created/repaired by the seed script (`pnpm --filter @workspace/artwork-bank run db:seed` — safe to re-run; it also re-comps them). Anokah is Mark's manually created test gallery — he'll be assisting with testing and advising during handover.
 
 ## Pricing model (agreed)
 
