@@ -47,6 +47,9 @@ Preview too where noted).
 | `SUBSCRIPTION_PRICE_ID` | Pin the AUD $10/month subscription price; otherwise a price is auto-created with lookup key `artwork_bank_monthly_v1` |
 | `PLATFORM_FEE_PERCENT` | Sales commission percent (default `5`) |
 | `CNAME_TARGET` | DNS target shown to tenants for custom domains (set to `cname.vercel-dns.com` on Vercel) |
+| `VERCEL_API_TOKEN` | Vercel API token for auto-provisioning tenant custom domains (Vercel → Account Settings → Tokens). Required together with `VERCEL_PROJECT_ID` for self-serve custom domains. |
+| `VERCEL_PROJECT_ID` | Vercel project ID (Project → Settings → General) — target project for tenant custom domains |
+| `VERCEL_TEAM_ID` | Vercel team ID, only if the project belongs to a team |
 | `IFRAMER_API_BASE_URL`, `IFRAMER_API_KEY` | i-Framer integration for framing-fulfilment jobs |
 | `STORAGE_PROVIDER` | Force `vercel-blob` or `replit` (normally auto-detected from `BLOB_READ_WRITE_TOKEN` / `PRIVATE_OBJECT_DIR`) |
 | `BLOB_BASE_URL` | Blob store public base URL (skips a one-time lookup; normally unnecessary) |
@@ -78,9 +81,10 @@ on Vercel — re-upload any artwork images you want in production (seed/demo dat
 3. Tenant storefronts then resolve automatically: `{slug}.i-art.com.au` is rewritten
    to `/t/{slug}` by the middleware (driven by `NEXT_PUBLIC_SITE_URL`).
 4. Tenant **custom domains** (e.g. `www.janeart.com`): the tenant CNAMEs to
-   `CNAME_TARGET`, and the domain must also be added to the Vercel project
-   (Settings → Domains) so Vercel serves it. Automatic provisioning via the Vercel
-   API is a separate planned task.
+   `CNAME_TARGET`, and the domain must also be added to the Vercel project so
+   Vercel serves it. If `VERCEL_API_TOKEN` and `VERCEL_PROJECT_ID` are set, the
+   app adds the domain automatically when the tenant's CNAME check passes
+   (fully self-serve). Otherwise, add it manually under Settings → Domains.
 
 ## 5. Stripe webhook
 

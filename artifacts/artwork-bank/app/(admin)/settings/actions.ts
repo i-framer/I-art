@@ -200,6 +200,13 @@ export async function verifyCustomDomain(): Promise<void> {
     .set({ customDomainVerified: verified })
     .where(eq(tenantsTable.id, session.tenantId));
 
+  if (verified) {
+    // Auto-provision the domain on Vercel so TLS works without a manual
+    // dashboard step. Failures are logged and never block verification.
+    const { provisionVercelDomain } = await import("@/lib/vercel-domains");
+    await provisionVercelDomain(tenant.customDomain);
+  }
+
   redirect(`/settings?domain_status=${verified ? "verified" : "unverified"}`);
 }
 
