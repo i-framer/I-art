@@ -251,10 +251,7 @@ export async function startStripeOnboarding() {
       .where(eq(tenantsTable.id, tenant.id));
   }
 
-  const replitDomain = process.env.REPLIT_DOMAINS?.split(",")[0];
-  const baseUrl = replitDomain
-    ? `https://${replitDomain}`
-    : "http://localhost:3000";
+  const baseUrl = getBillingBaseUrl();
 
   const accountLink = await stripeClient.accountLinks.create({
     account: accountId,
