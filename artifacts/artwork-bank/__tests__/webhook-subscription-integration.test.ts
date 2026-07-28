@@ -268,6 +268,49 @@ describe("checkout.session.completed re-subscription matched by stripeCustomerId
   });
 });
 
+// ── Checkout re-delivery guard ───────────────────────────────────────────────
+
+describe("checkout.session.completed re-delivery blocked for same subscription ID", () => {
+  it("does NOT reset subscriptionStatus to active when same sub ID is already on the tenant (customer-ID lookup path)", async () => {
+    // Simulate a tenant that was active, then a customer.subscription.deleted
+    // event ran and set it to "canceled".  The checkout.session.completed event
+    // for the original purchase is re-delivered (e.g. Stripe retries it).
+    // Because the subscription ID matches the one already stored, isNewSubscription
+    // evaluates to false and the status must stay "canceled".
+    const cusId = `cus_checkout_redeliver_${uid()}`;
+    const subId = `sub_checkout_redeliver_${uid()}`;
+
+    const tenantId = await createTenant({
+      stripeCustomerId: cusId,
+      stripeSubscriptionId: subId,
+      subscriptionStatus: "canceled",
+    });
+    createdTenantIds.push(tenantId);
+
+    const res = await post({
+      id: `evt_checkout_redeliver_${tenantId}`,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_redeliver_${tenantId}`,
+          mode: "subscription",
+          customer: cusId,         // same customer
+          subscription: subId,     // same subscription — must be blocked
+          metadata: {},            // no billingTenantId — exercises customer-ID lookup path
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+
+    const row = await getTenantBillingFields(tenantId);
+    // Must remain "canceled" — the checkout re-delivery must NOT flip it back.
+    expect(row?.subscriptionStatus).toBe("canceled");
+    expect(row?.stripeSubscriptionId).toBe(subId);
+    expect(row?.stripeCustomerId).toBe(cusId);
+  });
+});
+
 // ── Out-of-order guard ────────────────────────────────────────────────────────
 
 describe("out-of-order subscription events", () => {
