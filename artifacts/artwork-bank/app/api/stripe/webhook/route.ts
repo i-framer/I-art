@@ -115,11 +115,7 @@ export async function POST(request: Request) {
 async function handleSubscriptionCheckoutCompleted(
   session: Stripe.Checkout.Session,
 ) {
-  const tenantId = session.metadata?.billingTenantId;
-  if (!tenantId) {
-    console.error("Subscription checkout missing billingTenantId:", session.id);
-    return;
-  }
+  const metaTenantId = session.metadata?.billingTenantId;
 
   const customerId =
     typeof session.customer === "string"
@@ -130,16 +126,41 @@ async function handleSubscriptionCheckoutCompleted(
       ? session.subscription
       : session.subscription?.id ?? null;
 
+  // Resolve the tenant: prefer metadata, fall back to stripeCustomerId.
+  let tenant: {
+    id: string;
+    subscriptionStatus: string | null;
+    stripeSubscriptionId: string | null;
+  } | undefined;
+
+  if (metaTenantId) {
+    tenant = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, metaTenantId),
+      columns: { id: true, subscriptionStatus: true, stripeSubscriptionId: true },
+    });
+  } else if (customerId) {
+    tenant = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.stripeCustomerId, customerId),
+      columns: { id: true, subscriptionStatus: true, stripeSubscriptionId: true },
+    });
+  }
+
+  if (!tenant) {
+    console.error(
+      "Subscription checkout — no tenant matched by metadata or customer ID:",
+      session.id,
+    );
+    return;
+  }
+
+  const tenantId = tenant.id;
+
   // Order-safety: customer.subscription.* events are the source of truth for
   // status. Only mark active here when this checkout introduces a NEW
   // subscription — if a subscription event for the same subscription already
   // wrote a status (e.g. an out-of-order `deleted` → canceled), keep it.
-  const tenant = await db.query.tenantsTable.findFirst({
-    where: eq(tenantsTable.id, tenantId),
-    columns: { subscriptionStatus: true, stripeSubscriptionId: true },
-  });
   const isNewSubscription =
-    !tenant?.subscriptionStatus ||
+    !tenant.subscriptionStatus ||
     (subscriptionId != null && tenant.stripeSubscriptionId !== subscriptionId);
 
   await db

@@ -229,6 +229,45 @@ describe("tenant lookup by stripeSubscriptionId (no metadata, no customer match)
   });
 });
 
+// ── checkout.session.completed reactivation via customer ID ──────────────────
+
+describe("checkout.session.completed re-subscription matched by stripeCustomerId", () => {
+  it("reactivates a canceled tenant when checkout carries a known customer ID but no billingTenantId metadata", async () => {
+    const cusId = `cus_checkout_reactivate_${uid()}`;
+    const subOld = `sub_old_checkout_${uid()}`;
+
+    const tenantId = await createTenant({
+      stripeCustomerId: cusId,
+      stripeSubscriptionId: subOld,
+      subscriptionStatus: "canceled",
+    });
+    createdTenantIds.push(tenantId);
+
+    const subNew = `sub_new_checkout_${uid()}`;
+
+    const res = await post({
+      id: `evt_checkout_reactivate_${tenantId}`,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_reactivate_${tenantId}`,
+          mode: "subscription",
+          customer: cusId,
+          subscription: subNew,
+          metadata: {}, // no billingTenantId — must fall back to stripeCustomerId
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+
+    const row = await getTenantBillingFields(tenantId);
+    expect(row?.subscriptionStatus).toBe("active");
+    expect(row?.stripeSubscriptionId).toBe(subNew);
+    expect(row?.stripeCustomerId).toBe(cusId);
+  });
+});
+
 // ── Out-of-order guard ────────────────────────────────────────────────────────
 
 describe("out-of-order subscription events", () => {

@@ -90,10 +90,14 @@ beforeEach(() => {
   state.updateResult = [{ id: "matched" }];
   process.env.STRIPE_WEBHOOK_DEV_BYPASS = "true";
   mockHeaders.mockResolvedValue(new Headers());
-  // Default: tenant has no prior subscription state
-  vi.mocked(db.query.tenantsTable.findFirst).mockResolvedValue(
-    undefined as any,
-  );
+  // Default: tenant exists with no prior subscription state (matches tests that
+  // use billingTenantId: "tenant-1" in metadata; tests that need a different
+  // state override this with their own mockResolvedValue call).
+  vi.mocked(db.query.tenantsTable.findFirst).mockResolvedValue({
+    id: "tenant-1",
+    subscriptionStatus: null,
+    stripeSubscriptionId: null,
+  } as any);
 });
 
 afterEach(() => {
@@ -240,6 +244,11 @@ describe("subscription webhook events", () => {
 
   it("logs an ERROR when a subscription event matches no tenant", async () => {
     state.updateResult = []; // no tenant matched the update
+    // Override: second findFirst call (cancel-guard check) must also return
+    // undefined so the handler takes the "truly unmatched" error path.
+    vi.mocked(db.query.tenantsTable.findFirst).mockResolvedValue(
+      undefined as any,
+    );
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const res = await post({
