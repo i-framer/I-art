@@ -252,3 +252,89 @@ describe("sendBillingAlertSlackNotification — no-op when channel is not config
     expect(mockProxy).not.toHaveBeenCalled();
   });
 });
+
+describe("sendBillingAlertSlackNotification — connector reconnect path", () => {
+  /**
+   * Simulates the Replit connector being temporarily unavailable (e.g. the
+   * operator just reconnected / re-authorised the Slack app at the platform
+   * level).  The first alert call happens to land while the connector is still
+   * not ready and throws "connector not configured".  Once the connector is
+   * live, the very next call must succeed and must NOT produce any error log.
+   */
+  it("returns ok:false on the first call when the connector is not configured", async () => {
+    mockProxy.mockRejectedValueOnce(
+      new Error("connector not configured"),
+    );
+
+    const result = await sendBillingAlertSlackNotification(BASE_PARAMS);
+
+    expect(result).toMatchObject({ ok: false });
+    expect(mockProxy).toHaveBeenCalledTimes(1);
+  });
+
+  it("succeeds on the next call after the connector becomes available", async () => {
+    // First call: connector still unavailable.
+    mockProxy.mockRejectedValueOnce(
+      new Error("connector not configured"),
+    );
+    // Second call: connector is now live.
+    mockProxy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // First alert — connector not yet ready; should fail gracefully.
+    const firstResult = await sendBillingAlertSlackNotification({
+      ...BASE_PARAMS,
+      stripeEventId: "evt_reconnect_first",
+    });
+    expect(firstResult).toMatchObject({ ok: false });
+
+    // Reset spy so we can assert the second call is clean.
+    consoleSpy.mockClear();
+
+    // Second alert — connector is now reconnected; should succeed.
+    const secondResult = await sendBillingAlertSlackNotification({
+      ...BASE_PARAMS,
+      stripeEventId: "evt_reconnect_second",
+    });
+    expect(secondResult).toMatchObject({ ok: true });
+
+    // The successful call must not produce any error log.
+    expect(consoleSpy).not.toHaveBeenCalled();
+
+    // Both calls must have reached the proxy (not short-circuited before it).
+    expect(mockProxy).toHaveBeenCalledTimes(2);
+
+    consoleSpy.mockRestore();
+  });
+
+  it("posts to the correct channel on the successful reconnect call", async () => {
+    // First call fails; second succeeds.
+    mockProxy.mockRejectedValueOnce(new Error("connector not configured"));
+    mockProxy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await sendBillingAlertSlackNotification({
+      ...BASE_PARAMS,
+      stripeEventId: "evt_reconnect_channel_check_1",
+    });
+    await sendBillingAlertSlackNotification({
+      ...BASE_PARAMS,
+      stripeEventId: "evt_reconnect_channel_check_2",
+    });
+
+    // Inspect the body passed to the second proxy call.
+    const secondCallArgs = mockProxy.mock.calls[1];
+    const body = JSON.parse(secondCallArgs[2].body as string) as {
+      channel: string;
+    };
+    expect(body.channel).toBe("#billing-alerts");
+
+    consoleSpy.mockRestore();
+  });
+});
