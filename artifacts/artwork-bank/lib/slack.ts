@@ -97,7 +97,7 @@ export async function sendBillingAlertSlackNotification({
     }
   } catch (err) {
     console.error(
-      `[Billing alert Slack] Failed to post message: ${(err as any)?.message ?? String(err)}`,
+      `[Billing alert Slack] Failed to post message for eventId=${stripeEventId}: ${(err as any)?.message ?? String(err)}`,
     );
   }
 }

@@ -267,9 +267,12 @@ describe("sendBillingAlertSlackNotification: error resilience", () => {
 
     await sendBillingAlertSlackNotification(baseArgs);
 
-    // The implementation interpolates the error message into a single string arg.
+    // The implementation interpolates eventId + error message into a single string arg.
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("[Billing alert Slack] Failed to post message: ECONNREFUSED"),
+      expect.stringContaining("[Billing alert Slack] Failed to post message for eventId="),
+    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("ECONNREFUSED"),
     );
 
     consoleErrorSpy.mockRestore();
