@@ -6,6 +6,8 @@
  *  - PLATFORM_ADMIN_EMAIL not set → resolves without throwing
  *  - Both vars set → fetch called with correct URL, recipient, and subject
  *  - Resend returns non-2xx → resolves without throwing (non-fatal by design)
+ *  - Sender address precedence: EMAIL_FROM_ORDERS > EMAIL_FROM > sandbox default
+ *    (catches a rotated sender domain that hasn't been verified with Resend)
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -111,5 +113,81 @@ describe("sendBillingAlertNotification: env-var guard", () => {
     await expect(
       sendBillingAlertNotification(alertArgs),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("sendBillingAlertNotification: sender address (domain-rotation safety)", () => {
+  afterEach(() => {
+    delete process.env.RESEND_API_KEY;
+    delete process.env.PLATFORM_ADMIN_EMAIL;
+    delete process.env.EMAIL_FROM_ORDERS;
+    delete process.env.EMAIL_FROM;
+    vi.restoreAllMocks();
+  });
+
+  it("uses EMAIL_FROM_ORDERS as the from address when it is set", async () => {
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.PLATFORM_ADMIN_EMAIL = "operator@example.com";
+    process.env.EMAIL_FROM_ORDERS = "billing@custom-domain.com";
+
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+
+    await sendBillingAlertNotification(alertArgs);
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(init.body as string);
+    expect(payload.from).toBe("billing@custom-domain.com");
+  });
+
+  it("falls back to EMAIL_FROM when EMAIL_FROM_ORDERS is not set", async () => {
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.PLATFORM_ADMIN_EMAIL = "operator@example.com";
+    process.env.EMAIL_FROM = "no-reply@shared-domain.com";
+    // EMAIL_FROM_ORDERS intentionally absent
+
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+
+    await sendBillingAlertNotification(alertArgs);
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(init.body as string);
+    expect(payload.from).toBe("no-reply@shared-domain.com");
+  });
+
+  it("falls back to the Resend sandbox sender when neither env var is set", async () => {
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.PLATFORM_ADMIN_EMAIL = "operator@example.com";
+    // No EMAIL_FROM_ORDERS, no EMAIL_FROM
+
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+
+    await sendBillingAlertNotification(alertArgs);
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(init.body as string);
+    expect(payload.from).toBe("onboarding@resend.dev");
+  });
+
+  it("EMAIL_FROM_ORDERS takes precedence over EMAIL_FROM", async () => {
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.PLATFORM_ADMIN_EMAIL = "operator@example.com";
+    process.env.EMAIL_FROM_ORDERS = "orders@primary-domain.com";
+    process.env.EMAIL_FROM = "noreply@fallback-domain.com";
+
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+
+    await sendBillingAlertNotification(alertArgs);
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(init.body as string);
+    expect(payload.from).toBe("orders@primary-domain.com");
   });
 });

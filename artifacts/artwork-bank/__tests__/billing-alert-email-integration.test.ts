@@ -10,6 +10,19 @@
  *   - the subject identifies the alert and includes the event type
  *   - the HTML body contains the event type
  *   - the HTML body includes the billing-alerts panel link (when PLATFORM_BASE_URL is set)
+ *   - the `from` address matches EMAIL_FROM_ORDERS / EMAIL_FROM when those env
+ *     vars are set (catches a rotated sender domain that Resend hasn't verified)
+ *
+ * Sender domain verification:
+ *   If Resend returns a non-2xx response when EMAIL_FROM_ORDERS or EMAIL_FROM is
+ *   set to a custom domain, it almost certainly means the domain is not yet
+ *   verified in your Resend account. Verify it at:
+ *     https://resend.com/domains
+ *   then re-run with:
+ *     RESEND_API_KEY=re_live_xxx PLATFORM_ADMIN_EMAIL=you@example.com \
+ *     EMAIL_FROM_ORDERS=alerts@your-verified-domain.com \
+ *       pnpm --filter @workspace/artwork-bank test -- --reporter=verbose \
+ *       billing-alert-email-integration
  *
  * Run manually with real credentials:
  *   RESEND_API_KEY=re_live_xxx PLATFORM_ADMIN_EMAIL=you@example.com \
@@ -89,18 +102,14 @@ describe("sendBillingAlertNotification: real Resend API send", () => {
       }
 
       // ── Resend acceptance ────────────────────────────────────────────────
-      // Resend returns { id: "re_..." } on success
+      // Resend returns { id: "re_..." } on success.
+      // A non-2xx here almost always means the `from` domain is not yet
+      // verified in the Resend account. Verify it at https://resend.com/domains
+      // before rotating EMAIL_FROM_ORDERS / EMAIL_FROM.
       const messageId = capturedResponse.id;
       expect(messageId).toBeDefined();
       expect(typeof messageId).toBe("string");
       expect(messageId).toMatch(/^[a-zA-Z0-9_-]+/);
-
-      console.log(
-        `[integration] Resend accepted billing alert email. Message ID: ${messageId}`,
-      );
-      console.log(
-        `[integration] Check ${process.env.PLATFORM_ADMIN_EMAIL} inbox to confirm delivery.`,
-      );
 
       // ── Outbound payload assertions ──────────────────────────────────────
       // Subject must identify it as a billing alert and include the event type
@@ -120,9 +129,26 @@ describe("sendBillingAlertNotification: real Resend API send", () => {
       // https://platform.test, so the link should be https://platform.test/platform
       expect(html).toContain("/platform");
 
+      // ── Sender domain assertion ──────────────────────────────────────────
+      // Verify the `from` address reflects the configured env var so that a
+      // domain rotation is caught immediately rather than bouncing silently.
+      // Priority: EMAIL_FROM_ORDERS > EMAIL_FROM > onboarding@resend.dev
+      const expectedFrom =
+        process.env.EMAIL_FROM_ORDERS ??
+        process.env.EMAIL_FROM ??
+        "onboarding@resend.dev";
+      expect(capturedRequestPayload.from).toBe(expectedFrom);
+
       console.log("[integration] Subject:", capturedRequestPayload.subject);
+      console.log("[integration] From address:", capturedRequestPayload.from);
       console.log(
         "[integration] Billing-alerts panel link present in HTML: true",
+      );
+      console.log(
+        `[integration] Resend accepted billing alert email. Message ID: ${messageId}`,
+      );
+      console.log(
+        `[integration] Check ${process.env.PLATFORM_ADMIN_EMAIL} inbox to confirm delivery.`,
       );
     },
   );
