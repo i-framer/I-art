@@ -114,37 +114,90 @@ export async function markCancelled(formData: FormData): Promise<void> {
 
 export async function refundOrder(formData: FormData): Promise<void> {
   const orderId = formData.get("orderId") as string;
+  const amountDollarsStr = (
+    formData.get("refundAmountDollars") as string | null
+  )?.trim();
   const order = await requireOwnership(orderId);
 
   if (order.status !== "PAID" && order.status !== "FULFILLED") {
-    redirect(`/orders/${orderId}?refund_error=${encodeURIComponent("Only paid or fulfilled orders can be refunded.")}`);
+    redirect(
+      `/orders/${orderId}?refund_error=${encodeURIComponent("Only paid or fulfilled orders can be refunded.")}`,
+    );
   }
   if (!order.stripePaymentIntentId) {
-    redirect(`/orders/${orderId}?refund_error=${encodeURIComponent("This order has no Stripe payment attached, so it can't be refunded here.")}`);
+    redirect(
+      `/orders/${orderId}?refund_error=${encodeURIComponent("This order has no Stripe payment attached, so it can't be refunded here.")}`,
+    );
   }
 
+  const alreadyRefunded = order.refundedAmountCents ?? 0;
+  const maxRefundable = order.totalCents - alreadyRefunded;
+
+  if (maxRefundable <= 0) {
+    redirect(
+      `/orders/${orderId}?refund_error=${encodeURIComponent("This order has already been fully refunded.")}`,
+    );
+  }
+
+  // Parse the entered amount; default to remaining balance (full refund).
+  let refundCents: number;
+  if (amountDollarsStr) {
+    const parsed = Math.round(parseFloat(amountDollarsStr) * 100);
+    if (!isFinite(parsed) || parsed <= 0) {
+      redirect(
+        `/orders/${orderId}?refund_error=${encodeURIComponent("Enter a valid refund amount greater than zero.")}`,
+      );
+    }
+    if (parsed > maxRefundable) {
+      redirect(
+        `/orders/${orderId}?refund_error=${encodeURIComponent("Refund amount exceeds the remaining balance.")}`,
+      );
+    }
+    refundCents = parsed;
+  } else {
+    refundCents = maxRefundable;
+  }
+
+  let stripeRefundId: string;
   try {
     const stripe = await getStripeClient();
-    await stripe.refunds.create({
+    const refund = await stripe.refunds.create({
       payment_intent: order.stripePaymentIntentId,
+      amount: refundCents,
     });
+    stripeRefundId = refund.id;
   } catch (err) {
     const message =
       err instanceof StripeNotConfiguredError
         ? "Payments are unavailable right now — Stripe is not configured."
         : ((err as any)?.message ?? String(err));
-    redirect(`/orders/${orderId}?refund_error=${encodeURIComponent(message)}`);
+    redirect(
+      `/orders/${orderId}?refund_error=${encodeURIComponent(message)}`,
+    );
   }
+
+  const newTotalRefunded = alreadyRefunded + refundCents;
+  const isFullRefund = newTotalRefunded >= order.totalCents;
 
   await db
     .update(ordersTable)
-    .set({ status: "CANCELLED" })
+    .set({
+      refundedAmountCents: newTotalRefunded,
+      refundedAt: new Date(),
+      stripeRefundId,
+      ...(isFullRefund ? { status: "CANCELLED" } : {}),
+    })
     .where(eq(ordersTable.id, orderId));
-  await notifyBuyerOfUpdate(orderId);
+
+  if (isFullRefund) {
+    await notifyBuyerOfUpdate(orderId);
+  }
 
   revalidatePath(`/orders/${orderId}`);
   revalidatePath("/orders");
-  redirect(`/orders/${orderId}?refunded=1`);
+  redirect(
+    `/orders/${orderId}?refunded=${isFullRefund ? "full" : "partial"}`,
+  );
 }
 
 export async function resendConfirmationEmail(

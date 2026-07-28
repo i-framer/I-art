@@ -36,7 +36,10 @@ export default async function OrderDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ refunded?: string; refund_error?: string }>;
+  searchParams: Promise<{
+    refunded?: string;
+    refund_error?: string;
+  }>;
 }) {
   const session = await getSession();
   if (!session.userId) redirect("/login");
@@ -65,9 +68,16 @@ export default async function OrderDetailPage({
   const badge = STATUS_STYLES[order.status];
   const canFulfil = order.status === "PAID";
   const canCancel = order.status === "PAID" || order.status === "PENDING";
+
+  const alreadyRefunded = order.refundedAmountCents ?? 0;
+  const maxRefundable = order.totalCents - alreadyRefunded;
   const canRefund =
     (order.status === "PAID" || order.status === "FULFILLED") &&
-    Boolean(order.stripePaymentIntentId);
+    Boolean(order.stripePaymentIntentId) &&
+    maxRefundable > 0;
+  const isPartiallyRefunded = alreadyRefunded > 0 && order.status !== "CANCELLED";
+  const maxRefundDollars = (maxRefundable / 100).toFixed(2);
+
   const isFramingJob = order.fulfillmentType === "FRAMING_JOB";
   const hasIFramer = Boolean(tenant?.iframerAccountId);
 
@@ -100,21 +110,37 @@ export default async function OrderDetailPage({
             })}
           </p>
         </div>
-        {badge && (
-          <span className={`rounded-full px-3 py-1 text-sm font-semibold ${badge.cls}`}>
-            {badge.label}
-          </span>
-        )}
+        <div className="flex flex-col items-end gap-2">
+          {badge && (
+            <span className={`rounded-full px-3 py-1 text-sm font-semibold ${badge.cls}`}>
+              {badge.label}
+            </span>
+          )}
+          {isPartiallyRefunded && (
+            <span className="rounded-full px-3 py-1 text-sm font-semibold bg-amber-100 text-amber-700">
+              Partially refunded
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="space-y-6">
         {/* Refund result banners */}
-        {refunded === "1" && (
+        {(refunded === "full" || refunded === "1") && (
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 flex items-start gap-3">
             <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
             <p className="text-sm font-medium text-emerald-800">
-              Refund issued successfully. The order has been cancelled and the
-              buyer will receive the funds via Stripe.
+              Full refund issued. The order has been cancelled and the buyer
+              will receive the funds via Stripe.
+            </p>
+          </div>
+        )}
+        {refunded === "partial" && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 flex items-start gap-3">
+            <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
+            <p className="text-sm font-medium text-emerald-800">
+              Partial refund issued. The order remains active — issue another
+              refund to return any remaining balance.
             </p>
           </div>
         )}
@@ -175,6 +201,24 @@ export default async function OrderDetailPage({
             <p className="text-xs text-stone-400 mt-1 text-right">
               Platform fee: {formatPrice(order.applicationFeeCents)}
             </p>
+          )}
+          {alreadyRefunded > 0 && (
+            <div className="mt-3 pt-3 border-t border-stone-100 space-y-1">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-amber-700 font-medium">Refunded</span>
+                <span className="text-amber-700 font-semibold">
+                  −{formatPrice(alreadyRefunded)}
+                </span>
+              </div>
+              {order.status !== "CANCELLED" && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-stone-500">Remaining balance</span>
+                  <span className="text-stone-700 font-semibold">
+                    {formatPrice(maxRefundable)}
+                  </span>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -374,7 +418,7 @@ export default async function OrderDetailPage({
             <h2 className="text-sm font-semibold text-stone-900 mb-4">
               Update status
             </h2>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3 items-start">
               {canFulfil && (
                 <form action={markFulfilled}>
                   <input type="hidden" name="orderId" value={order.id} />
@@ -397,24 +441,49 @@ export default async function OrderDetailPage({
                   </button>
                 </form>
               )}
-              {canRefund && (
-                <form action={refundOrder}>
+            </div>
+
+            {/* Refund section */}
+            {canRefund && (
+              <div className="mt-5 pt-5 border-t border-stone-100">
+                <p className="text-sm font-medium text-stone-700 mb-3">
+                  Issue a refund
+                </p>
+                {isPartiallyRefunded && (
+                  <p className="text-xs text-stone-500 mb-3">
+                    {formatPrice(alreadyRefunded)} already refunded —{" "}
+                    {formatPrice(maxRefundable)} remaining.
+                  </p>
+                )}
+                <form action={refundOrder} className="flex items-center gap-3 flex-wrap">
                   <input type="hidden" name="orderId" value={order.id} />
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-500 text-sm select-none">
+                      $
+                    </span>
+                    <input
+                      type="number"
+                      name="refundAmountDollars"
+                      min="0.01"
+                      max={maxRefundDollars}
+                      step="0.01"
+                      defaultValue={maxRefundDollars}
+                      className="pl-7 pr-3 py-2.5 w-32 rounded-lg border border-stone-300 text-sm text-stone-900 focus:border-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-900/10 transition-colors"
+                    />
+                  </div>
                   <button
                     type="submit"
                     className="inline-flex items-center gap-2 rounded-lg border border-red-300 px-5 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50 transition-colors"
                   >
                     <Undo2 className="h-4 w-4" />
-                    Refund
+                    Issue Refund
                   </button>
                 </form>
-              )}
-            </div>
-            {canRefund && (
-              <p className="text-xs text-stone-400 mt-3">
-                Refund issues a full refund via Stripe and marks the order as
-                cancelled.
-              </p>
+                <p className="text-xs text-stone-400 mt-3">
+                  Partial refunds leave the order active. Refunding the full
+                  remaining amount cancels the order and notifies the buyer.
+                </p>
+              </div>
             )}
           </div>
         )}

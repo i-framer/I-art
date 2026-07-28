@@ -61,6 +61,10 @@ export const ordersTable = pgTable("order", {
   statusEmailLastAttemptAt: timestamp("status_email_last_attempt_at", {
     withTimezone: true,
   }),
+  // Partial / full refund tracking
+  refundedAmountCents: integer("refunded_amount_cents"),
+  refundedAt: timestamp("refunded_at", { withTimezone: true }),
+  stripeRefundId: text("stripe_refund_id"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
