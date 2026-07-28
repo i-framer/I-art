@@ -3,12 +3,14 @@
  * path.
  *
  * The webhook uses `onConflictDoNothing({ target: stripeEventId }) + returning`
- * to gate whether sendBillingAlertNotification is called. These tests verify:
+ * to gate whether sendBillingAlertNotification and
+ * sendBillingAlertSlackNotification are called. These tests verify:
  *
- * 1. The first delivery inserts a new alert row → sendBillingAlertNotification
- *    is called exactly once.
+ * 1. The first delivery inserts a new alert row → both
+ *    sendBillingAlertNotification and sendBillingAlertSlackNotification are
+ *    called exactly once.
  * 2. A second delivery of the same event ID hits the conflict path (returning
- *    returns []) → sendBillingAlertNotification is NOT called again.
+ *    returns []) → neither notification is called again.
  * 3. Both deliveries return 200 { received: true }.
  *
  * Covers handleSubscriptionEvent (customer.subscription.updated with no tenant
@@ -194,6 +196,12 @@ describe("customer.subscription.updated — duplicate event deduplication", () =
     expect(sendBillingAlertNotification).toHaveBeenCalledWith(
       expect.objectContaining({ stripeEventId: EVENT_ID }),
     );
+
+    // Slack notification was also sent once
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(1);
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ stripeEventId: EVENT_ID }),
+    );
   });
 
   it("second delivery (redelivery): insert conflicts — sendBillingAlertNotification is NOT called", async () => {
@@ -209,6 +217,9 @@ describe("customer.subscription.updated — duplicate event deduplication", () =
 
     // No email because the insert returned nothing (conflict path).
     expect(sendBillingAlertNotification).not.toHaveBeenCalled();
+
+    // No Slack notification either — same gate.
+    expect(sendBillingAlertSlackNotification).not.toHaveBeenCalled();
   });
 
   it("sending the same event ID twice: first triggers an email, second does not", async () => {
@@ -224,6 +235,8 @@ describe("customer.subscription.updated — duplicate event deduplication", () =
     expect(alertInsertSpy).toHaveBeenCalledTimes(2);
     // …but the email was sent only once (only the first insert wrote a row).
     expect(sendBillingAlertNotification).toHaveBeenCalledTimes(1);
+    // …and Slack was also notified only once.
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -244,6 +257,12 @@ describe("invoice.payment_failed — duplicate event deduplication", () => {
     expect(sendBillingAlertNotification).toHaveBeenCalledWith(
       expect.objectContaining({ stripeEventId: EVENT_ID }),
     );
+
+    // Slack notification was also sent once
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(1);
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ stripeEventId: EVENT_ID }),
+    );
   });
 
   it("second delivery (redelivery): insert conflicts — sendBillingAlertNotification is NOT called", async () => {
@@ -255,6 +274,9 @@ describe("invoice.payment_failed — duplicate event deduplication", () => {
 
     expect(alertInsertSpy).toHaveBeenCalledTimes(1);
     expect(sendBillingAlertNotification).not.toHaveBeenCalled();
+
+    // No Slack notification either — same gate.
+    expect(sendBillingAlertSlackNotification).not.toHaveBeenCalled();
   });
 
   it("sending the same event ID twice: first triggers an email, second does not", async () => {
@@ -268,6 +290,8 @@ describe("invoice.payment_failed — duplicate event deduplication", () => {
 
     expect(alertInsertSpy).toHaveBeenCalledTimes(2);
     expect(sendBillingAlertNotification).toHaveBeenCalledTimes(1);
+    // Slack was also notified only once.
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -281,5 +305,88 @@ describe("distinct event IDs each get their own alert row and email", () => {
 
     expect(alertInsertSpy).toHaveBeenCalledTimes(2);
     expect(sendBillingAlertNotification).toHaveBeenCalledTimes(2);
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── Dedicated Slack deduplication tests ──────────────────────────────────────
+// These tests focus exclusively on the Slack notification path and confirm the
+// same onConflictDoNothing gate that suppresses the email also suppresses the
+// Slack message on redelivery.
+
+describe("Slack billing alert — customer.subscription.updated duplicate suppression", () => {
+  const EVENT_ID = "evt_slack_sub_dedup_1";
+
+  it("first delivery: sendBillingAlertSlackNotification is called exactly once", async () => {
+    const res = await webhookPOST(subscriptionEvent(EVENT_ID));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: true });
+
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(1);
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ stripeEventId: EVENT_ID }),
+    );
+  });
+
+  it("second delivery (redelivery): sendBillingAlertSlackNotification is NOT called", async () => {
+    // Pre-seed the store so the insert conflicts on the very first attempt.
+    alertsStore.add(EVENT_ID);
+
+    const res = await webhookPOST(subscriptionEvent(EVENT_ID));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: true });
+
+    expect(sendBillingAlertSlackNotification).not.toHaveBeenCalled();
+  });
+
+  it("posting the same event ID twice: Slack is notified only on the first delivery", async () => {
+    const res1 = await webhookPOST(subscriptionEvent(EVENT_ID));
+    const res2 = await webhookPOST(subscriptionEvent(EVENT_ID));
+
+    expect(res1.status).toBe(200);
+    expect(res2.status).toBe(200);
+    expect(await res1.json()).toEqual({ received: true });
+    expect(await res2.json()).toEqual({ received: true });
+
+    // Only one Slack message despite two HTTP deliveries.
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Slack billing alert — invoice.payment_failed duplicate suppression", () => {
+  const EVENT_ID = "evt_slack_inv_dedup_1";
+
+  it("first delivery: sendBillingAlertSlackNotification is called exactly once", async () => {
+    const res = await webhookPOST(invoicePaymentFailedEvent(EVENT_ID));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: true });
+
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(1);
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ stripeEventId: EVENT_ID }),
+    );
+  });
+
+  it("second delivery (redelivery): sendBillingAlertSlackNotification is NOT called", async () => {
+    alertsStore.add(EVENT_ID);
+
+    const res = await webhookPOST(invoicePaymentFailedEvent(EVENT_ID));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: true });
+
+    expect(sendBillingAlertSlackNotification).not.toHaveBeenCalled();
+  });
+
+  it("posting the same event ID twice: Slack is notified only on the first delivery", async () => {
+    const res1 = await webhookPOST(invoicePaymentFailedEvent(EVENT_ID));
+    const res2 = await webhookPOST(invoicePaymentFailedEvent(EVENT_ID));
+
+    expect(res1.status).toBe(200);
+    expect(res2.status).toBe(200);
+    expect(await res1.json()).toEqual({ received: true });
+    expect(await res2.json()).toEqual({ received: true });
+
+    // Only one Slack message despite two HTTP deliveries.
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(1);
   });
 });
