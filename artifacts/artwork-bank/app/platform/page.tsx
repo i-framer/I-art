@@ -1,10 +1,11 @@
 import { redirect, notFound } from "next/navigation";
-import { asc } from "drizzle-orm";
-import { db, tenantsTable } from "@workspace/db";
+import { asc, desc, isNull } from "drizzle-orm";
+import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
 import { getSession } from "@/lib/auth";
 import { isPlatformAdmin, tenantBillingStatus } from "@/lib/platform-admin";
 import { setBillingExempt } from "./actions";
 import { ShieldCheck } from "lucide-react";
+import { BillingAlerts } from "./_components/BillingAlerts";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,12 @@ export default async function PlatformAdminPage() {
   if (!session.userId) redirect("/login");
   // 404 (not 403) so the page's existence isn't advertised to tenant admins
   if (!isPlatformAdmin(session.email)) notFound();
+
+  const unresolvedAlerts = await db
+    .select()
+    .from(stripeAlertsTable)
+    .where(isNull(stripeAlertsTable.dismissedAt))
+    .orderBy(desc(stripeAlertsTable.createdAt));
 
   const tenants = await db.query.tenantsTable.findMany({
     orderBy: [asc(tenantsTable.businessName)],
@@ -139,6 +146,8 @@ export default async function PlatformAdminPage() {
           Access is limited to emails listed in the PLATFORM_ADMIN_EMAILS
           environment variable.
         </p>
+
+        <BillingAlerts alerts={unresolvedAlerts} />
       </main>
     </div>
   );

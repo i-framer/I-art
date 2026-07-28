@@ -6,6 +6,7 @@ import {
   orderItemsTable,
   artworksTable,
   tenantsTable,
+  stripeAlertsTable,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import {
@@ -184,11 +185,26 @@ async function handleSubscriptionEvent(
     .returning({ id: tenantsTable.id });
 
   if (updated.length === 0) {
-    console.error(
+    const msg =
       `[webhook] Unmatched subscription event — no tenant found. ` +
-        `eventId=${eventId} eventType=${eventType} ` +
-        `customerId=${customerId ?? "(none)"} subscriptionId=${subscription.id}`,
-    );
+      `eventId=${eventId} eventType=${eventType} ` +
+      `customerId=${customerId ?? "(none)"} subscriptionId=${subscription.id}`;
+    console.error(msg);
+    // Persist so the admin billing-alerts panel can surface it.
+    try {
+      await db
+        .insert(stripeAlertsTable)
+        .values({
+          stripeEventId: eventId,
+          eventType,
+          customerId: customerId ?? null,
+          subscriptionId: subscription.id,
+          reason: "No tenant matched by metadata, customer ID, or subscription ID",
+        })
+        .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId });
+    } catch (dbErr) {
+      console.error("[webhook] Failed to persist billing alert:", dbErr);
+    }
   }
 }
 
@@ -210,10 +226,25 @@ async function handleInvoicePaymentFailed(
     .returning({ id: tenantsTable.id });
 
   if (updated.length === 0) {
-    console.error(
+    const msg =
       `[webhook] Unmatched invoice.payment_failed — no tenant found for customer. ` +
-        `eventId=${eventId} customerId=${customerId}`,
-    );
+      `eventId=${eventId} customerId=${customerId}`;
+    console.error(msg);
+    // Persist so the admin billing-alerts panel can surface it.
+    try {
+      await db
+        .insert(stripeAlertsTable)
+        .values({
+          stripeEventId: eventId,
+          eventType: "invoice.payment_failed",
+          customerId,
+          subscriptionId: null,
+          reason: "No tenant matched for this Stripe customer ID",
+        })
+        .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId });
+    } catch (dbErr) {
+      console.error("[webhook] Failed to persist billing alert:", dbErr);
+    }
   }
 }
 
