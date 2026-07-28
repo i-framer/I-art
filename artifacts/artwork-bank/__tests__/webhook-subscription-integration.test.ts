@@ -394,6 +394,36 @@ describe("out-of-order subscription events", () => {
   });
 });
 
+// ── invoice.payment_failed matched path ──────────────────────────────────────
+
+describe("invoice.payment_failed matched path", () => {
+  it("sets subscriptionStatus to past_due on the matched tenant row", async () => {
+    const cusId = `cus_inv_pd_${uid()}`;
+    const tenantId = await createTenant({
+      stripeCustomerId: cusId,
+      subscriptionStatus: "active",
+    });
+    createdTenantIds.push(tenantId);
+
+    const eventId = `evt_inv_pd_${tenantId}`;
+    const res = await post({
+      id: eventId,
+      type: "invoice.payment_failed",
+      data: {
+        object: {
+          id: `in_pd_${tenantId}`,
+          customer: cusId,
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+
+    const row = await getTenantBillingFields(tenantId);
+    expect(row?.subscriptionStatus).toBe("past_due");
+  });
+});
+
 // ── No-match ERROR path ───────────────────────────────────────────────────────
 
 describe("no-match error path against real DB", () => {
