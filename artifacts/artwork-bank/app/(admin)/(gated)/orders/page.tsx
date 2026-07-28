@@ -125,6 +125,9 @@ export default async function OrdersPage({
             <tbody className="divide-y divide-stone-100">
               {rows.map(({ order, artworkTitle }) => {
                 const badge = STATUS_STYLES[order.status];
+                const isPartialRefund =
+                  (order.refundedAmountCents ?? 0) > 0 &&
+                  order.status !== "CANCELLED";
                 const emailFailed =
                   !order.emailSentAt &&
                   order.emailAttempts >= MAX_EMAIL_ATTEMPTS;
@@ -163,10 +166,18 @@ export default async function OrdersPage({
                       {formatPrice(order.totalCents)}
                     </td>
                     <td className="px-5 py-3.5">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         {badge && (
                           <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${badge.cls}`}>
                             {badge.label}
+                          </span>
+                        )}
+                        {isPartialRefund && (
+                          <span
+                            className="inline-flex rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-semibold text-purple-700"
+                            title={`Partially refunded: ${formatPrice(order.refundedAmountCents!)}`}
+                          >
+                            Refunded {formatPrice(order.refundedAmountCents!)}
                           </span>
                         )}
                         {emailFailed && (
