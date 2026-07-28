@@ -50,7 +50,15 @@ vi.mock("@workspace/db", () => ({
     update: vi.fn(() => ({
       set: (vals: any) => {
         state.updates.push({ vals });
-        return { where: () => Promise.resolve() };
+        return {
+          where: () => {
+            const result = Promise.resolve([{ id: "matched" }]);
+            // Support optional .where().returning() used by subscription handlers
+            (result as any).returning = () =>
+              Promise.resolve([{ id: "matched" }]);
+            return result;
+          },
+        };
       },
     })),
   },

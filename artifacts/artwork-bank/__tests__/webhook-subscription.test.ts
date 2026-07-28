@@ -8,6 +8,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   updates: [] as { vals: any }[],
+  /** rows returned by db.update().where().returning() — empty = no tenant matched */
+  updateResult: [{ id: "matched" }] as any[],
 }));
 
 const tables = vi.hoisted(() => ({
@@ -37,7 +39,15 @@ vi.mock("@workspace/db", () => ({
     update: vi.fn(() => ({
       set: (vals: any) => {
         state.updates.push({ vals });
-        return { where: () => Promise.resolve() };
+        return {
+          where: () => {
+            const result = Promise.resolve(state.updateResult);
+            // Support optional .returning() chained after .where()
+            (result as any).returning = () =>
+              Promise.resolve(state.updateResult);
+            return result;
+          },
+        };
       },
     })),
   },
@@ -76,6 +86,8 @@ import { db } from "@workspace/db";
 beforeEach(() => {
   vi.clearAllMocks();
   state.updates.length = 0;
+  // Default: update matches one tenant row (happy path)
+  state.updateResult = [{ id: "matched" }];
   process.env.STRIPE_WEBHOOK_DEV_BYPASS = "true";
   mockHeaders.mockResolvedValue(new Headers());
   // Default: tenant has no prior subscription state
@@ -224,5 +236,61 @@ describe("subscription webhook events", () => {
     });
     expect(res.status).toBe(200);
     expect(state.updates[0].vals).toEqual({ subscriptionStatus: "past_due" });
+  });
+
+  it("logs an ERROR when a subscription event matches no tenant", async () => {
+    state.updateResult = []; // no tenant matched the update
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await post({
+      id: "evt_nomatch_sub",
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_orphan",
+          status: "canceled",
+          customer: "cus_unknown",
+          metadata: {},
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Unmatched subscription event"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("evt_nomatch_sub"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("cus_unknown"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("sub_orphan"),
+    );
+    errorSpy.mockRestore();
+  });
+
+  it("logs an ERROR when invoice.payment_failed matches no tenant", async () => {
+    state.updateResult = []; // no tenant matched
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await post({
+      id: "evt_nomatch_inv",
+      type: "invoice.payment_failed",
+      data: { object: { id: "in_orphan", customer: "cus_unknown" } },
+    });
+
+    expect(res.status).toBe(200);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Unmatched invoice.payment_failed"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("evt_nomatch_inv"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("cus_unknown"),
+    );
+    errorSpy.mockRestore();
   });
 });

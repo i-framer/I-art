@@ -89,9 +89,16 @@ export async function POST(request: Request) {
       event.type === "customer.subscription.updated" ||
       event.type === "customer.subscription.deleted"
     ) {
-      await handleSubscriptionEvent(event.data.object as Stripe.Subscription);
+      await handleSubscriptionEvent(
+        event.data.object as Stripe.Subscription,
+        event.id,
+        event.type,
+      );
     } else if (event.type === "invoice.payment_failed") {
-      await handleInvoicePaymentFailed(event.data.object as Stripe.Invoice);
+      await handleInvoicePaymentFailed(
+        event.data.object as Stripe.Invoice,
+        event.id,
+      );
     }
   } catch (err: any) {
     console.error("Webhook handler error:", err);
@@ -145,7 +152,11 @@ async function handleSubscriptionCheckoutCompleted(
 }
 
 /** Mirror Stripe's subscription status onto the owning tenant. */
-async function handleSubscriptionEvent(subscription: Stripe.Subscription) {
+async function handleSubscriptionEvent(
+  subscription: Stripe.Subscription,
+  eventId: string,
+  eventType: string,
+) {
   const status =
     subscription.status === "canceled" ? "canceled" : subscription.status;
 
@@ -162,28 +173,48 @@ async function handleSubscriptionEvent(subscription: Stripe.Subscription) {
       ? eq(tenantsTable.stripeCustomerId, customerId)
       : eq(tenantsTable.stripeSubscriptionId, subscription.id);
 
-  await db
+  const updated = await db
     .update(tenantsTable)
     .set({
       subscriptionStatus: status,
       stripeSubscriptionId: subscription.id,
       ...(customerId ? { stripeCustomerId: customerId } : {}),
     })
-    .where(where);
+    .where(where)
+    .returning({ id: tenantsTable.id });
+
+  if (updated.length === 0) {
+    console.error(
+      `[webhook] Unmatched subscription event — no tenant found. ` +
+        `eventId=${eventId} eventType=${eventType} ` +
+        `customerId=${customerId ?? "(none)"} subscriptionId=${subscription.id}`,
+    );
+  }
 }
 
 /** A subscription invoice failed to collect — flag the tenant as past_due. */
-async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
+async function handleInvoicePaymentFailed(
+  invoice: Stripe.Invoice,
+  eventId: string,
+) {
   const customerId =
     typeof invoice.customer === "string"
       ? invoice.customer
       : invoice.customer?.id;
   if (!customerId) return;
 
-  await db
+  const updated = await db
     .update(tenantsTable)
     .set({ subscriptionStatus: "past_due" })
-    .where(eq(tenantsTable.stripeCustomerId, customerId));
+    .where(eq(tenantsTable.stripeCustomerId, customerId))
+    .returning({ id: tenantsTable.id });
+
+  if (updated.length === 0) {
+    console.error(
+      `[webhook] Unmatched invoice.payment_failed — no tenant found for customer. ` +
+        `eventId=${eventId} customerId=${customerId}`,
+    );
+  }
 }
 
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
