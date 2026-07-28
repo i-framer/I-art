@@ -1,23 +1,36 @@
 /**
- * Smoke-test script: Billing alert email end-to-end verification.
+ * Smoke-test script: Billing alert end-to-end verification (email + Slack).
  *
  * Fires a dev-bypass webhook with a synthetic unmatched subscription event,
  * then confirms:
  *   1. The billing alert row was written to the database.
  *   2. The Resend email was attempted (real API call when RESEND_API_KEY is set).
+ *   3. The Slack message was attempted (real API call when SLACK_BILLING_ALERTS_CHANNEL is set).
  *
  * Prerequisites:
- *   - The Artwork Bank server must be running locally (pnpm --filter @workspace/artwork-bank dev)
+ *   - The Artwork Bank server must be running locally
+ *     (pnpm --filter @workspace/artwork-bank dev)
  *   - STRIPE_WEBHOOK_DEV_BYPASS=true must be set (default in dev)
  *   - DATABASE_URL must be set (populated automatically in the Replit workspace)
  *   - Optional: RESEND_API_KEY + PLATFORM_ADMIN_EMAIL for a real email send
+ *   - Optional: SLACK_BILLING_ALERTS_CHANNEL for a real Slack message
+ *     (the Slack connector OAuth must be set up in this Repl via Replit Integrations)
  *
  * Usage:
- *   pnpm --filter @workspace/artwork-bank tsx scripts/smoke-billing-alert.ts
+ *   pnpm --filter @workspace/artwork-bank smoke:billing-alert
  *
- *   With real email send:
- *   RESEND_API_KEY=re_live_xxx PLATFORM_ADMIN_EMAIL=you@example.com \
- *     pnpm --filter @workspace/artwork-bank tsx scripts/smoke-billing-alert.ts
+ *   Override the target URL if the dev server is on a different port/host:
+ *   ARTWORK_BANK_URL=http://localhost:3001 \
+ *     pnpm --filter @workspace/artwork-bank smoke:billing-alert
+ *
+ * After running:
+ *   - Database:  the script confirms the alert row itself.
+ *   - Email:     check the Resend dashboard (https://resend.com/emails) and
+ *                the operator inbox at PLATFORM_ADMIN_EMAIL.
+ *   - Slack:     check the channel named in SLACK_BILLING_ALERTS_CHANNEL for a
+ *                message like "🚨 Unmatched Stripe billing event (customer.subscription.updated)".
+ *                The server logs (workflow console) will show either
+ *                "[Billing alert Slack] Post failed" or no error on success.
  */
 
 import { db } from "@workspace/db";
@@ -41,7 +54,7 @@ const syntheticEvent = {
 };
 
 async function main() {
-  console.log("=== Billing alert smoke test ===");
+  console.log("=== Billing alert smoke test (email + Slack) ===");
   console.log(`Event ID: ${EVENT_ID}`);
   console.log(`Target:   ${BASE_URL}/api/stripe/webhook\n`);
 
@@ -91,6 +104,7 @@ async function main() {
   console.log(`      reason: ${alert.reason}\n`);
 
   // 3. Report email-send status
+  console.log("Step 3: Email delivery check…");
   const hasKey = Boolean(process.env.RESEND_API_KEY);
   const hasEmail = Boolean(process.env.PLATFORM_ADMIN_EMAIL);
 
@@ -99,24 +113,66 @@ async function main() {
       "INFO  Email send skipped (RESEND_API_KEY or PLATFORM_ADMIN_EMAIL not set).",
     );
     console.log(
-      "      Re-run with both env vars to confirm delivery to the operator inbox.",
+      "      Re-run with both env vars to confirm delivery to the operator inbox.\n",
     );
   } else {
-    console.log(
-      `INFO  RESEND_API_KEY and PLATFORM_ADMIN_EMAIL are set.`,
-    );
+    console.log(`INFO  RESEND_API_KEY and PLATFORM_ADMIN_EMAIL are set.`);
     console.log(
       `      The webhook should have attempted to send to: ${process.env.PLATFORM_ADMIN_EMAIL}`,
     );
     console.log(
-      "      Check the Resend dashboard (https://resend.com/emails) and the",
+      "      Check the Resend dashboard (https://resend.com/emails) and",
     );
     console.log(
-      `      operator inbox at ${process.env.PLATFORM_ADMIN_EMAIL} to confirm delivery.`,
+      `      the operator inbox at ${process.env.PLATFORM_ADMIN_EMAIL} to confirm delivery.\n`,
     );
   }
 
-  console.log("\n=== Smoke test passed ===");
+  // 4. Report Slack delivery status
+  console.log("Step 4: Slack delivery check…");
+  const slackChannel = process.env.SLACK_BILLING_ALERTS_CHANNEL;
+
+  if (!slackChannel) {
+    console.log(
+      "INFO  Slack message skipped (SLACK_BILLING_ALERTS_CHANNEL not set).",
+    );
+    console.log(
+      "      To enable Slack alerts:",
+    );
+    console.log(
+      "        1. Connect the Slack integration in Replit Integrations (OAuth).",
+    );
+    console.log(
+      "        2. Set SLACK_BILLING_ALERTS_CHANNEL to a channel name or ID",
+    );
+    console.log(
+      "           e.g. #billing-alerts  or  C0123456789",
+    );
+    console.log(
+      "        3. Re-run this script and check that channel in Slack.\n",
+    );
+  } else {
+    console.log(
+      `INFO  SLACK_BILLING_ALERTS_CHANNEL is set to: ${slackChannel}`,
+    );
+    console.log(
+      "      The webhook should have attempted to post to that channel.",
+    );
+    console.log(
+      `      Open Slack and check ${slackChannel} for a message like:`,
+    );
+    console.log(
+      `        "🚨 Unmatched Stripe billing event (customer.subscription.updated)"`,
+    );
+    console.log(
+      "      Also check the server workflow logs for any",
+    );
+    console.log(
+      `      "[Billing alert Slack] Post failed" lines — their absence means success.\n`,
+    );
+  }
+
+  console.log("=== Smoke test passed ===");
 }
 
 main().catch((err) => {

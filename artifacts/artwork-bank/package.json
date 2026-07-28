@@ -8,7 +8,8 @@
     "start": "next start --port $PORT",
     "typecheck": "rm -rf .next/types && tsc --noEmit",
     "test": "vitest run",
-    "db:seed": "tsx scripts/seed.ts"
+    "db:seed": "tsx scripts/seed.ts",
+    "smoke:billing-alert": "tsx scripts/smoke-billing-alert.ts"
   },
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.1",
