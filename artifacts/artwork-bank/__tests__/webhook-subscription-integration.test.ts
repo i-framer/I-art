@@ -316,6 +316,48 @@ describe("checkout.session.completed re-delivery blocked for same subscription I
   });
 });
 
+// ── Checkout re-delivery on already-active tenant (happy path) ───────────────
+
+describe("checkout.session.completed re-delivery when tenant is already active", () => {
+  it("is a no-op — subscriptionStatus stays active and stripeSubscriptionId is unchanged", async () => {
+    // Tenant is active with sub_X. The original checkout.session.completed event
+    // is re-delivered by Stripe (e.g. a network retry). Because isNewSubscription
+    // evaluates to false (same sub ID, status already set), the handler must NOT
+    // overwrite the current state.
+    const cusId = `cus_checkout_happy_redeliver_${uid()}`;
+    const subId = `sub_checkout_happy_redeliver_${uid()}`;
+
+    const tenantId = await createTenant({
+      stripeCustomerId: cusId,
+      stripeSubscriptionId: subId,
+      subscriptionStatus: "active",
+    });
+    createdTenantIds.push(tenantId);
+
+    const res = await post({
+      id: `evt_checkout_happy_redeliver_${tenantId}`,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_happy_redeliver_${tenantId}`,
+          mode: "subscription",
+          customer: cusId,       // same customer
+          subscription: subId,   // same subscription — isNewSubscription → false
+          metadata: {},          // no billingTenantId — exercises customer-ID lookup path
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+
+    const row = await getTenantBillingFields(tenantId);
+    // Status must remain "active" — the re-delivery is a clean no-op.
+    expect(row?.subscriptionStatus).toBe("active");
+    expect(row?.stripeSubscriptionId).toBe(subId);
+    expect(row?.stripeCustomerId).toBe(cusId);
+  });
+});
+
 // ── Out-of-order guard ────────────────────────────────────────────────────────
 
 describe("out-of-order subscription events", () => {
