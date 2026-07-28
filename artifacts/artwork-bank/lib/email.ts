@@ -395,12 +395,19 @@ export async function sendBillingAlertNotification({
   customerId,
   subscriptionId,
   reason,
+  slackFailure,
 }: {
   stripeEventId: string;
   eventType: string;
   customerId?: string | null;
   subscriptionId?: string | null;
   reason: string;
+  /**
+   * When the Slack notification failed, pass the error here so the operator
+   * can see at a glance that the Slack channel is broken — without needing to
+   * tail server logs.
+   */
+  slackFailure?: string;
 }): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   const adminEmail = process.env.PLATFORM_ADMIN_EMAIL;
@@ -449,6 +456,15 @@ export async function sendBillingAlertNotification({
               ${subscriptionId ? `<p style="margin:0 0 8px;"><strong>Subscription ID:</strong> <code style="font-family:monospace;">${escapeHtml(subscriptionId)}</code></p>` : ""}
               <p style="margin:0;"><strong>Reason:</strong> ${escapeHtml(reason)}</p>
             </div>
+            ${
+              slackFailure
+                ? `<div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
+                <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">⚠️ Slack notification failed</p>
+                <p style="margin:0;color:#7f1d1d;font-size:13px;">The Slack billing-alert message could not be delivered. Your Slack connector may need to be reconnected.</p>
+                <p style="margin:8px 0 0;color:#7f1d1d;font-size:12px;font-family:monospace;">${escapeHtml(slackFailure.slice(0, 300))}</p>
+              </div>`
+                : ""
+            }
             <p>
               <a href="${escapeHtml(stripeDashboardUrl)}" style="color:#1c1917;">
                 View event in Stripe Dashboard →

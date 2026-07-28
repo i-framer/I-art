@@ -176,7 +176,7 @@ vi.mock("@/lib/email", () => ({
 }));
 
 vi.mock("@/lib/slack", () => ({
-  sendBillingAlertSlackNotification: vi.fn().mockResolvedValue(undefined),
+  sendBillingAlertSlackNotification: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 vi.mock("@/lib/base-url", () => ({

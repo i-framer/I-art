@@ -106,7 +106,7 @@ vi.mock("@/lib/email", () => ({
 
 // ── Slack spy ────────────────────────────────────────────────────────────────
 const sendBillingAlertSlackNotification = vi.hoisted(() =>
-  vi.fn().mockResolvedValue(undefined),
+  vi.fn().mockResolvedValue({ ok: true }),
 );
 vi.mock("@/lib/slack", () => ({
   sendBillingAlertSlackNotification: (...args: any[]) =>

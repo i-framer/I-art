@@ -116,6 +116,56 @@ describe("sendBillingAlertNotification: env-var guard", () => {
   });
 });
 
+describe("sendBillingAlertNotification: slackFailure escalation in email body", () => {
+  beforeEach(() => {
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.PLATFORM_ADMIN_EMAIL = "operator@example.com";
+  });
+
+  it("includes the Slack error detail in the HTML body when slackFailure is provided", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+
+    await sendBillingAlertNotification({ ...alertArgs, slackFailure: "invalid_auth" });
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(init.body as string);
+
+    expect(payload.html).toContain("Slack notification failed");
+    expect(payload.html).toContain("invalid_auth");
+  });
+
+  it("does NOT include a Slack failure section when slackFailure is omitted", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+
+    await sendBillingAlertNotification(alertArgs);
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(init.body as string);
+
+    expect(payload.html).not.toContain("Slack notification failed");
+  });
+
+  it("truncates a very long slackFailure string to 300 chars in the email body", async () => {
+    const longError = "x".repeat(500);
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+
+    await sendBillingAlertNotification({ ...alertArgs, slackFailure: longError });
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(init.body as string);
+
+    // The truncated error (300 x's) must appear; the full 500 x's must not be present
+    expect(payload.html).toContain("x".repeat(300));
+    expect(payload.html).not.toContain("x".repeat(301));
+  });
+});
+
 describe("sendBillingAlertNotification: sender address (domain-rotation safety)", () => {
   afterEach(() => {
     delete process.env.RESEND_API_KEY;

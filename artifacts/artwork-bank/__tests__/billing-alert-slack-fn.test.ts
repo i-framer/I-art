@@ -87,14 +87,14 @@ afterEach(() => {
 
 describe("sendBillingAlertSlackNotification: channel guard", () => {
   it("is a no-op and resolves when SLACK_BILLING_ALERTS_CHANNEL is not set", async () => {
-    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toBeUndefined();
+    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toMatchObject({ ok: true });
     expect(mockProxy).not.toHaveBeenCalled();
   });
 
   it("is a no-op for invoice.payment_failed when no channel is configured", async () => {
     await expect(
       sendBillingAlertSlackNotification({ ...baseArgs, eventType: "invoice.payment_failed" }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ ok: true });
     expect(mockProxy).not.toHaveBeenCalled();
   });
 });
@@ -126,10 +126,10 @@ describe("sendBillingAlertSlackNotification: success path", () => {
     expect(body.text).toContain(baseArgs.eventType);
   });
 
-  it("resolves without throwing on a successful post", async () => {
+  it("resolves with { ok: true } on a successful post", async () => {
     mockProxy.mockResolvedValueOnce(okResponse());
 
-    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toBeUndefined();
+    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toMatchObject({ ok: true });
   });
 });
 
@@ -151,7 +151,7 @@ describe("sendBillingAlertSlackNotification: token-refresh scenario", () => {
   it("delivers a message on the first call (before any rotation)", async () => {
     mockProxy.mockResolvedValueOnce(okResponse());
 
-    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toBeUndefined();
+    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toMatchObject({ ok: true });
     expect(mockProxy).toHaveBeenCalledTimes(1);
   });
 
@@ -176,12 +176,13 @@ describe("sendBillingAlertSlackNotification: token-refresh scenario", () => {
     expect(body2.channel).toBe("#billing-alerts");
   });
 
-  it("resolves without throwing even when the SDK cannot refresh the token (permanent auth failure)", async () => {
+  it("resolves with { ok: false } even when the SDK cannot refresh the token (permanent auth failure)", async () => {
     /**
      * If the SDK exhausts its refresh attempts it surfaces a Slack API error
      * via the response body { ok: false, error: "invalid_auth" }.
      * The function must still resolve (not throw) so the webhook handler can
-     * return 200 to Stripe.
+     * return 200 to Stripe, and must return { ok: false } so the caller can
+     * escalate via the operator email.
      */
     mockProxy.mockResolvedValueOnce(
       errorResponse(200, { ok: false, error: "invalid_auth" }),
@@ -189,7 +190,8 @@ describe("sendBillingAlertSlackNotification: token-refresh scenario", () => {
 
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toBeUndefined();
+    const result = await sendBillingAlertSlackNotification(baseArgs);
+    expect(result).toMatchObject({ ok: false, error: "invalid_auth" });
 
     // The error must be logged so the operator knows the channel is broken.
     expect(consoleErrorSpy).toHaveBeenCalledWith(
@@ -212,15 +214,13 @@ describe("sendBillingAlertSlackNotification: token-refresh scenario", () => {
 
     vi.spyOn(console, "error").mockImplementation(() => {});
 
-    // First call logs but does not throw
-    await expect(
-      sendBillingAlertSlackNotification({ ...baseArgs, stripeEventId: "evt_stale" }),
-    ).resolves.toBeUndefined();
+    // First call logs and returns { ok: false }
+    const r1 = await sendBillingAlertSlackNotification({ ...baseArgs, stripeEventId: "evt_stale" });
+    expect(r1).toMatchObject({ ok: false });
 
     // Second call (after SDK-level token rotation) succeeds cleanly
-    await expect(
-      sendBillingAlertSlackNotification({ ...baseArgs, stripeEventId: "evt_refreshed" }),
-    ).resolves.toBeUndefined();
+    const r2 = await sendBillingAlertSlackNotification({ ...baseArgs, stripeEventId: "evt_refreshed" });
+    expect(r2).toMatchObject({ ok: true });
 
     expect(mockProxy).toHaveBeenCalledTimes(2);
 
@@ -233,10 +233,10 @@ describe("sendBillingAlertSlackNotification: error resilience", () => {
     process.env.SLACK_BILLING_ALERTS_CHANNEL = "#billing-alerts";
   });
 
-  it("resolves without throwing when the HTTP status is non-ok", async () => {
+  it("resolves with { ok: false } when the HTTP status is non-ok", async () => {
     mockProxy.mockResolvedValueOnce(errorResponse(500));
 
-    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toBeUndefined();
+    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toMatchObject({ ok: false });
   });
 
   it("logs an error when the HTTP status is non-ok", async () => {
@@ -254,10 +254,10 @@ describe("sendBillingAlertSlackNotification: error resilience", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("resolves without throwing when proxy() itself rejects (network error)", async () => {
+  it("resolves with { ok: false } when proxy() itself rejects (network error)", async () => {
     mockProxy.mockRejectedValueOnce(new Error("ECONNREFUSED"));
 
-    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toBeUndefined();
+    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toMatchObject({ ok: false });
   });
 
   it("logs the network error message when proxy() rejects", async () => {
@@ -278,10 +278,10 @@ describe("sendBillingAlertSlackNotification: error resilience", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("resolves without throwing when the response body is not JSON", async () => {
+  it("resolves with { ok: true } when the response body is not JSON but status is 200", async () => {
     mockProxy.mockResolvedValueOnce(new Response("not json", { status: 200 }));
 
-    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toBeUndefined();
+    await expect(sendBillingAlertSlackNotification(baseArgs)).resolves.toMatchObject({ ok: true });
   });
 });
 

@@ -258,6 +258,21 @@ async function handleSubscriptionEvent(
       // Only notify when a genuinely new alert row was written — not on Stripe
       // redeliveries of the same event, which hit the conflict path.
       if (inserted.length > 0) {
+        // Fire Slack first so we can include any failure in the email.
+        let slackFailure: string | undefined;
+        try {
+          const slackResult = await sendBillingAlertSlackNotification({
+            stripeEventId: eventId,
+            eventType,
+            customerId: customerId ?? null,
+            subscriptionId: subscription.id,
+            reason: alertReason,
+          });
+          if (!slackResult.ok) slackFailure = slackResult.error;
+        } catch (slackErr) {
+          console.error("[webhook] Failed to send billing alert Slack message:", slackErr);
+          slackFailure = (slackErr as any)?.message ?? String(slackErr);
+        }
         try {
           await sendBillingAlertNotification({
             stripeEventId: eventId,
@@ -265,20 +280,10 @@ async function handleSubscriptionEvent(
             customerId: customerId ?? null,
             subscriptionId: subscription.id,
             reason: alertReason,
+            ...(slackFailure ? { slackFailure } : {}),
           });
         } catch (emailErr) {
           console.error("[webhook] Failed to send billing alert email:", emailErr);
-        }
-        try {
-          await sendBillingAlertSlackNotification({
-            stripeEventId: eventId,
-            eventType,
-            customerId: customerId ?? null,
-            subscriptionId: subscription.id,
-            reason: alertReason,
-          });
-        } catch (slackErr) {
-          console.error("[webhook] Failed to send billing alert Slack message:", slackErr);
         }
       }
     } catch (dbErr) {
@@ -355,6 +360,21 @@ async function handleInvoicePaymentFailed(
       // Only notify when a genuinely new alert row was written — not on Stripe
       // redeliveries of the same event, which hit the conflict path.
       if (inserted.length > 0) {
+        // Fire Slack first so we can include any failure in the email.
+        let slackFailure: string | undefined;
+        try {
+          const slackResult = await sendBillingAlertSlackNotification({
+            stripeEventId: eventId,
+            eventType: "invoice.payment_failed",
+            customerId,
+            subscriptionId: null,
+            reason: alertReason,
+          });
+          if (!slackResult.ok) slackFailure = slackResult.error;
+        } catch (slackErr) {
+          console.error("[webhook] Failed to send billing alert Slack message:", slackErr);
+          slackFailure = (slackErr as any)?.message ?? String(slackErr);
+        }
         try {
           await sendBillingAlertNotification({
             stripeEventId: eventId,
@@ -362,20 +382,10 @@ async function handleInvoicePaymentFailed(
             customerId,
             subscriptionId: null,
             reason: alertReason,
+            ...(slackFailure ? { slackFailure } : {}),
           });
         } catch (emailErr) {
           console.error("[webhook] Failed to send billing alert email:", emailErr);
-        }
-        try {
-          await sendBillingAlertSlackNotification({
-            stripeEventId: eventId,
-            eventType: "invoice.payment_failed",
-            customerId,
-            subscriptionId: null,
-            reason: alertReason,
-          });
-        } catch (slackErr) {
-          console.error("[webhook] Failed to send billing alert Slack message:", slackErr);
         }
       }
     } catch (dbErr) {

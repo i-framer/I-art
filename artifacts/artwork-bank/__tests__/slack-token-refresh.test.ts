@@ -59,9 +59,8 @@ describe("sendBillingAlertSlackNotification — token-refresh error handling", (
     );
 
     // Must resolve without throwing — the webhook handler must never see this.
-    await expect(
-      sendBillingAlertSlackNotification(BASE_PARAMS),
-    ).resolves.toBeUndefined();
+    const result = await sendBillingAlertSlackNotification(BASE_PARAMS);
+    expect(result).toMatchObject({ ok: false });
   });
 
   it("logs the stripeEventId alongside the error message so ops can replay the event", async () => {
@@ -140,9 +139,8 @@ describe("sendBillingAlertSlackNotification — successful post after token is r
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await expect(
-      sendBillingAlertSlackNotification(BASE_PARAMS),
-    ).resolves.toBeUndefined();
+    const result = await sendBillingAlertSlackNotification(BASE_PARAMS);
+    expect(result).toMatchObject({ ok: false });
 
     // The non-ok HTTP path logs "[Billing alert Slack] Post failed (HTTP N):" + error.
     expect(consoleSpy).toHaveBeenCalledWith(
@@ -160,7 +158,7 @@ describe("sendBillingAlertSlackNotification — no-op when channel is not config
 
     await expect(
       sendBillingAlertSlackNotification(BASE_PARAMS),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ ok: true });
 
     // Proxy must not have been called.
     expect(mockProxy).not.toHaveBeenCalled();

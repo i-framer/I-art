@@ -26,7 +26,7 @@ vi.mock("@/lib/email", () => ({
   sendOrderConfirmation: vi.fn(),
   sendBillingAlertNotification: vi.fn(),
 }));
-vi.mock("@/lib/slack", () => ({ sendBillingAlertSlackNotification: vi.fn() }));
+vi.mock("@/lib/slack", () => ({ sendBillingAlertSlackNotification: vi.fn().mockResolvedValue({ ok: true }) }));
 vi.mock("@/lib/iframer", () => ({
   createIFramerJob: vi.fn(),
   IFramerError: class IFramerError extends Error {},

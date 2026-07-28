@@ -88,7 +88,7 @@ vi.mock("@/lib/email", () => ({
 
 // ── Slack mock ────────────────────────────────────────────────────────────────
 vi.mock("@/lib/slack", () => ({
-  sendBillingAlertSlackNotification: vi.fn().mockResolvedValue(undefined),
+  sendBillingAlertSlackNotification: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 // ── iFramer mock ──────────────────────────────────────────────────────────────

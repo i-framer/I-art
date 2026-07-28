@@ -42,6 +42,10 @@ export function resolveSlackChannel(eventType: string): string | undefined {
  * If no channel is configured the call is a no-op. Failures are logged but
  * never re-thrown.
  */
+export type SlackNotificationResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
 export async function sendBillingAlertSlackNotification({
   stripeEventId,
   eventType,
@@ -54,7 +58,7 @@ export async function sendBillingAlertSlackNotification({
   customerId?: string | null;
   subscriptionId?: string | null;
   reason: string;
-}): Promise<void> {
+}): Promise<SlackNotificationResult> {
   const channel = resolveSlackChannel(eventType);
 
   if (!channel) {
@@ -63,7 +67,7 @@ export async function sendBillingAlertSlackNotification({
         ` (set SLACK_CHANNEL_INVOICE_FAILED, SLACK_CHANNEL_SUBSCRIPTION_EVENTS,` +
         ` or SLACK_BILLING_ALERTS_CHANNEL)] eventId=${stripeEventId}`,
     );
-    return;
+    return { ok: true };
   }
 
   const { getPlatformBaseUrl } = await import("@/lib/base-url");
@@ -90,14 +94,20 @@ export async function sendBillingAlertSlackNotification({
 
     const body = await response.json().catch(() => null);
     if (!response.ok || (body && !body.ok)) {
+      const errorDetail = body?.error ?? `HTTP ${response.status}`;
       console.error(
         `[Billing alert Slack] Post failed (HTTP ${response.status}):`,
         body?.error ?? "(no error field)",
       );
+      return { ok: false, error: errorDetail };
     }
+
+    return { ok: true };
   } catch (err) {
+    const errorMessage = (err as any)?.message ?? String(err);
     console.error(
-      `[Billing alert Slack] Failed to post message for eventId=${stripeEventId}: ${(err as any)?.message ?? String(err)}`,
+      `[Billing alert Slack] Failed to post message for eventId=${stripeEventId}: ${errorMessage}`,
     );
+    return { ok: false, error: errorMessage };
   }
 }
