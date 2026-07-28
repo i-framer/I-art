@@ -8,7 +8,7 @@ import {
   tenantsTable,
   stripeAlertsTable,
 } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import {
   getStripeClient,
   getStripeWebhookSecret,
@@ -174,6 +174,16 @@ async function handleSubscriptionEvent(
       ? eq(tenantsTable.stripeCustomerId, customerId)
       : eq(tenantsTable.stripeSubscriptionId, subscription.id);
 
+  // Out-of-order guard: never overwrite "canceled" with a live status for the
+  // SAME subscription. A previously-canceled tenant can only transition out of
+  // "canceled" if the event carries a DIFFERENT subscription ID (new checkout)
+  // or the new status is itself "canceled".
+  const cancelGuard = sql`(
+    ${tenantsTable.subscriptionStatus} IS DISTINCT FROM 'canceled'
+    OR ${tenantsTable.stripeSubscriptionId} IS DISTINCT FROM ${subscription.id}
+    OR ${status} = 'canceled'
+  )`;
+
   const updated = await db
     .update(tenantsTable)
     .set({
@@ -181,10 +191,28 @@ async function handleSubscriptionEvent(
       stripeSubscriptionId: subscription.id,
       ...(customerId ? { stripeCustomerId: customerId } : {}),
     })
-    .where(where)
+    .where(and(where, cancelGuard))
     .returning({ id: tenantsTable.id });
 
   if (updated.length === 0) {
+    // Distinguish two cases:
+    // (a) No tenant matched the base lookup at all → genuine unmatched event.
+    // (b) A tenant matched but the cancel guard intentionally blocked the write
+    //     (stale out-of-order event for an already-canceled subscription) → no-op.
+    const matched = await db.query.tenantsTable.findFirst({
+      where,
+      columns: { id: true },
+    });
+
+    if (matched) {
+      // Guard blocked a stale event — expected no-op, not an error.
+      console.log(
+        `[webhook] Stale out-of-order event ignored (tenant already canceled). ` +
+          `eventId=${eventId} eventType=${eventType} subscriptionId=${subscription.id}`,
+      );
+      return;
+    }
+
     const msg =
       `[webhook] Unmatched subscription event — no tenant found. ` +
       `eventId=${eventId} eventType=${eventType} ` +
