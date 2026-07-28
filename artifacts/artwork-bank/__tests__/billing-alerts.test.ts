@@ -64,36 +64,47 @@ vi.mock("@workspace/db", () => {
   // about (unique-constraint idempotency + update returning).
   const makeInsertBuilder = (table: any, values: any) => {
     let conflictTarget: string | undefined;
+
+    // Core insert logic shared by `then` (bare await) and `returning()`.
+    const doInsert = (): AlertRow | null => {
+      if (table !== tables.stripeAlertsTable) return null;
+      const existing = db_state.alerts.find(
+        (a) => a.stripeEventId === values.stripeEventId,
+      );
+      let inserted: AlertRow | null = null;
+      if (!existing) {
+        const row: AlertRow = {
+          id: `alert-${db_state.alerts.length + 1}`,
+          stripeEventId: values.stripeEventId,
+          eventType: values.eventType,
+          customerId: values.customerId ?? null,
+          subscriptionId: values.subscriptionId ?? null,
+          reason: values.reason,
+          dismissedAt: null,
+          createdAt: new Date(),
+        };
+        db_state.alerts.push(row);
+        inserted = row;
+      }
+      db_state.insertCalls.push({
+        table: "stripeAlertsTable",
+        values,
+        conflictTarget,
+      });
+      return inserted;
+    };
+
     const builder = {
       onConflictDoNothing(opts?: { target?: any }) {
         conflictTarget = opts?.target ? "stripeEventId" : undefined;
         return builder;
       },
+      returning(_cols?: any) {
+        const inserted = doInsert();
+        return Promise.resolve(inserted ? [{ id: inserted.id }] : []);
+      },
       then(resolve: (v: any) => any) {
-        // Simulate unique constraint: only insert when stripeEventId is new
-        if (table === tables.stripeAlertsTable) {
-          const existing = db_state.alerts.find(
-            (a) => a.stripeEventId === values.stripeEventId,
-          );
-          if (!existing) {
-            const row: AlertRow = {
-              id: `alert-${db_state.alerts.length + 1}`,
-              stripeEventId: values.stripeEventId,
-              eventType: values.eventType,
-              customerId: values.customerId ?? null,
-              subscriptionId: values.subscriptionId ?? null,
-              reason: values.reason,
-              dismissedAt: null,
-              createdAt: new Date(),
-            };
-            db_state.alerts.push(row);
-          }
-          db_state.insertCalls.push({
-            table: "stripeAlertsTable",
-            values,
-            conflictTarget,
-          });
-        }
+        doInsert();
         return resolve(undefined);
       },
     };
@@ -161,6 +172,7 @@ vi.mock("@/lib/stripe", () => ({
 
 vi.mock("@/lib/email", () => ({
   sendOrderConfirmation: vi.fn(),
+  sendBillingAlertNotification: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/iframer", () => ({

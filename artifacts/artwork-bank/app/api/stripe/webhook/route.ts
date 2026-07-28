@@ -15,7 +15,7 @@ import {
   calcApplicationFee,
   StripeNotConfiguredError,
 } from "@/lib/stripe";
-import { sendOrderConfirmation } from "@/lib/email";
+import { sendOrderConfirmation, sendBillingAlertNotification } from "@/lib/email";
 import { getTenantUrl } from "@/lib/base-url";
 import { createIFramerJob, IFramerError } from "@/lib/iframer";
 import type Stripe from "stripe";
@@ -219,17 +219,35 @@ async function handleSubscriptionEvent(
       `customerId=${customerId ?? "(none)"} subscriptionId=${subscription.id}`;
     console.error(msg);
     // Persist so the admin billing-alerts panel can surface it.
+    const alertReason =
+      "No tenant matched by metadata, customer ID, or subscription ID";
     try {
-      await db
+      const inserted = await db
         .insert(stripeAlertsTable)
         .values({
           stripeEventId: eventId,
           eventType,
           customerId: customerId ?? null,
           subscriptionId: subscription.id,
-          reason: "No tenant matched by metadata, customer ID, or subscription ID",
+          reason: alertReason,
         })
-        .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId });
+        .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId })
+        .returning({ id: stripeAlertsTable.id });
+      // Only notify when a genuinely new alert row was written — not on Stripe
+      // redeliveries of the same event, which hit the conflict path.
+      if (inserted.length > 0) {
+        try {
+          await sendBillingAlertNotification({
+            stripeEventId: eventId,
+            eventType,
+            customerId: customerId ?? null,
+            subscriptionId: subscription.id,
+            reason: alertReason,
+          });
+        } catch (emailErr) {
+          console.error("[webhook] Failed to send billing alert email:", emailErr);
+        }
+      }
     } catch (dbErr) {
       console.error("[webhook] Failed to persist billing alert:", dbErr);
     }
@@ -259,17 +277,34 @@ async function handleInvoicePaymentFailed(
       `eventId=${eventId} customerId=${customerId}`;
     console.error(msg);
     // Persist so the admin billing-alerts panel can surface it.
+    const alertReason = "No tenant matched for this Stripe customer ID";
     try {
-      await db
+      const inserted = await db
         .insert(stripeAlertsTable)
         .values({
           stripeEventId: eventId,
           eventType: "invoice.payment_failed",
           customerId,
           subscriptionId: null,
-          reason: "No tenant matched for this Stripe customer ID",
+          reason: alertReason,
         })
-        .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId });
+        .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId })
+        .returning({ id: stripeAlertsTable.id });
+      // Only notify when a genuinely new alert row was written — not on Stripe
+      // redeliveries of the same event, which hit the conflict path.
+      if (inserted.length > 0) {
+        try {
+          await sendBillingAlertNotification({
+            stripeEventId: eventId,
+            eventType: "invoice.payment_failed",
+            customerId,
+            subscriptionId: null,
+            reason: alertReason,
+          });
+        } catch (emailErr) {
+          console.error("[webhook] Failed to send billing alert email:", emailErr);
+        }
+      }
     } catch (dbErr) {
       console.error("[webhook] Failed to persist billing alert:", dbErr);
     }

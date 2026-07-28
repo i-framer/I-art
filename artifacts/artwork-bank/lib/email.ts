@@ -381,6 +381,95 @@ export async function sendConfirmationFailureNotice({
   }
 }
 
+/**
+ * Notify the platform operator when an unmatched Stripe event is saved as a
+ * billing alert. Failures are logged but must not affect the webhook response —
+ * the alert row is already committed before this is called.
+ *
+ * Uses EMAIL_FROM_ORDERS (or EMAIL_FROM) as the sender address so it shares
+ * the same validated domain as other platform emails.
+ */
+export async function sendBillingAlertNotification({
+  stripeEventId,
+  eventType,
+  customerId,
+  subscriptionId,
+  reason,
+}: {
+  stripeEventId: string;
+  eventType: string;
+  customerId?: string | null;
+  subscriptionId?: string | null;
+  reason: string;
+}): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const adminEmail = process.env.PLATFORM_ADMIN_EMAIL;
+
+  if (!apiKey || !adminEmail) {
+    console.log(
+      `[Billing alert email skipped — ${!apiKey ? "RESEND_API_KEY" : "PLATFORM_ADMIN_EMAIL"} not set] ` +
+        `eventId=${stripeEventId}`,
+    );
+    return;
+  }
+
+  const stripeDashboardUrl = `https://dashboard.stripe.com/events/${stripeEventId}`;
+
+  const escapeHtml = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: getOrdersFrom(),
+        to: adminEmail,
+        subject: `Billing alert — unmatched Stripe event (${eventType})`,
+        html: `
+          <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+            <h2 style="color:#1c1917;">Unmatched Stripe billing event</h2>
+            <p>A Stripe webhook event could not be matched to any tenant and has been saved as a billing alert.</p>
+            <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
+              <p style="margin:0 0 8px;"><strong>Event ID:</strong> <code style="font-family:monospace;">${escapeHtml(stripeEventId)}</code></p>
+              <p style="margin:0 0 8px;"><strong>Event type:</strong> ${escapeHtml(eventType)}</p>
+              ${customerId ? `<p style="margin:0 0 8px;"><strong>Customer ID:</strong> <code style="font-family:monospace;">${escapeHtml(customerId)}</code></p>` : ""}
+              ${subscriptionId ? `<p style="margin:0 0 8px;"><strong>Subscription ID:</strong> <code style="font-family:monospace;">${escapeHtml(subscriptionId)}</code></p>` : ""}
+              <p style="margin:0;"><strong>Reason:</strong> ${escapeHtml(reason)}</p>
+            </div>
+            <p>
+              <a href="${escapeHtml(stripeDashboardUrl)}" style="color:#1c1917;">
+                View event in Stripe Dashboard →
+              </a>
+            </p>
+            <p style="color:#78716c;font-size:14px;margin-top:24px;">
+              You can dismiss this alert from the billing alerts panel once resolved.
+            </p>
+          </div>
+        `,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(
+        `[Billing alert email] Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
+      );
+    }
+  } catch (err) {
+    console.error(
+      `[Billing alert email] Failed to send notification: ${(err as any)?.message ?? String(err)}`,
+    );
+  }
+}
+
 export async function sendOrderConfirmation({
   buyerEmail,
   buyerName,
