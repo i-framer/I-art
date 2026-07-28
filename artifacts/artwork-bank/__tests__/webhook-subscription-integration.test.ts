@@ -22,7 +22,11 @@ vi.mock("@/lib/stripe", () => ({
   StripeNotConfiguredError: class StripeNotConfiguredError extends Error {},
 }));
 
-vi.mock("@/lib/email", () => ({ sendOrderConfirmation: vi.fn() }));
+vi.mock("@/lib/email", () => ({
+  sendOrderConfirmation: vi.fn(),
+  sendBillingAlertNotification: vi.fn(),
+}));
+vi.mock("@/lib/slack", () => ({ sendBillingAlertSlackNotification: vi.fn() }));
 vi.mock("@/lib/iframer", () => ({
   createIFramerJob: vi.fn(),
   IFramerError: class IFramerError extends Error {},
@@ -35,6 +39,7 @@ vi.mock("@/lib/base-url", () => ({ getTenantUrl: vi.fn() }));
 import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { POST as webhookPOST } from "@/app/api/stripe/webhook/route";
+import { sendBillingAlertNotification } from "@/lib/email";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -644,6 +649,39 @@ describe("no-match error path against real DB", () => {
     });
     expect(alert).toBeDefined();
     expect(alert?.eventType).toBe("invoice.payment_failed");
+
+    errorSpy.mockRestore();
+  });
+
+  it("triggers sendBillingAlertNotification with correct eventType, customerId, and reason when invoice.payment_failed matches no tenant", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const eventId = `evt_inv_email_${uid()}`;
+    const ghostCustomerId = `cus_ghost_email_${uid()}`;
+    createdAlertEventIds.push(eventId);
+
+    vi.mocked(sendBillingAlertNotification).mockClear();
+
+    const res = await post({
+      id: eventId,
+      type: "invoice.payment_failed",
+      data: {
+        object: {
+          id: `in_ghost_email_${uid()}`,
+          customer: ghostCustomerId,
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+
+    expect(sendBillingAlertNotification).toHaveBeenCalledOnce();
+    expect(sendBillingAlertNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "invoice.payment_failed",
+        customerId: ghostCustomerId,
+        reason: expect.stringMatching(/No tenant matched/i),
+      }),
+    );
 
     errorSpy.mockRestore();
   });
