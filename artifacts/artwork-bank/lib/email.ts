@@ -413,6 +413,11 @@ export async function sendBillingAlertNotification({
     return;
   }
 
+  // Import lazily to avoid circular deps and to keep the module lightweight.
+  const { getPlatformBaseUrl } = await import("@/lib/base-url");
+  const baseUrl = getPlatformBaseUrl();
+  const billingAlertsUrl = baseUrl ? `${baseUrl}/platform` : null;
+
   const stripeDashboardUrl = `https://dashboard.stripe.com/events/${stripeEventId}`;
 
   const escapeHtml = (s: string) =>
@@ -449,8 +454,17 @@ export async function sendBillingAlertNotification({
                 View event in Stripe Dashboard →
               </a>
             </p>
+            ${
+              billingAlertsUrl
+                ? `<p>
+                <a href="${escapeHtml(billingAlertsUrl)}" style="color:#1c1917;">
+                  Go to Billing Alerts panel →
+                </a>
+              </p>`
+                : ""
+            }
             <p style="color:#78716c;font-size:14px;margin-top:24px;">
-              You can dismiss this alert from the billing alerts panel once resolved.
+              Dismiss this alert from the billing alerts panel once resolved.
             </p>
           </div>
         `,

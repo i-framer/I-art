@@ -175,6 +175,11 @@ vi.mock("@/lib/email", () => ({
   sendBillingAlertNotification: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/lib/base-url", () => ({
+  getPlatformBaseUrl: vi.fn().mockReturnValue("https://example.com"),
+  getTenantUrl: vi.fn(() => "http://localhost"),
+}));
+
 vi.mock("@/lib/iframer", () => ({
   createIFramerJob: vi.fn(),
   IFramerError: class IFramerError extends Error {},
@@ -199,6 +204,7 @@ vi.mock("next/cache", () => ({
 import { POST as webhookPOST } from "@/app/api/stripe/webhook/route";
 import { dismissBillingAlert } from "@/app/platform/actions";
 import { db } from "@workspace/db";
+import { sendBillingAlertNotification } from "@/lib/email";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -369,5 +375,50 @@ describe("dismissBillingAlert — sets dismissed_at on the target row", () => {
     const unresolved = db_state.alerts.filter((a) => a.dismissedAt === null);
     expect(unresolved).toHaveLength(1);
     expect(unresolved[0].stripeEventId).toBe("evt_keep_001");
+  });
+});
+
+describe("Operator notification — sendBillingAlertNotification called on new alert only", () => {
+  it("calls sendBillingAlertNotification once for a new unmatched subscription event", async () => {
+    await postWebhook(
+      subscriptionEvent("evt_notify_sub_001", "customer.subscription.updated"),
+    );
+
+    expect(sendBillingAlertNotification).toHaveBeenCalledTimes(1);
+    expect(sendBillingAlertNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stripeEventId: "evt_notify_sub_001",
+        eventType: "customer.subscription.updated",
+        customerId: "cus_unmatched_001",
+        subscriptionId: "sub_unmatched_001",
+      }),
+    );
+  });
+
+  it("calls sendBillingAlertNotification once for a new unmatched invoice.payment_failed event", async () => {
+    await postWebhook(invoiceEvent("evt_notify_inv_001"));
+
+    expect(sendBillingAlertNotification).toHaveBeenCalledTimes(1);
+    expect(sendBillingAlertNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stripeEventId: "evt_notify_inv_001",
+        eventType: "invoice.payment_failed",
+        customerId: "cus_unmatched_invoice",
+      }),
+    );
+  });
+
+  it("does NOT call sendBillingAlertNotification for a duplicate event (onConflictDoNothing no-op)", async () => {
+    const payload = subscriptionEvent("evt_notify_dup_001");
+
+    // First delivery — creates the row and sends the notification
+    await postWebhook(payload);
+    expect(sendBillingAlertNotification).toHaveBeenCalledTimes(1);
+
+    vi.mocked(sendBillingAlertNotification).mockClear();
+
+    // Second delivery — conflict suppresses the insert, so no notification
+    await postWebhook(payload);
+    expect(sendBillingAlertNotification).not.toHaveBeenCalled();
   });
 });
