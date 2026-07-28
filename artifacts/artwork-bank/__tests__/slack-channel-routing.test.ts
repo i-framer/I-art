@@ -129,6 +129,75 @@ describe("resolveSlackChannel", () => {
     });
   });
 
+  describe("both per-type overrides set simultaneously", () => {
+    it("routes invoice.payment_failed to SLACK_CHANNEL_INVOICE_FAILED, not SLACK_CHANNEL_SUBSCRIPTION_EVENTS", () => {
+      setEnv({
+        SLACK_CHANNEL_INVOICE_FAILED: "#invoice-alerts",
+        SLACK_CHANNEL_SUBSCRIPTION_EVENTS: "#sub-events",
+        SLACK_BILLING_ALERTS_CHANNEL: "#billing-general",
+      });
+      expect(resolveSlackChannel("invoice.payment_failed")).toBe(
+        "#invoice-alerts",
+      );
+    });
+
+    it("routes customer.subscription.deleted to SLACK_CHANNEL_SUBSCRIPTION_EVENTS, not SLACK_CHANNEL_INVOICE_FAILED", () => {
+      setEnv({
+        SLACK_CHANNEL_INVOICE_FAILED: "#invoice-alerts",
+        SLACK_CHANNEL_SUBSCRIPTION_EVENTS: "#sub-events",
+        SLACK_BILLING_ALERTS_CHANNEL: "#billing-general",
+      });
+      expect(resolveSlackChannel("customer.subscription.deleted")).toBe(
+        "#sub-events",
+      );
+    });
+
+    it("routes customer.subscription.created to SLACK_CHANNEL_SUBSCRIPTION_EVENTS, not SLACK_CHANNEL_INVOICE_FAILED", () => {
+      setEnv({
+        SLACK_CHANNEL_INVOICE_FAILED: "#invoice-alerts",
+        SLACK_CHANNEL_SUBSCRIPTION_EVENTS: "#sub-events",
+        SLACK_BILLING_ALERTS_CHANNEL: "#billing-general",
+      });
+      expect(resolveSlackChannel("customer.subscription.created")).toBe(
+        "#sub-events",
+      );
+    });
+
+    it("routes customer.subscription.updated to SLACK_CHANNEL_SUBSCRIPTION_EVENTS, not SLACK_CHANNEL_INVOICE_FAILED", () => {
+      setEnv({
+        SLACK_CHANNEL_INVOICE_FAILED: "#invoice-alerts",
+        SLACK_CHANNEL_SUBSCRIPTION_EVENTS: "#sub-events",
+        SLACK_BILLING_ALERTS_CHANNEL: "#billing-general",
+      });
+      expect(resolveSlackChannel("customer.subscription.updated")).toBe(
+        "#sub-events",
+      );
+    });
+
+    it("does not bleed: invoice channel is distinct from subscription channel", () => {
+      setEnv({
+        SLACK_CHANNEL_INVOICE_FAILED: "#invoice-alerts",
+        SLACK_CHANNEL_SUBSCRIPTION_EVENTS: "#sub-events",
+      });
+      const invoiceChannel = resolveSlackChannel("invoice.payment_failed");
+      const subscriptionChannel = resolveSlackChannel(
+        "customer.subscription.deleted",
+      );
+      expect(invoiceChannel).toBe("#invoice-alerts");
+      expect(subscriptionChannel).toBe("#sub-events");
+      expect(invoiceChannel).not.toBe(subscriptionChannel);
+    });
+
+    it("routes an unrelated event to SLACK_BILLING_ALERTS_CHANNEL even when both overrides are set", () => {
+      setEnv({
+        SLACK_CHANNEL_INVOICE_FAILED: "#invoice-alerts",
+        SLACK_CHANNEL_SUBSCRIPTION_EVENTS: "#sub-events",
+        SLACK_BILLING_ALERTS_CHANNEL: "#billing-general",
+      });
+      expect(resolveSlackChannel("charge.refunded")).toBe("#billing-general");
+    });
+  });
+
   describe("no channel configured", () => {
     it("returns undefined when no channel env-vars are set", () => {
       expect(resolveSlackChannel("invoice.payment_failed")).toBeUndefined();
