@@ -119,6 +119,16 @@ export async function sendBillingAlertSlackNotification({
         `[Billing alert Slack] Post failed (HTTP ${response.status}):`,
         body?.error ?? "(no error field)",
       );
+      // Structured entry so monitoring / log-based alerts can filter on this event.
+      console.error(
+        JSON.stringify({
+          type: "slack_billing_alert_failure",
+          eventId: stripeEventId,
+          channel,
+          errorType: "http_error",
+          errorMessage: errorDetail,
+        }),
+      );
       return { ok: false, error: errorDetail };
     }
 
@@ -127,6 +137,16 @@ export async function sendBillingAlertSlackNotification({
     const errorMessage = (err as any)?.message ?? String(err);
     console.error(
       `[Billing alert Slack] Failed to post message for eventId=${stripeEventId}: ${errorMessage}`,
+    );
+    // Structured entry so monitoring / log-based alerts can filter on this event.
+    console.error(
+      JSON.stringify({
+        type: "slack_billing_alert_failure",
+        eventId: stripeEventId,
+        channel,
+        errorType: "sdk_throw",
+        errorMessage,
+      }),
     );
     return { ok: false, error: errorMessage };
   }

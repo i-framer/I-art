@@ -113,6 +113,94 @@ describe("sendBillingAlertSlackNotification — token-refresh error handling", (
   });
 });
 
+describe("sendBillingAlertSlackNotification — structured JSON log on failure", () => {
+  it("emits a structured JSON log with eventId, channel, and errorType=sdk_throw when the proxy throws", async () => {
+    mockProxy.mockRejectedValueOnce(
+      new Error("Token refresh failed: OAuth token has expired"),
+    );
+
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await sendBillingAlertSlackNotification(BASE_PARAMS);
+
+    // Find the call whose first argument is a JSON string with our structure.
+    const structuredCall = consoleSpy.mock.calls.find((args) => {
+      try {
+        const parsed = JSON.parse(args[0] as string);
+        return parsed.type === "slack_billing_alert_failure";
+      } catch {
+        return false;
+      }
+    });
+
+    expect(structuredCall).toBeDefined();
+    const parsed = JSON.parse(structuredCall![0] as string);
+    expect(parsed).toMatchObject({
+      type: "slack_billing_alert_failure",
+      eventId: BASE_PARAMS.stripeEventId,
+      channel: "#billing-alerts",
+      errorType: "sdk_throw",
+    });
+
+    consoleSpy.mockRestore();
+  });
+
+  it("emits a structured JSON log with errorType=http_error when the proxy returns a non-ok response", async () => {
+    mockProxy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: false, error: "token_revoked" }), {
+        status: 401,
+      }),
+    );
+
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await sendBillingAlertSlackNotification(BASE_PARAMS);
+
+    const structuredCall = consoleSpy.mock.calls.find((args) => {
+      try {
+        const parsed = JSON.parse(args[0] as string);
+        return parsed.type === "slack_billing_alert_failure";
+      } catch {
+        return false;
+      }
+    });
+
+    expect(structuredCall).toBeDefined();
+    const parsed = JSON.parse(structuredCall![0] as string);
+    expect(parsed).toMatchObject({
+      type: "slack_billing_alert_failure",
+      eventId: BASE_PARAMS.stripeEventId,
+      channel: "#billing-alerts",
+      errorType: "http_error",
+    });
+
+    consoleSpy.mockRestore();
+  });
+
+  it("does NOT emit a structured failure log when the post succeeds", async () => {
+    mockProxy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    );
+
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await sendBillingAlertSlackNotification(BASE_PARAMS);
+
+    const structuredCall = consoleSpy.mock.calls.find((args) => {
+      try {
+        const parsed = JSON.parse(args[0] as string);
+        return parsed.type === "slack_billing_alert_failure";
+      } catch {
+        return false;
+      }
+    });
+
+    expect(structuredCall).toBeUndefined();
+
+    consoleSpy.mockRestore();
+  });
+});
+
 describe("sendBillingAlertSlackNotification — successful post after token is refreshed", () => {
   it("succeeds and does NOT log an error when the proxy call resolves normally", async () => {
     mockProxy.mockResolvedValueOnce(
