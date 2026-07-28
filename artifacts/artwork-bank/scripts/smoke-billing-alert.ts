@@ -23,6 +23,9 @@
  *   ARTWORK_BANK_URL=http://localhost:3001 \
  *     pnpm --filter @workspace/artwork-bank smoke:billing-alert
  *
+ *   Print the Slack reconnect verification runbook and exit:
+ *   pnpm --filter @workspace/artwork-bank smoke:billing-alert -- --reconnect-runbook
+ *
  * After running:
  *   - Database:  the script confirms the alert row itself.
  *   - Email:     check the Resend dashboard (https://resend.com/emails) and
@@ -31,6 +34,57 @@
  *                message like "🚨 Unmatched Stripe billing event (customer.subscription.updated)".
  *                The server logs (workflow console) will show either
  *                "[Billing alert Slack] Post failed" or no error on success.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * RECONNECT VERIFICATION RUNBOOK
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Run this whenever the Slack OAuth token has been revoked and re-granted —
+ * for example after rotating workspace credentials or reconnecting the Replit
+ * Integrations connector from the Replit UI.
+ *
+ * Step 1 — Revoke the current token (only needed for a drill; skip in a real
+ *           incident where the token is already revoked):
+ *   a. Open the Replit workspace for this project.
+ *   b. Navigate to Tools → Integrations (or the Integrations panel).
+ *   c. Find the "Slack" connector and click "Disconnect" / "Revoke".
+ *   d. Confirm that the connector status changes to "Not connected".
+ *
+ * Step 2 — Re-grant access (reconnect the OAuth token):
+ *   a. In the same Integrations panel, click "Connect" on the Slack connector.
+ *   b. Complete the Slack OAuth flow in the popup (authorize the workspace).
+ *   c. Confirm the connector status returns to "Connected".
+ *
+ * Step 3 — Restart the dev server so it picks up the refreshed credentials:
+ *   pnpm --filter @workspace/artwork-bank dev
+ *   (or use the Replit workflow restart button for "artifacts/artwork-bank: web")
+ *
+ * Step 4 — Run this smoke script to confirm delivery:
+ *   SLACK_BILLING_ALERTS_CHANNEL=#your-channel \
+ *     pnpm --filter @workspace/artwork-bank smoke:billing-alert
+ *
+ * Step 5 — Verify in Slack:
+ *   Open the channel set in SLACK_BILLING_ALERTS_CHANNEL and look for a new
+ *   message that begins with "🚨 Unmatched Stripe billing event".
+ *   It should appear within a few seconds of the script completing.
+ *
+ * Step 6 — Verify in the server logs:
+ *   Check the workflow console (Replit → workflow logs for artwork-bank) for
+ *   the absence of "[Billing alert Slack] Post failed" lines.
+ *   A successful post produces no error output.
+ *
+ * Troubleshooting:
+ *   • "Post failed … not_in_channel"  — the bot was removed from the channel
+ *     after the reconnect. Invite it back: /invite @<bot-name> in Slack.
+ *   • "Post failed … invalid_auth"    — the token is still expired or the
+ *     OAuth reconnect didn't complete. Repeat Step 2.
+ *   • "Post failed … channel_not_found" — SLACK_BILLING_ALERTS_CHANNEL is set
+ *     to a channel the bot cannot see. Verify the channel name/ID and bot
+ *     membership.
+ *   • No Slack check in script output  — SLACK_BILLING_ALERTS_CHANNEL is not
+ *     set. Export it before running (see Step 4 above).
+ *
+ * See also: artifacts/artwork-bank/RUNBOOK.md — "Slack connector reconnect"
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { db } from "@workspace/db";
@@ -53,7 +107,65 @@ const syntheticEvent = {
   },
 };
 
+function printReconnectRunbook() {
+  console.log(`
+╔══════════════════════════════════════════════════════════════════════════════╗
+║          SLACK CONNECTOR RECONNECT VERIFICATION RUNBOOK                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Use this runbook whenever the Replit Slack connector has been revoked and
+re-granted — e.g. after rotating workspace credentials or reconnecting via
+the Replit Integrations panel.
+
+STEP 1 — Revoke the current token (skip if already revoked)
+  a. Open the Replit workspace for this project.
+  b. Navigate to Tools → Integrations (or the Integrations side-panel).
+  c. Find the "Slack" connector and click "Disconnect" / "Revoke".
+  d. Confirm the connector status changes to "Not connected".
+
+STEP 2 — Re-grant access (reconnect the OAuth token)
+  a. In the same Integrations panel, click "Connect" on the Slack connector.
+  b. Complete the Slack OAuth flow in the popup (authorize the workspace).
+  c. Confirm the connector status returns to "Connected".
+
+STEP 3 — Restart the dev server
+  Option A (Replit UI): Workflows → "artifacts/artwork-bank: web" → Restart
+  Option B (shell):
+    pnpm --filter @workspace/artwork-bank dev
+
+STEP 4 — Run this smoke script to confirm delivery
+  SLACK_BILLING_ALERTS_CHANNEL=#your-channel \\
+    pnpm --filter @workspace/artwork-bank smoke:billing-alert
+
+STEP 5 — Verify in Slack
+  Open the channel set in SLACK_BILLING_ALERTS_CHANNEL and look for a message
+  beginning with:
+    "🚨 Unmatched Stripe billing event (customer.subscription.updated)"
+  It should appear within a few seconds of the script completing.
+
+STEP 6 — Verify in the server logs
+  Check the workflow console for the ABSENCE of:
+    "[Billing alert Slack] Post failed"
+  No error output = successful post.
+
+TROUBLESHOOTING
+  "Post failed … not_in_channel"   → /invite @<bot-name> in Slack
+  "Post failed … invalid_auth"     → OAuth reconnect incomplete; repeat Step 2
+  "Post failed … channel_not_found"→ Check SLACK_BILLING_ALERTS_CHANNEL value
+                                     and bot membership in that channel
+  No Slack section in output       → SLACK_BILLING_ALERTS_CHANNEL not set;
+                                     export it before running (Step 4)
+
+See also: artifacts/artwork-bank/RUNBOOK.md — "Slack connector reconnect"
+`);
+}
+
 async function main() {
+  if (process.argv.includes("--reconnect-runbook")) {
+    printReconnectRunbook();
+    process.exit(0);
+  }
+
   console.log("=== Billing alert smoke test (email + Slack) ===");
   console.log(`Event ID: ${EVENT_ID}`);
   console.log(`Target:   ${BASE_URL}/api/stripe/webhook\n`);
