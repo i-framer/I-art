@@ -333,7 +333,7 @@ describe("out-of-order subscription events", () => {
     expect(alert).toBeUndefined();
   });
 
-  it("a NEW subscription (different sub ID) re-activates a previously canceled tenant", async () => {
+  it("a NEW subscription (different sub ID) re-activates a previously canceled tenant via customer.subscription.created", async () => {
     const subOld = `sub_old_${uid()}`;
     const tenantId = await createTenant({
       subscriptionStatus: "canceled",
@@ -347,6 +347,36 @@ describe("out-of-order subscription events", () => {
     const res = await post({
       id: `evt_new_sub_${tenantId}`,
       type: "customer.subscription.created",
+      data: {
+        object: {
+          id: subNew, // different sub ID → cancel guard allows the update
+          status: "active",
+          customer: cusId,
+          metadata: { billingTenantId: tenantId },
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+
+    const row = await getTenantBillingFields(tenantId);
+    expect(row?.subscriptionStatus).toBe("active");
+    expect(row?.stripeSubscriptionId).toBe(subNew);
+  });
+
+  it("a NEW subscription (different sub ID) re-activates a previously canceled tenant via customer.subscription.updated", async () => {
+    const subOld = `sub_old_upd_${uid()}`;
+    const tenantId = await createTenant({
+      subscriptionStatus: "canceled",
+      stripeSubscriptionId: subOld,
+    });
+    createdTenantIds.push(tenantId);
+
+    const subNew = `sub_new_upd_${uid()}`;
+    const cusId = `cus_new_upd_${tenantId}`;
+
+    const res = await post({
+      id: `evt_new_sub_upd_${tenantId}`,
+      type: "customer.subscription.updated",
       data: {
         object: {
           id: subNew, // different sub ID → cancel guard allows the update
