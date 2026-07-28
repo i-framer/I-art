@@ -54,9 +54,11 @@ vi.mock("@/lib/auth", () => ({
   getSession: vi.fn(async () => ({ userId: "u1", tenantId: "t1" })),
 }));
 
+const sendPartialRefundNotification = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("@/lib/email", () => ({
   sendOrderStatusUpdate: vi.fn(async () => {}),
   sendOrderConfirmation: vi.fn(async () => {}),
+  sendPartialRefundNotification,
 }));
 vi.mock("@/lib/base-url", () => ({ getTenantUrl: vi.fn(() => "https://x.example.com") }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -141,6 +143,37 @@ describe("partial refund", () => {
     const update = state.updates.find((u) => "refundedAmountCents" in u.vals);
     expect(update?.vals.refundedAmountCents).toBe(5_000); // $30 + $20
     expect(update?.vals.status).toBeUndefined();
+  });
+
+  it("sends a partial refund notification email to the buyer", async () => {
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "30.00" })),
+    ).rejects.toThrow("REDIRECT:/orders/order-1?refunded=partial");
+
+    expect(sendPartialRefundNotification).toHaveBeenCalledOnce();
+    expect(sendPartialRefundNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        buyerEmail: "buyer@example.com",
+        refundedAmountCents: 3_000,
+        artworkTitle: "Sunset",
+        tenantName: "Gallery",
+      }),
+    );
+  });
+
+  it("records the email error on the order row when the notification fails, but still redirects", async () => {
+    sendPartialRefundNotification.mockRejectedValueOnce(new Error("smtp timeout"));
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "30.00" })),
+    ).rejects.toThrow("REDIRECT:/orders/order-1?refunded=partial");
+
+    // The error must be persisted on the order row.
+    const errorUpdate = state.updates.find((u) => "statusEmailError" in u.vals);
+    expect(errorUpdate?.vals.statusEmailError).toMatch(/smtp timeout/);
+    // The refund itself must still have been committed.
+    const refundUpdate = state.updates.find((u) => "refundedAmountCents" in u.vals);
+    expect(refundUpdate?.vals.refundedAmountCents).toBe(3_000);
   });
 });
 

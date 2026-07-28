@@ -8,7 +8,7 @@ import { ordersTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { getSession } from "@/lib/auth";
 import { orderItemsTable, tenantsTable } from "@workspace/db";
-import { sendOrderConfirmation, sendOrderStatusUpdate } from "@/lib/email";
+import { sendOrderConfirmation, sendOrderStatusUpdate, sendPartialRefundNotification } from "@/lib/email";
 import { getTenantUrl } from "@/lib/base-url";
 import { getStripeClient, StripeNotConfiguredError } from "@/lib/stripe";
 
@@ -83,6 +83,60 @@ async function notifyBuyerOfUpdate(orderId: string): Promise<void> {
       .set({
         statusEmailError: (err as any)?.message ?? String(err),
         statusEmailAttempts: 1,
+        statusEmailLastAttemptAt: now,
+      })
+      .where(eq(ordersTable.id, orderId));
+  }
+}
+
+/**
+ * Send a partial refund notification to the buyer. On failure the error is
+ * recorded on the order row (statusEmailError) so the operator can see it;
+ * this does NOT use the retry queue because partial refunds are one-shot events.
+ */
+async function notifyBuyerOfPartialRefund(
+  orderId: string,
+  refundedAmountCents: number,
+): Promise<void> {
+  const now = new Date();
+
+  const order = await db.query.ordersTable.findFirst({
+    where: eq(ordersTable.id, orderId),
+  });
+  if (!order || !order.buyerEmail) return;
+
+  const [item, tenant] = await Promise.all([
+    db.query.orderItemsTable.findFirst({
+      where: eq(orderItemsTable.orderId, orderId),
+    }),
+    db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, order.tenantId),
+    }),
+  ]);
+  if (!item || !tenant) return;
+
+  try {
+    await sendPartialRefundNotification({
+      buyerEmail: order.buyerEmail,
+      buyerName: order.buyerName,
+      artworkTitle: item.artworkTitle,
+      refundedAmountCents,
+      orderRef: order.id.slice(0, 8).toUpperCase(),
+      tenantName: tenant.businessName,
+      orderLookupUrl: getTenantUrl(tenant, "/orders"),
+    });
+    await db
+      .update(ordersTable)
+      .set({
+        statusEmailError: null,
+        statusEmailLastAttemptAt: now,
+      })
+      .where(eq(ordersTable.id, orderId));
+  } catch (err) {
+    await db
+      .update(ordersTable)
+      .set({
+        statusEmailError: (err as any)?.message ?? String(err),
         statusEmailLastAttemptAt: now,
       })
       .where(eq(ordersTable.id, orderId));
@@ -191,6 +245,8 @@ export async function refundOrder(formData: FormData): Promise<void> {
 
   if (isFullRefund) {
     await notifyBuyerOfUpdate(orderId);
+  } else {
+    await notifyBuyerOfPartialRefund(orderId, refundCents);
   }
 
   revalidatePath(`/orders/${orderId}`);

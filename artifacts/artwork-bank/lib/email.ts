@@ -484,6 +484,93 @@ export async function sendBillingAlertNotification({
   }
 }
 
+/**
+ * Notify the buyer that a partial refund has been issued on their order.
+ * Throws EmailSendError on failure so callers can record it for retry.
+ */
+export async function sendPartialRefundNotification({
+  buyerEmail,
+  buyerName,
+  artworkTitle,
+  refundedAmountCents,
+  orderRef,
+  tenantName,
+  orderLookupUrl,
+}: {
+  buyerEmail: string;
+  buyerName: string | null;
+  artworkTitle: string;
+  /** Amount refunded in this action, in cents. */
+  refundedAmountCents: number;
+  orderRef: string;
+  tenantName: string;
+  /** Absolute URL of the guest order-status lookup page, if available. */
+  orderLookupUrl?: string;
+}): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    throw new EmailSendError(
+      "RESEND_API_KEY is not configured — partial refund notification not sent.",
+    );
+  }
+
+  const escapeHtml = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const refundedDollars = (refundedAmountCents / 100).toFixed(2);
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: getOrdersFrom(),
+        to: buyerEmail,
+        subject: `Partial refund issued — ${artworkTitle}`,
+        html: `
+          <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+            <h2 style="color:#1c1917;">Partial refund issued</h2>
+            <p>Hi ${escapeHtml(buyerName ?? "there")},</p>
+            <p>A partial refund of <strong>$${escapeHtml(refundedDollars)}</strong> has been issued on your order for <strong>${escapeHtml(artworkTitle)}</strong> from <strong>${escapeHtml(tenantName)}</strong>.</p>
+            <p>Your order remains active — no further action is needed on your part. The refund will appear on your original payment method within a few business days.</p>
+            <p style="margin-top:24px;padding:16px;background:#f5f5f4;border-radius:8px;">
+              Order reference: <code style="font-family:monospace;">${escapeHtml(orderRef)}</code>
+            </p>
+            ${
+              orderLookupUrl
+                ? `<p>You can check your order status any time — no account needed: <a href="${escapeHtml(orderLookupUrl)}" style="color:#1c1917;">Check order status</a> (use this email address and your order reference).</p>`
+                : ""
+            }
+            <p style="color:#78716c;font-size:14px;margin-top:24px;">
+              Thank you for supporting ${escapeHtml(tenantName)}.
+            </p>
+          </div>
+        `,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new EmailSendError(
+        `Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof EmailSendError) throw err;
+    throw new EmailSendError(
+      `Failed to send partial refund notification: ${(err as any)?.message ?? String(err)}`,
+    );
+  }
+}
+
 export async function sendOrderConfirmation({
   buyerEmail,
   buyerName,
