@@ -30,6 +30,7 @@ import {
   sendOrderStatusUpdate,
   sendOrderConfirmation,
   sendConfirmationFailureNotice,
+  EmailSendError,
 } from "@/lib/email";
 
 // ---------------------------------------------------------------------------
@@ -40,6 +41,12 @@ function mockFetch200() {
   return vi
     .spyOn(globalThis, "fetch")
     .mockResolvedValue(new Response("{}", { status: 200 }));
+}
+
+function mockFetchError(status: number, body = "") {
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response(body, { status }));
 }
 
 function extractFrom(fetchSpy: ReturnType<typeof vi.spyOn>): string {
@@ -322,5 +329,91 @@ describe("sendConfirmationFailureNotice: sender address (domain-rotation safety)
     const spy = mockFetch200();
     await sendConfirmationFailureNotice(failureNoticeArgs);
     expect(extractFrom(spy)).toBe("orders@primary.com");
+  });
+});
+
+// ===========================================================================
+// sendArtworkInquiry — Resend error handling (unverified domain / server error)
+// ===========================================================================
+
+describe("sendArtworkInquiry: Resend error handling", () => {
+  beforeEach(() => {
+    clearInquiryVars();
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.EMAIL_FROM_INQUIRIES = "inquiries@unverified-domain.com";
+  });
+  afterEach(() => {
+    clearInquiryVars();
+    vi.restoreAllMocks();
+  });
+
+  it("returns false (not true) when Resend responds 422 (domain not verified)", async () => {
+    mockFetchError(422, JSON.stringify({ message: "The domain is not verified." }));
+    const result = await sendArtworkInquiry(inquiryArgs);
+    expect(result).toBe(false);
+  });
+
+  it("returns false when Resend responds 403 (invalid API key)", async () => {
+    mockFetchError(403, JSON.stringify({ message: "API key is invalid." }));
+    const result = await sendArtworkInquiry(inquiryArgs);
+    expect(result).toBe(false);
+  });
+
+  it("returns false when Resend responds 500 (server error)", async () => {
+    mockFetchError(500, "Internal Server Error");
+    const result = await sendArtworkInquiry(inquiryArgs);
+    expect(result).toBe(false);
+  });
+
+  it("returns false when fetch itself throws a network error", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network failure"));
+    const result = await sendArtworkInquiry(inquiryArgs);
+    expect(result).toBe(false);
+  });
+});
+
+// ===========================================================================
+// sendInquiryReply — Resend error handling (unverified domain / server error)
+// ===========================================================================
+
+describe("sendInquiryReply: Resend error handling", () => {
+  beforeEach(() => {
+    clearInquiryVars();
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.EMAIL_FROM_INQUIRIES = "inquiries@unverified-domain.com";
+  });
+  afterEach(() => {
+    clearInquiryVars();
+    vi.restoreAllMocks();
+  });
+
+  it("throws EmailSendError when Resend responds 422 (domain not verified)", async () => {
+    mockFetchError(422, JSON.stringify({ message: "The domain is not verified." }));
+    await expect(sendInquiryReply(replyArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("thrown EmailSendError includes the HTTP status code for 422", async () => {
+    mockFetchError(422, JSON.stringify({ message: "The domain is not verified." }));
+    await expect(sendInquiryReply(replyArgs)).rejects.toThrow("422");
+  });
+
+  it("throws EmailSendError when Resend responds 403 (invalid API key)", async () => {
+    mockFetchError(403, JSON.stringify({ message: "API key is invalid." }));
+    await expect(sendInquiryReply(replyArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("throws EmailSendError when Resend responds 500 (server error)", async () => {
+    mockFetchError(500, "Internal Server Error");
+    await expect(sendInquiryReply(replyArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("throws EmailSendError when fetch itself throws a network error", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network failure"));
+    await expect(sendInquiryReply(replyArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("thrown EmailSendError wraps the original network error message", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network failure"));
+    await expect(sendInquiryReply(replyArgs)).rejects.toThrow("network failure");
   });
 });
