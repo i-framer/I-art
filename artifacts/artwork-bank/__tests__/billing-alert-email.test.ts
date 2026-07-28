@@ -1,12 +1,17 @@
 /**
  * Confirms the webhook calls (or skips) sendBillingAlertNotification correctly
- * when an unmatched subscription event arrives.
+ * when an unmatched subscription event or invoice.payment_failed event arrives.
  *
- * Coverage:
+ * Coverage (customer.subscription.*):
  *  - Unmatched event → alert row inserted AND sendBillingAlertNotification called
  *  - Stripe redelivery (conflict → empty .returning()) → notification NOT re-sent
  *  - Email throws → webhook still returns 200 (non-fatal)
  *  - Out-of-order guard blocks stale event → notification NOT called
+ *
+ * Coverage (invoice.payment_failed):
+ *  - Unmatched invoice event → alert row inserted AND sendBillingAlertNotification called with correct eventType
+ *  - Stripe redelivery (conflict → empty .returning()) → notification NOT re-sent
+ *  - Cancel-guard path (tenant already canceled) → notification NOT called
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -81,6 +86,11 @@ vi.mock("@/lib/email", () => ({
   sendOrderConfirmation: vi.fn(),
 }));
 
+// ── Slack mock ────────────────────────────────────────────────────────────────
+vi.mock("@/lib/slack", () => ({
+  sendBillingAlertSlackNotification: vi.fn().mockResolvedValue(undefined),
+}));
+
 // ── iFramer mock ──────────────────────────────────────────────────────────────
 vi.mock("@/lib/iframer", () => ({
   createIFramerJob: vi.fn(),
@@ -96,6 +106,19 @@ vi.mock("next/headers", () => ({
 import { POST as webhookPOST } from "@/app/api/stripe/webhook/route";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function unmatchedInvoicePaymentFailedEvent() {
+  return {
+    id: "evt_invoice_001",
+    type: "invoice.payment_failed",
+    data: {
+      object: {
+        customer: "cus_orphan_invoice_1",
+        subscription: null,
+      },
+    },
+  };
+}
 
 function unmatchedSubscriptionEvent() {
   return {
@@ -182,6 +205,45 @@ describe("webhook: billing alert email on unmatched subscription event", () => {
     state.tenantFound = { id: "tenant-existing" };
 
     const res = await postWebhook(unmatchedSubscriptionEvent());
+
+    expect(res.status).toBe(200);
+    expect(sendBillingAlertNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe("webhook: billing alert email on invoice.payment_failed", () => {
+  it("calls sendBillingAlertNotification when a new alert row is inserted", async () => {
+    sendBillingAlertNotification.mockResolvedValueOnce(undefined);
+
+    const res = await postWebhook(unmatchedInvoicePaymentFailedEvent());
+
+    expect(res.status).toBe(200);
+    expect(sendBillingAlertNotification).toHaveBeenCalledTimes(1);
+    expect(sendBillingAlertNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stripeEventId: "evt_invoice_001",
+        eventType: "invoice.payment_failed",
+        customerId: "cus_orphan_invoice_1",
+        subscriptionId: null,
+      }),
+    );
+  });
+
+  it("does NOT call sendBillingAlertNotification on a Stripe redelivery (conflict → empty returning)", async () => {
+    state.alertInsertReturning = []; // onConflictDoNothing produced no new row
+
+    const res = await postWebhook(unmatchedInvoicePaymentFailedEvent());
+
+    expect(res.status).toBe(200);
+    expect(sendBillingAlertNotification).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call sendBillingAlertNotification when the cancel guard blocked a stale event", async () => {
+    // update().returning() returns [] (guard blocked write), but findFirst
+    // finds the tenant with status 'canceled' → silent no-op, not an alert.
+    state.tenantFound = { id: "tenant-canceled", subscriptionStatus: "canceled" };
+
+    const res = await postWebhook(unmatchedInvoicePaymentFailedEvent());
 
     expect(res.status).toBe(200);
     expect(sendBillingAlertNotification).not.toHaveBeenCalled();
