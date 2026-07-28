@@ -19,12 +19,32 @@ import { ReplitConnectors } from "@replit/connectors-sdk";
 export function resolveSlackChannel(eventType: string): string | undefined {
   if (eventType === "invoice.payment_failed") {
     const override = process.env.SLACK_CHANNEL_INVOICE_FAILED;
-    if (override) return override;
+    if (override !== undefined) {
+      if (override === "") {
+        console.warn(
+          "[Billing alert Slack] SLACK_CHANNEL_INVOICE_FAILED is set to an empty string — " +
+            "falling back to SLACK_BILLING_ALERTS_CHANNEL. " +
+            "Remove the variable or give it a non-empty value to suppress this warning.",
+        );
+      } else {
+        return override;
+      }
+    }
   }
 
   if (eventType.startsWith("customer.subscription.")) {
     const override = process.env.SLACK_CHANNEL_SUBSCRIPTION_EVENTS;
-    if (override) return override;
+    if (override !== undefined) {
+      if (override === "") {
+        console.warn(
+          "[Billing alert Slack] SLACK_CHANNEL_SUBSCRIPTION_EVENTS is set to an empty string — " +
+            "falling back to SLACK_BILLING_ALERTS_CHANNEL. " +
+            "Remove the variable or give it a non-empty value to suppress this warning.",
+        );
+      } else {
+        return override;
+      }
+    }
   }
 
   return process.env.SLACK_BILLING_ALERTS_CHANNEL;

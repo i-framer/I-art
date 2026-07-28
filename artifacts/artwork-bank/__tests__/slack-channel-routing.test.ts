@@ -198,6 +198,98 @@ describe("resolveSlackChannel", () => {
     });
   });
 
+  describe("empty-string overrides", () => {
+    it("falls back to SLACK_BILLING_ALERTS_CHANNEL and warns when SLACK_CHANNEL_INVOICE_FAILED is \"\"", () => {
+      setEnv({
+        SLACK_CHANNEL_INVOICE_FAILED: "",
+        SLACK_BILLING_ALERTS_CHANNEL: "#billing-general",
+      });
+      const warnSpy = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+
+      const result = resolveSlackChannel("invoice.payment_failed");
+
+      expect(result).toBe("#billing-general");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("SLACK_CHANNEL_INVOICE_FAILED is set to an empty string"),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("falls back to SLACK_BILLING_ALERTS_CHANNEL and warns when SLACK_CHANNEL_SUBSCRIPTION_EVENTS is \"\"", () => {
+      setEnv({
+        SLACK_CHANNEL_SUBSCRIPTION_EVENTS: "",
+        SLACK_BILLING_ALERTS_CHANNEL: "#billing-general",
+      });
+      const warnSpy = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+
+      const result = resolveSlackChannel("customer.subscription.deleted");
+
+      expect(result).toBe("#billing-general");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("SLACK_CHANNEL_SUBSCRIPTION_EVENTS is set to an empty string"),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("returns undefined and warns when SLACK_CHANNEL_INVOICE_FAILED is \"\" and no fallback is configured", () => {
+      setEnv({ SLACK_CHANNEL_INVOICE_FAILED: "" });
+      const warnSpy = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+
+      const result = resolveSlackChannel("invoice.payment_failed");
+
+      expect(result).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("SLACK_CHANNEL_INVOICE_FAILED is set to an empty string"),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("returns undefined and warns when SLACK_CHANNEL_SUBSCRIPTION_EVENTS is \"\" and no fallback is configured", () => {
+      setEnv({ SLACK_CHANNEL_SUBSCRIPTION_EVENTS: "" });
+      const warnSpy = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+
+      const result = resolveSlackChannel("customer.subscription.updated");
+
+      expect(result).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("SLACK_CHANNEL_SUBSCRIPTION_EVENTS is set to an empty string"),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("does not warn when SLACK_CHANNEL_INVOICE_FAILED is a valid non-empty string", () => {
+      setEnv({ SLACK_CHANNEL_INVOICE_FAILED: "#invoice-alerts" });
+      const warnSpy = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+
+      resolveSlackChannel("invoice.payment_failed");
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it("does not warn when SLACK_CHANNEL_SUBSCRIPTION_EVENTS is a valid non-empty string", () => {
+      setEnv({ SLACK_CHANNEL_SUBSCRIPTION_EVENTS: "#sub-events" });
+      const warnSpy = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+
+      resolveSlackChannel("customer.subscription.created");
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+  });
+
   describe("no channel configured", () => {
     it("returns undefined when no channel env-vars are set", () => {
       expect(resolveSlackChannel("invoice.payment_failed")).toBeUndefined();
