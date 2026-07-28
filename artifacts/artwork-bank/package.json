@@ -6,7 +6,7 @@
     "dev": "next dev --port $PORT",
     "build": "next build",
     "start": "next start --port $PORT",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "rm -rf .next/types && tsc --noEmit",
     "test": "vitest run",
     "db:seed": "tsx scripts/seed.ts"
   },
