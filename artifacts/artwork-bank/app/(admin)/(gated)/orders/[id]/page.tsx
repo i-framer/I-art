@@ -11,6 +11,7 @@ import {
   markCancelled,
   saveTrackingNote,
   resendConfirmationEmail,
+  resendStatusEmail,
   refundOrder,
 } from "./actions";
 import { ArrowLeft, CheckCircle2, AlertCircle, Clock, Mail, AlertTriangle, Undo2 } from "lucide-react";
@@ -334,6 +335,117 @@ export default async function OrderDetailPage({
             </div>
           )}
         </div>
+
+        {/* ── Status update email (fulfilled / tracking note changed) ────── */}
+        {(order.statusEmailAttempts > 0 || order.statusEmailQueuedAt !== null) && (
+          <div className="rounded-xl border border-stone-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-stone-900 mb-4">
+              Status update email
+            </h2>
+
+            {/* Sent successfully */}
+            {order.statusEmailAttempts > 0 &&
+              !order.statusEmailError &&
+              !order.statusEmailQueuedAt ? (
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-emerald-700">
+                    Delivered to {order.buyerEmail}
+                  </p>
+                  {order.statusEmailLastAttemptAt && (
+                    <p className="text-xs text-stone-500 mt-0.5">
+                      {order.statusEmailLastAttemptAt.toLocaleString("en-AU", {
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : order.statusEmailQueuedAt !== null && !order.statusEmailError ? (
+              /* Queued, not yet attempted */
+              <div className="flex items-center gap-3">
+                <Clock className="h-5 w-5 text-stone-400 shrink-0" />
+                <p className="text-sm text-stone-500">
+                  Queued — sending shortly.
+                </p>
+              </div>
+            ) : order.statusEmailError &&
+              order.statusEmailAttempts >= MAX_EMAIL_ATTEMPTS ? (
+              /* Permanently failed */
+              <div className="space-y-3">
+                <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-red-800">
+                        Delivery permanently failed
+                      </p>
+                      <p className="text-xs text-red-700 mt-1 leading-relaxed">
+                        All {MAX_EMAIL_ATTEMPTS} attempts to send the status
+                        update to{" "}
+                        <span className="font-medium">{order.buyerEmail}</span>{" "}
+                        failed. The buyer hasn't been notified of this update —
+                        consider contacting them directly, or try resending
+                        below.
+                      </p>
+                      <p className="text-xs text-red-600/80 mt-2 leading-relaxed break-words">
+                        Last error: {order.statusEmailError}
+                      </p>
+                      {order.statusEmailLastAttemptAt && (
+                        <p className="text-xs text-red-600/80 mt-1">
+                          Last attempt:{" "}
+                          {order.statusEmailLastAttemptAt.toLocaleString(
+                            "en-AU",
+                            {
+                              day: "numeric",
+                              month: "long",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            },
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <form action={resendStatusEmail} className="pl-8">
+                  <input type="hidden" name="orderId" value={order.id} />
+                  <button
+                    type="submit"
+                    className="inline-flex items-center gap-2 rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 transition-colors"
+                  >
+                    <Mail className="h-4 w-4" />
+                    Resend status update email
+                  </button>
+                </form>
+              </div>
+            ) : (
+              /* Retrying (failed but attempts < MAX) */
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-amber-700">
+                    Sending failed — retrying automatically
+                  </p>
+                  {order.statusEmailError && (
+                    <p className="text-xs text-stone-500 mt-1 leading-relaxed break-words">
+                      {order.statusEmailError}
+                    </p>
+                  )}
+                  <p className="text-xs text-stone-400 mt-1">
+                    Attempt {order.statusEmailAttempts} of {MAX_EMAIL_ATTEMPTS}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── iFramer job status (FRAMING_JOB orders only) ─────────────────── */}
         {isFramingJob && hasIFramer && (

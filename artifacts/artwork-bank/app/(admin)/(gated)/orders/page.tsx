@@ -128,6 +128,9 @@ export default async function OrdersPage({
                 const emailFailed =
                   !order.emailSentAt &&
                   order.emailAttempts >= MAX_EMAIL_ATTEMPTS;
+                const statusEmailFailed =
+                  !!order.statusEmailError &&
+                  order.statusEmailAttempts >= MAX_EMAIL_ATTEMPTS;
                 return (
                   <tr
                     key={order.id}
@@ -173,6 +176,15 @@ export default async function OrdersPage({
                           >
                             <AlertTriangle className="h-3 w-3" />
                             Email failed
+                          </span>
+                        )}
+                        {statusEmailFailed && (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-semibold text-orange-700"
+                            title="Buyer status update email failed after all retry attempts"
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            Update email failed
                           </span>
                         )}
                       </div>

@@ -200,6 +200,13 @@ export async function refundOrder(formData: FormData): Promise<void> {
   );
 }
 
+export async function resendStatusEmail(formData: FormData): Promise<void> {
+  const orderId = formData.get("orderId") as string;
+  await requireOwnership(orderId);
+  await notifyBuyerOfUpdate(orderId);
+  revalidatePath(`/orders/${orderId}`);
+}
+
 export async function resendConfirmationEmail(
   formData: FormData,
 ): Promise<void> {
