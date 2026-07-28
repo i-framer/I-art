@@ -14,7 +14,8 @@ localPort = 24410
 run = "pnpm --filter @workspace/artwork-bank run dev"
 
 [services.production.build]
-args = ["pnpm", "--filter", "@workspace/artwork-bank", "run", "build"]
+# Push the DB schema first (idempotent), then build the app
+args = ["sh", "-c", "pnpm --filter db push && pnpm --filter @workspace/artwork-bank run build"]
 
 [services.production.build.env]
 NODE_ENV = "production"
