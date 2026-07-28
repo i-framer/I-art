@@ -34,7 +34,8 @@ Preview too where noted).
 | `NEXT_PUBLIC_SITE_URL` | Canonical production URL, e.g. `https://i-art.com.au` | You choose it. Also drives tenant-subdomain routing (`{slug}.i-art.com.au`). Production only — leave unset on previews so `VERCEL_URL` is used. |
 | `STRIPE_SECRET_KEY` | Stripe platform account secret key (`sk_live_...`) | Stripe Dashboard → Developers → API keys |
 | `STRIPE_WEBHOOK_SECRET` | Signing secret for the production webhook endpoint | Created in step 5 below |
-| `RESEND_API_KEY` | Transactional email (Resend) | resend.com → API Keys |
+| `SMTP_HOST` | Transactional email via your own mail server (SMTP). Works with Google Workspace (`smtp.gmail.com`), Office 365 (`smtp.office365.com`), or any domain-mail host. | Your email provider's SMTP settings. Also set `SMTP_PORT` (587 default, 465 for implicit TLS), `SMTP_USER`, `SMTP_PASS` (use an app password for Google/Microsoft). Optional `SMTP_SECURE=true/false`. |
+| `RESEND_API_KEY` | Alternative email transport (Resend) — only used when `SMTP_HOST` is not set | resend.com → API Keys |
 | `CRON_SECRET` | Protects the sweep endpoints invoked by Vercel cron | Generate: `openssl rand -hex 32`. Vercel automatically sends it on cron requests when set. |
 
 ### Recommended / optional
@@ -43,7 +44,7 @@ Preview too where noted).
 | --- | --- |
 | `EMAIL_SWEEP_SECRET` | Extra Bearer secret accepted by `POST/GET /api/email-sweep` for manual/external triggering (CRON_SECRET also works) |
 | `RESERVATION_SWEEP_SECRET` | Same, for `/api/reservation-sweep` |
-| `EMAIL_FROM`, `EMAIL_FROM_ORDERS`, `EMAIL_FROM_INQUIRIES` | From-addresses for outgoing email (must be on a Resend-verified domain, e.g. `orders@i-art.com.au`) |
+| `EMAIL_FROM`, `EMAIL_FROM_ORDERS`, `EMAIL_FROM_INQUIRIES` | From-addresses for outgoing email, e.g. `orders@i-art.com.au`. With SMTP they default to `SMTP_USER`; the domain must have valid SPF/DKIM (usually already set up by your mail provider). With Resend the domain must be Resend-verified. |
 | `SUBSCRIPTION_PRICE_ID` | Pin the AUD $10/month subscription price; otherwise a price is auto-created with lookup key `artwork_bank_monthly_v1` |
 | `PLATFORM_FEE_PERCENT` | Sales commission percent (default `5`) |
 | `CNAME_TARGET` | DNS target shown to tenants for custom domains (set to `cname.vercel-dns.com` on Vercel) |

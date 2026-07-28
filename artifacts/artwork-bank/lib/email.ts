@@ -1,6 +1,14 @@
 /**
- * Simple email helper using Resend API.
- * Gracefully skips sending if RESEND_API_KEY is not set (dev / testing).
+ * Email helper with a pluggable transport:
+ * - SMTP (own mail server) when SMTP_HOST is set — preferred in production
+ * - Resend API when RESEND_API_KEY is set — fallback
+ * Gracefully skips/fails clearly when neither is configured (dev / testing).
+ *
+ * SMTP configuration (all standard):
+ * - SMTP_HOST (required to enable SMTP)
+ * - SMTP_PORT (default 587; 465 implies TLS)
+ * - SMTP_USER / SMTP_PASS (auth; omit for unauthenticated relays)
+ * - SMTP_SECURE ("true"/"false"; default: true when port is 465)
  */
 
 /** Thrown when a confirmation email cannot be sent; callers should persist the failure so it can be retried. */
@@ -11,17 +19,108 @@ export class EmailSendError extends Error {
   }
 }
 
+function smtpConfigured(): boolean {
+  return Boolean(process.env.SMTP_HOST);
+}
+
+/** True when at least one email transport (SMTP or Resend) is configured. */
+export function isEmailTransportConfigured(): boolean {
+  return smtpConfigured() || Boolean(process.env.RESEND_API_KEY);
+}
+
+const NO_TRANSPORT_MSG =
+  "No email transport configured — set SMTP_HOST (own mail server) or RESEND_API_KEY.";
+
+type EmailPayload = {
+  from: string;
+  to: string;
+  replyTo?: string;
+  subject: string;
+  html: string;
+};
+
+/**
+ * Deliver an email through the configured transport.
+ * Throws EmailSendError on any failure (including no transport configured).
+ */
+async function deliverEmail(payload: EmailPayload): Promise<void> {
+  if (smtpConfigured()) {
+    const nodemailer = (await import("nodemailer")).default;
+    const port = parseInt(process.env.SMTP_PORT ?? "587", 10);
+    const secure = process.env.SMTP_SECURE
+      ? process.env.SMTP_SECURE === "true"
+      : port === 465;
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port,
+      secure,
+      auth: process.env.SMTP_USER
+        ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+        : undefined,
+    });
+    try {
+      await transporter.sendMail({
+        from: payload.from,
+        to: payload.to,
+        ...(payload.replyTo ? { replyTo: payload.replyTo } : {}),
+        subject: payload.subject,
+        html: payload.html,
+      });
+    } catch (err) {
+      throw new EmailSendError(
+        `SMTP error: ${(err as any)?.message ?? String(err)}`,
+      );
+    }
+    return;
+  }
+
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new EmailSendError(NO_TRANSPORT_MSG);
+  }
+
+  let res: Response;
+  try {
+    res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: payload.from,
+        to: payload.to,
+        ...(payload.replyTo ? { reply_to: payload.replyTo } : {}),
+        subject: payload.subject,
+        html: payload.html,
+      }),
+    });
+  } catch (err) {
+    throw new EmailSendError(
+      `Failed to reach Resend: ${(err as any)?.message ?? String(err)}`,
+    );
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new EmailSendError(
+      `Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
+    );
+  }
+}
+
 /**
  * Sender addresses come from configuration so the platform can run on any
  * domain without failing DMARC/SPF:
  * - EMAIL_FROM_INQUIRIES / EMAIL_FROM_ORDERS — per-purpose overrides
  * - EMAIL_FROM — shared fallback for both
+ * - SMTP_USER — sensible default when sending through an own mail server
  * - "onboarding@resend.dev" — Resend's sandbox sender (dev/testing only)
  */
 function getInquiriesFrom(): string {
   return (
     process.env.EMAIL_FROM_INQUIRIES ??
     process.env.EMAIL_FROM ??
+    process.env.SMTP_USER ??
     "onboarding@resend.dev"
   );
 }
@@ -30,6 +129,7 @@ function getOrdersFrom(): string {
   return (
     process.env.EMAIL_FROM_ORDERS ??
     process.env.EMAIL_FROM ??
+    process.env.SMTP_USER ??
     "onboarding@resend.dev"
   );
 }
@@ -63,11 +163,9 @@ export async function sendArtworkInquiry({
   artworkUrl: string;
   tenantName: string;
 }): Promise<boolean> {
-  const apiKey = process.env.RESEND_API_KEY;
-
-  if (!apiKey) {
+  if (!isEmailTransportConfigured()) {
     console.log(
-      `[Email skipped — RESEND_API_KEY not set] Inquiry about "${artworkTitle}" from ${buyerEmail} to ${galleryEmail}`,
+      `[Email skipped — no transport configured] Inquiry about "${artworkTitle}" from ${buyerEmail} to ${galleryEmail}`,
     );
     return false;
   }
@@ -80,16 +178,10 @@ export async function sendArtworkInquiry({
       .replace(/"/g, "&quot;");
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    await deliverEmail({
         from: getInquiriesFrom(),
         to: galleryEmail,
-        reply_to: buyerEmail,
+        replyTo: buyerEmail,
         subject: `Inquiry about "${artworkTitle}" (${artworkSku})`,
         html: `
           <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
@@ -105,14 +197,7 @@ export async function sendArtworkInquiry({
             </p>
           </div>
         `,
-      }),
     });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error(`Resend error ${res.status}:`, body);
-      return false;
-    }
     return true;
   } catch (err) {
     console.error("Failed to send inquiry email:", err);
@@ -142,12 +227,8 @@ export async function sendInquiryReply({
   /** Gallery contact email used as reply-to, if available. */
   galleryEmail?: string | null;
 }): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-
-  if (!apiKey) {
-    throw new EmailSendError(
-      "RESEND_API_KEY is not configured — reply not sent.",
-    );
+  if (!isEmailTransportConfigured()) {
+    throw new EmailSendError(`${NO_TRANSPORT_MSG} Reply not sent.`);
   }
 
   const escapeHtml = (s: string) =>
@@ -158,16 +239,10 @@ export async function sendInquiryReply({
       .replace(/"/g, "&quot;");
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    await deliverEmail({
         from: getInquiriesFrom(),
         to: buyerEmail,
-        ...(galleryEmail ? { reply_to: galleryEmail } : {}),
+        ...(galleryEmail ? { replyTo: galleryEmail } : {}),
         subject: `Re: Inquiry about "${artworkTitle}" — ${tenantName}`,
         html: `
           <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
@@ -183,15 +258,7 @@ export async function sendInquiryReply({
             </p>
           </div>
         `,
-      }),
     });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new EmailSendError(
-        `Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
-      );
-    }
   } catch (err) {
     if (err instanceof EmailSendError) throw err;
     throw new EmailSendError(
@@ -224,12 +291,8 @@ export async function sendOrderStatusUpdate({
   /** Absolute URL of the guest order-status lookup page, if available. */
   orderLookupUrl?: string;
 }): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-
-  if (!apiKey) {
-    throw new EmailSendError(
-      "RESEND_API_KEY is not configured — status update email not sent.",
-    );
+  if (!isEmailTransportConfigured()) {
+    throw new EmailSendError(`${NO_TRANSPORT_MSG} Status update email not sent.`);
   }
 
   const escapeHtml = (s: string) =>
@@ -246,13 +309,7 @@ export async function sendOrderStatusUpdate({
     : `There's an update on your order for <strong>${escapeHtml(artworkTitle)}</strong> from <strong>${escapeHtml(tenantName)}</strong>.`;
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    await deliverEmail({
         from: getOrdersFrom(),
         to: buyerEmail,
         subject: `Order update — ${artworkTitle}`,
@@ -282,15 +339,7 @@ export async function sendOrderStatusUpdate({
             </p>
           </div>
         `,
-      }),
     });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new EmailSendError(
-        `Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
-      );
-    }
   } catch (err) {
     if (err instanceof EmailSendError) throw err;
     throw new EmailSendError(
@@ -322,12 +371,8 @@ export async function sendConfirmationFailureNotice({
   /** The last delivery error recorded, if available. */
   lastError?: string | null;
 }): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-
-  if (!apiKey) {
-    throw new EmailSendError(
-      "RESEND_API_KEY is not configured — failure notice not sent.",
-    );
+  if (!isEmailTransportConfigured()) {
+    throw new EmailSendError(`${NO_TRANSPORT_MSG} Failure notice not sent.`);
   }
 
   const escapeHtml = (s: string) =>
@@ -338,13 +383,7 @@ export async function sendConfirmationFailureNotice({
       .replace(/"/g, "&quot;");
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    await deliverEmail({
         from: getOrdersFrom(),
         to: galleryEmail,
         subject: `Action needed — buyer confirmation email failed (order ${orderRef})`,
@@ -364,15 +403,7 @@ export async function sendConfirmationFailureNotice({
             <p>Please contact the buyer directly to confirm their order, or re-send the confirmation from your admin order page.</p>
           </div>
         `,
-      }),
     });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new EmailSendError(
-        `Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
-      );
-    }
   } catch (err) {
     if (err instanceof EmailSendError) throw err;
     throw new EmailSendError(
@@ -409,12 +440,11 @@ export async function sendBillingAlertNotification({
    */
   slackFailure?: string;
 }): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
   const adminEmail = process.env.PLATFORM_ADMIN_EMAIL;
 
-  if (!apiKey || !adminEmail) {
+  if (!isEmailTransportConfigured() || !adminEmail) {
     console.log(
-      `[Billing alert email skipped — ${!apiKey ? "RESEND_API_KEY" : "PLATFORM_ADMIN_EMAIL"} not set] ` +
+      `[Billing alert email skipped — ${!isEmailTransportConfigured() ? "email transport (SMTP_HOST or RESEND_API_KEY)" : "PLATFORM_ADMIN_EMAIL"} not set] ` +
         `eventId=${stripeEventId}`,
     );
     return;
@@ -435,13 +465,7 @@ export async function sendBillingAlertNotification({
       .replace(/"/g, "&quot;");
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    await deliverEmail({
         from: getOrdersFrom(),
         to: adminEmail,
         subject: `Billing alert — unmatched Stripe event (${eventType})`,
@@ -484,15 +508,7 @@ export async function sendBillingAlertNotification({
             </p>
           </div>
         `,
-      }),
     });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error(
-        `[Billing alert email] Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
-      );
-    }
   } catch (err) {
     console.error(
       `[Billing alert email] Failed to send notification: ${(err as any)?.message ?? String(err)}`,
@@ -523,11 +539,9 @@ export async function sendPartialRefundNotification({
   /** Absolute URL of the guest order-status lookup page, if available. */
   orderLookupUrl?: string;
 }): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-
-  if (!apiKey) {
+  if (!isEmailTransportConfigured()) {
     throw new EmailSendError(
-      "RESEND_API_KEY is not configured — partial refund notification not sent.",
+      `${NO_TRANSPORT_MSG} Partial refund notification not sent.`,
     );
   }
 
@@ -541,13 +555,7 @@ export async function sendPartialRefundNotification({
   const refundedDollars = (refundedAmountCents / 100).toFixed(2);
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    await deliverEmail({
         from: getOrdersFrom(),
         to: buyerEmail,
         subject: `Partial refund issued — ${artworkTitle}`,
@@ -570,15 +578,7 @@ export async function sendPartialRefundNotification({
             </p>
           </div>
         `,
-      }),
     });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new EmailSendError(
-        `Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
-      );
-    }
   } catch (err) {
     if (err instanceof EmailSendError) throw err;
     throw new EmailSendError(
@@ -605,27 +605,17 @@ export async function sendOrderConfirmation({
   /** Absolute URL of the guest order-status lookup page, if available. */
   orderLookupUrl?: string;
 }): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-
-  if (!apiKey) {
+  if (!isEmailTransportConfigured()) {
     // Throw so callers record the miss (emailError) instead of silently
     // dropping the buyer's confirmation — it can be re-sent once configured.
-    throw new EmailSendError(
-      "RESEND_API_KEY is not configured — confirmation email not sent.",
-    );
+    throw new EmailSendError(`${NO_TRANSPORT_MSG} Confirmation email not sent.`);
   }
 
   const fulfillmentText =
     FULFILLMENT_TEXT[fulfillmentType] ?? "The gallery will be in touch with next steps.";
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    await deliverEmail({
         from: getOrdersFrom(),
         to: buyerEmail,
         subject: `Order confirmed — ${artworkTitle}`,
@@ -648,15 +638,7 @@ export async function sendOrderConfirmation({
             </p>
           </div>
         `,
-      }),
     });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new EmailSendError(
-        `Resend error ${res.status}${body ? `: ${body.slice(0, 300)}` : ""}`,
-      );
-    }
   } catch (err) {
     if (err instanceof EmailSendError) throw err;
     throw new EmailSendError(
