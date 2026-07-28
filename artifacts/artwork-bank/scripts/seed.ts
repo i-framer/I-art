@@ -164,7 +164,7 @@ async function seed() {
     const artwork3 = artistArtworks.find((a) => a.sku === "JS-003")!;
     const artwork4 = artistArtworks.find((a) => a.sku === "JS-004")!;
 
-    const [inq1, inq2, inq3] = await db
+    const [_inq1, _inq2, inq3] = await db
       .insert(inquiriesTable)
       .values([
         {
@@ -377,7 +377,7 @@ async function seed() {
     const fwArtwork3 = framerArtworks.find((a) => a.sku === "FW-003")!;
 
     // Inquiries for Frame Works
-    const [fwInq1, fwInq2] = await db
+    const [_fwInq1, fwInq2] = await db
       .insert(inquiriesTable)
       .values([
         {

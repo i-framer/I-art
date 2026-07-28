@@ -88,13 +88,20 @@ on Vercel — re-upload any artwork images you want in production (seed/demo dat
 
 ## 5. Stripe webhook
 
-1. Stripe Dashboard → Developers → Webhooks → Add endpoint:
-   `https://i-art.com.au/api/stripe/webhook`
-2. Events: `checkout.session.completed`, `checkout.session.expired`,
+1. Stripe Dashboard → Developers → Webhooks → Add endpoint.
+   - **Before DNS cutover** use the Vercel-assigned URL:
+     `https://<your-project>.vercel.app/api/stripe/webhook`
+   - **After DNS points to Vercel** update (or add a second endpoint) for:
+     `https://i-art.com.au/api/stripe/webhook`
+2. Events to subscribe to — select all six:
+   `checkout.session.completed`, `checkout.session.expired`,
    `customer.subscription.created`, `customer.subscription.updated`,
    `customer.subscription.deleted`, `invoice.payment_failed`.
-3. Copy the endpoint's signing secret into `STRIPE_WEBHOOK_SECRET`.
+3. Copy the endpoint's **Signing secret** into `STRIPE_WEBHOOK_SECRET`
+   (Vercel → Project → Settings → Environment Variables).
 4. Ensure `STRIPE_WEBHOOK_DEV_BYPASS` is **not** set in production.
+5. Send a test event from the Stripe Dashboard (e.g. `customer.subscription.created`)
+   and confirm the endpoint returns `200 {"received":true}` in the webhook log.
 
 Sales use Stripe Connect (Express): tenants onboard from Settings → Billing and are
 paid into their own Stripe accounts; the platform takes the application fee.
