@@ -759,4 +759,46 @@ describe("no-match error path against real DB", () => {
 
     errorSpy.mockRestore();
   });
+
+  it("invoice.payment_failed is idempotent: replaying the same no-match event creates exactly one alert row and notifies only once", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const eventId = `evt_inv_idem_integ_${uid()}`;
+    const ghostCustomerId = `cus_inv_idem_${uid()}`;
+    createdAlertEventIds.push(eventId);
+
+    vi.mocked(sendBillingAlertNotification).mockClear();
+
+    const event = {
+      id: eventId,
+      type: "invoice.payment_failed",
+      data: {
+        object: {
+          id: `in_idem_${uid()}`,
+          customer: ghostCustomerId, // doesn't exist in DB
+        },
+      },
+    };
+
+    // First delivery — should write the alert row and send the notification.
+    const res1 = await post(event);
+    expect(res1.status).toBe(200);
+
+    // Second delivery (Stripe re-delivery of the same event).
+    const res2 = await post(event);
+    expect(res2.status).toBe(200);
+
+    // Exactly one stripe_alert row despite two deliveries.
+    const alerts = await db
+      .select()
+      .from(stripeAlertsTable)
+      .where(eq(stripeAlertsTable.stripeEventId, eventId));
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].eventType).toBe("invoice.payment_failed");
+
+    // Notification sent exactly once — the re-delivery must be silently skipped.
+    expect(sendBillingAlertNotification).toHaveBeenCalledOnce();
+
+    errorSpy.mockRestore();
+  });
 });
