@@ -16,7 +16,7 @@ import { ReplitConnectors } from "@replit/connectors-sdk";
  * Falls back to SLACK_BILLING_ALERTS_CHANNEL when no specific override is set.
  * Returns undefined when neither an override nor the default is configured.
  */
-function resolveSlackChannel(eventType: string): string | undefined {
+export function resolveSlackChannel(eventType: string): string | undefined {
   if (eventType === "invoice.payment_failed") {
     const override = process.env.SLACK_CHANNEL_INVOICE_FAILED;
     if (override) return override;
