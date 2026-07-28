@@ -282,6 +282,12 @@ describe("subscription webhook events", () => {
 
   it("logs an ERROR when invoice.payment_failed matches no tenant", async () => {
     state.updateResult = []; // no tenant matched
+    // Override: the follow-up findFirst (cancel-guard check) must also return
+    // undefined so the handler takes the "truly unmatched" error path and not
+    // the silent cancel no-op path.
+    vi.mocked(db.query.tenantsTable.findFirst).mockResolvedValue(
+      undefined as any,
+    );
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const res = await post({

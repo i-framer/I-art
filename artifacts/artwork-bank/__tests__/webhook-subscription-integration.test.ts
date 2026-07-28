@@ -461,6 +461,78 @@ describe("invoice.payment_failed matched path", () => {
     const row = await getTenantBillingFields(tenantId);
     expect(row?.subscriptionStatus).toBe("past_due");
   });
+
+  it("does NOT overwrite canceled status — a late invoice failure must not revive a canceled tenant", async () => {
+    // A tenant that was previously canceled (subscription ended) may still
+    // receive a late invoice.payment_failed event for their final unpaid
+    // invoice. The handler must leave the status as 'canceled' rather than
+    // flipping it to 'past_due'.
+    const cusId = `cus_inv_canceled_${uid()}`;
+    const tenantId = await createTenant({
+      stripeCustomerId: cusId,
+      subscriptionStatus: "canceled",
+    });
+    createdTenantIds.push(tenantId);
+
+    const eventId = `evt_inv_canceled_${tenantId}`;
+    // Spy to confirm no error is logged and no false billing alert is created.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await post({
+      id: eventId,
+      type: "invoice.payment_failed",
+      data: {
+        object: {
+          id: `in_canceled_${tenantId}`,
+          customer: cusId,
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+
+    const row = await getTenantBillingFields(tenantId);
+    // Status must remain 'canceled' — not flipped to 'past_due'.
+    expect(row?.subscriptionStatus).toBe("canceled");
+
+    // Must NOT log an error — this is an expected no-op, not an unmatched event.
+    expect(errorSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("Unmatched invoice.payment_failed"),
+    );
+    errorSpy.mockRestore();
+
+    // Must NOT create a false billing alert row.
+    const alert = await db.query.stripeAlertsTable.findFirst({
+      where: eq(stripeAlertsTable.stripeEventId, eventId),
+    });
+    expect(alert).toBeUndefined();
+  });
+
+  it("sets past_due when the tenant starts as trialing (non-canceled path still works)", async () => {
+    const cusId = `cus_inv_trialing_${uid()}`;
+    const tenantId = await createTenant({
+      stripeCustomerId: cusId,
+      subscriptionStatus: "trialing",
+    });
+    createdTenantIds.push(tenantId);
+
+    const eventId = `evt_inv_trialing_${tenantId}`;
+    const res = await post({
+      id: eventId,
+      type: "invoice.payment_failed",
+      data: {
+        object: {
+          id: `in_trialing_${tenantId}`,
+          customer: cusId,
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+
+    const row = await getTenantBillingFields(tenantId);
+    expect(row?.subscriptionStatus).toBe("past_due");
+  });
 });
 
 // ── No-match ERROR path ───────────────────────────────────────────────────────

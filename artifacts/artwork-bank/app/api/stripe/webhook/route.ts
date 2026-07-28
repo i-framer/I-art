@@ -275,7 +275,14 @@ async function handleSubscriptionEvent(
   }
 }
 
-/** A subscription invoice failed to collect — flag the tenant as past_due. */
+/** A subscription invoice failed to collect — flag the tenant as past_due.
+ *
+ * Guard: if the tenant is already 'canceled', do NOT overwrite that status.
+ * A late invoice.payment_failed for a final unpaid invoice must not revive a
+ * canceled subscription back to 'past_due'. The customer.subscription.* events
+ * are the authoritative source of truth for subscription lifecycle; this event
+ * only handles payment collection failures on active/trialing/past_due tenants.
+ */
 async function handleInvoicePaymentFailed(
   invoice: Stripe.Invoice,
   eventId: string,
@@ -286,13 +293,35 @@ async function handleInvoicePaymentFailed(
       : invoice.customer?.id;
   if (!customerId) return;
 
+  // Never overwrite 'canceled' — a late payment failure on an already-canceled
+  // subscription must not flip the status back to 'past_due'.
+  const cancelGuard = sql`${tenantsTable.subscriptionStatus} IS DISTINCT FROM 'canceled'`;
+
   const updated = await db
     .update(tenantsTable)
     .set({ subscriptionStatus: "past_due" })
-    .where(eq(tenantsTable.stripeCustomerId, customerId))
+    .where(and(eq(tenantsTable.stripeCustomerId, customerId), cancelGuard))
     .returning({ id: tenantsTable.id });
 
   if (updated.length === 0) {
+    // Distinguish two cases:
+    // (a) No tenant matched the customer ID at all → genuine unmatched event.
+    // (b) A tenant matched but is already 'canceled' → expected no-op; do not
+    //     create a false billing alert for a routine late-invoice event.
+    const matched = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.stripeCustomerId, customerId),
+      columns: { id: true, subscriptionStatus: true },
+    });
+
+    if (matched?.subscriptionStatus === "canceled") {
+      // Cancel guard blocked the write — silent no-op, not an error.
+      console.log(
+        `[webhook] invoice.payment_failed ignored — tenant already canceled. ` +
+          `eventId=${eventId} customerId=${customerId} tenantId=${matched.id}`,
+      );
+      return;
+    }
+
     const msg =
       `[webhook] Unmatched invoice.payment_failed — no tenant found for customer. ` +
       `eventId=${eventId} customerId=${customerId}`;
