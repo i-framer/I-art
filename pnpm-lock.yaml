@@ -246,6 +246,9 @@ importers:
 
   artifacts/artwork-bank:
     dependencies:
+      '@replit/connectors-sdk':
+        specifier: ^0.4.1
+        version: 0.4.1
       '@vercel/blob':
         specifier: ^2.6.1
         version: 2.6.1

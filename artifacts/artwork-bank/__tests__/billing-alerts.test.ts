@@ -175,6 +175,10 @@ vi.mock("@/lib/email", () => ({
   sendBillingAlertNotification: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/lib/slack", () => ({
+  sendBillingAlertSlackNotification: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("@/lib/base-url", () => ({
   getPlatformBaseUrl: vi.fn().mockReturnValue("https://example.com"),
   getTenantUrl: vi.fn(() => "http://localhost"),
@@ -205,6 +209,7 @@ import { POST as webhookPOST } from "@/app/api/stripe/webhook/route";
 import { dismissBillingAlert } from "@/app/platform/actions";
 import { db } from "@workspace/db";
 import { sendBillingAlertNotification } from "@/lib/email";
+import { sendBillingAlertSlackNotification } from "@/lib/slack";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -420,5 +425,60 @@ describe("Operator notification — sendBillingAlertNotification called on new a
     // Second delivery — conflict suppresses the insert, so no notification
     await postWebhook(payload);
     expect(sendBillingAlertNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe("Slack notification — sendBillingAlertSlackNotification mirrors email notification", () => {
+  it("calls sendBillingAlertSlackNotification once for a new unmatched subscription event", async () => {
+    await postWebhook(
+      subscriptionEvent("evt_slack_sub_001", "customer.subscription.updated"),
+    );
+
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(1);
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stripeEventId: "evt_slack_sub_001",
+        eventType: "customer.subscription.updated",
+        customerId: "cus_unmatched_001",
+        subscriptionId: "sub_unmatched_001",
+      }),
+    );
+  });
+
+  it("calls sendBillingAlertSlackNotification once for a new unmatched invoice.payment_failed event", async () => {
+    await postWebhook(invoiceEvent("evt_slack_inv_001"));
+
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(1);
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stripeEventId: "evt_slack_inv_001",
+        eventType: "invoice.payment_failed",
+        customerId: "cus_unmatched_invoice",
+      }),
+    );
+  });
+
+  it("does NOT call sendBillingAlertSlackNotification for a duplicate event (onConflictDoNothing no-op)", async () => {
+    const payload = subscriptionEvent("evt_slack_dup_001");
+
+    // First delivery — new row → both email and Slack are notified
+    await postWebhook(payload);
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(1);
+
+    vi.mocked(sendBillingAlertSlackNotification).mockClear();
+
+    // Second delivery — conflict suppresses the insert, so no Slack message
+    await postWebhook(payload);
+    expect(sendBillingAlertSlackNotification).not.toHaveBeenCalled();
+  });
+
+  it("sends Slack notification alongside (not instead of) the email notification", async () => {
+    await postWebhook(
+      subscriptionEvent("evt_slack_both_001", "customer.subscription.deleted"),
+    );
+
+    // Both channels must fire for the same event
+    expect(sendBillingAlertNotification).toHaveBeenCalledTimes(1);
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledTimes(1);
   });
 });

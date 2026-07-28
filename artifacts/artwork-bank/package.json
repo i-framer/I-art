@@ -11,6 +11,7 @@
     "db:seed": "tsx scripts/seed.ts"
   },
   "dependencies": {
+    "@replit/connectors-sdk": "^0.4.1",
     "@vercel/blob": "^2.6.1",
     "@workspace/db": "workspace:*",
     "bcryptjs": "^2.4.3",

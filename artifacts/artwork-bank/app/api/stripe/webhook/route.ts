@@ -16,6 +16,7 @@ import {
   StripeNotConfiguredError,
 } from "@/lib/stripe";
 import { sendOrderConfirmation, sendBillingAlertNotification } from "@/lib/email";
+import { sendBillingAlertSlackNotification } from "@/lib/slack";
 import { getTenantUrl } from "@/lib/base-url";
 import { createIFramerJob, IFramerError } from "@/lib/iframer";
 import type Stripe from "stripe";
@@ -268,6 +269,17 @@ async function handleSubscriptionEvent(
         } catch (emailErr) {
           console.error("[webhook] Failed to send billing alert email:", emailErr);
         }
+        try {
+          await sendBillingAlertSlackNotification({
+            stripeEventId: eventId,
+            eventType,
+            customerId: customerId ?? null,
+            subscriptionId: subscription.id,
+            reason: alertReason,
+          });
+        } catch (slackErr) {
+          console.error("[webhook] Failed to send billing alert Slack message:", slackErr);
+        }
       }
     } catch (dbErr) {
       console.error("[webhook] Failed to persist billing alert:", dbErr);
@@ -353,6 +365,17 @@ async function handleInvoicePaymentFailed(
           });
         } catch (emailErr) {
           console.error("[webhook] Failed to send billing alert email:", emailErr);
+        }
+        try {
+          await sendBillingAlertSlackNotification({
+            stripeEventId: eventId,
+            eventType: "invoice.payment_failed",
+            customerId,
+            subscriptionId: null,
+            reason: alertReason,
+          });
+        } catch (slackErr) {
+          console.error("[webhook] Failed to send billing alert Slack message:", slackErr);
         }
       }
     } catch (dbErr) {

@@ -79,3 +79,4 @@ STRIPE_WEBHOOK_DEV_BYPASS = "true"
 
 [userenv.shared]
 PLATFORM_ADMIN_EMAILS = "jane@janesmith.studio"
+SLACK_BILLING_ALERTS_CHANNEL = "#billing-alerts"
