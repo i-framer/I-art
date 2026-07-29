@@ -305,5 +305,35 @@ describe("orphan-sweep route integration — auth guard with real Request object
       expect(res.status).toBe(401);
       expect(sweepOrphanedImageFiles).not.toHaveBeenCalled();
     });
+
+    it("GET with no Authorization header returns 401 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        ORPHAN_SWEEP_SECRET: "sweep-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      // No auth header at all — omit the argument entirely
+      const res = await GET(realRequest("GET"));
+
+      expect(res.status).toBe(401);
+      expect((res.body as any).error).toMatch(/Unauthorized/i);
+      expect(sweepOrphanedImageFiles).not.toHaveBeenCalled();
+    });
+
+    it("POST with no Authorization header returns 401 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        ORPHAN_SWEEP_SECRET: "sweep-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      // No auth header at all — omit the argument entirely
+      const res = await POST(realRequest("POST"));
+
+      expect(res.status).toBe(401);
+      expect((res.body as any).error).toMatch(/Unauthorized/i);
+      expect(sweepOrphanedImageFiles).not.toHaveBeenCalled();
+    });
   });
 });
