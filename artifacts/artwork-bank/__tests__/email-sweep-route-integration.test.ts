@@ -225,6 +225,65 @@ describe("email-sweep route integration — auth guard with real Request objects
     });
   });
 
+  describe("development with a secret configured — token is still required", () => {
+    // secrets.length > 0 triggers auth regardless of NODE_ENV, so even in
+    // development the endpoint must reject requests that omit the Bearer token.
+
+    it("GET returns 401 when no Authorization header is sent in development", async () => {
+      setEnv({
+        NODE_ENV: "development",
+        EMAIL_SWEEP_SECRET: "dev-secret-xyz",
+        CRON_SECRET: undefined,
+      });
+
+      const res = await GET(realRequest("GET"));
+
+      expect(res.status).toBe(401);
+      expect((res.body as any).error).toMatch(/Unauthorized/i);
+      expect(sweepUnsentConfirmationEmails).not.toHaveBeenCalled();
+    });
+
+    it("POST returns 401 when no Authorization header is sent in development", async () => {
+      setEnv({
+        NODE_ENV: "development",
+        EMAIL_SWEEP_SECRET: "dev-secret-xyz",
+        CRON_SECRET: undefined,
+      });
+
+      const res = await POST(realRequest("POST"));
+
+      expect(res.status).toBe(401);
+      expect((res.body as any).error).toMatch(/Unauthorized/i);
+      expect(sweepUnsentConfirmationEmails).not.toHaveBeenCalled();
+    });
+
+    it("GET with correct Bearer token runs the sweep and returns 200 in development", async () => {
+      setEnv({
+        NODE_ENV: "development",
+        EMAIL_SWEEP_SECRET: "dev-secret-xyz",
+        CRON_SECRET: undefined,
+      });
+
+      const res = await GET(realRequest("GET", "Bearer dev-secret-xyz"));
+
+      expect(res.status).toBe(200);
+      expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
+    });
+
+    it("POST with correct Bearer token runs the sweep and returns 200 in development", async () => {
+      setEnv({
+        NODE_ENV: "development",
+        EMAIL_SWEEP_SECRET: "dev-secret-xyz",
+        CRON_SECRET: undefined,
+      });
+
+      const res = await POST(realRequest("POST", "Bearer dev-secret-xyz"));
+
+      expect(res.status).toBe(200);
+      expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
+    });
+  });
+
   describe("per-row error surfacing", () => {
     it("GET returns 207 and includes the error count when sweep reports errors > 0", async () => {
       setEnv({
