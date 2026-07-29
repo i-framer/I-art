@@ -1,9 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
 import { requirePlatformAdmin } from "@/lib/platform-admin";
+import {
+  resolveSlackChannel,
+  sendBillingAlertSlackNotification,
+} from "@/lib/slack";
 
 /**
  * Toggle a tenant's billing_exempt flag (comp/uncomp an account).
@@ -57,4 +61,90 @@ export async function dismissBillingAlert(alertId: string): Promise<void> {
   }
 
   revalidatePath("/platform");
+}
+
+/**
+ * Replay all unresolved billing alerts whose Slack post previously failed.
+ *
+ * For each alert where slackPostFailed IS NOT NULL and dismissedAt IS NULL,
+ * this re-attempts sendBillingAlertSlackNotification. On success the
+ * slackPostFailed timestamp is cleared so the alert is no longer highlighted
+ * in the billing panel.
+ *
+ * Platform-admin only.
+ *
+ * Returns counts so the caller can surface a summary to the operator.
+ */
+export async function replayFailedSlackAlerts(): Promise<{
+  replayed: number;
+  failed: number;
+  skipped: number;
+}> {
+  await requirePlatformAdmin();
+
+  const pending = await db
+    .select()
+    .from(stripeAlertsTable)
+    .where(
+      and(
+        isNotNull(stripeAlertsTable.slackPostFailed),
+        isNull(stripeAlertsTable.dismissedAt),
+      ),
+    );
+
+  let replayed = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const alert of pending) {
+    // Check channel resolution before attempting a post so that alerts where
+    // Slack is not configured are counted as skipped (not replayed), and their
+    // slackPostFailed flag is preserved for when a channel is eventually set.
+    const channel = resolveSlackChannel(alert.eventType);
+    if (!channel) {
+      skipped++;
+      continue;
+    }
+
+    let result;
+    try {
+      result = await sendBillingAlertSlackNotification({
+        stripeEventId: alert.stripeEventId,
+        eventType: alert.eventType,
+        customerId: alert.customerId,
+        subscriptionId: alert.subscriptionId,
+        reason: alert.reason,
+      });
+    } catch (err) {
+      console.error(
+        `[Slack replay] Unexpected error for alertId=${alert.id}:`,
+        (err as any)?.message ?? String(err),
+      );
+      failed++;
+      continue;
+    }
+
+    if (result.ok) {
+      // Clear the failure flag so this alert is no longer highlighted.
+      try {
+        await db
+          .update(stripeAlertsTable)
+          .set({ slackPostFailed: null })
+          .where(eq(stripeAlertsTable.id, alert.id));
+      } catch (updateErr) {
+        console.error(
+          `[Slack replay] Failed to clear slackPostFailed for alertId=${alert.id}:`,
+          (updateErr as any)?.message ?? String(updateErr),
+        );
+        // The message was delivered even if the DB flag wasn't cleared.
+        // It will appear as a harmless duplicate on the next replay attempt.
+      }
+      replayed++;
+    } else {
+      failed++;
+    }
+  }
+
+  revalidatePath("/platform");
+  return { replayed, failed, skipped };
 }

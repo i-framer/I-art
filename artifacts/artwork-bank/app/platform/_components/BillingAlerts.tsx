@@ -1,8 +1,15 @@
 "use client";
 
-import { useTransition } from "react";
-import { AlertTriangle, CheckCircle2, ExternalLink, X } from "lucide-react";
-import { dismissBillingAlert } from "../actions";
+import { useTransition, useState } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ExternalLink,
+  RefreshCw,
+  X,
+  Wifi,
+} from "lucide-react";
+import { dismissBillingAlert, replayFailedSlackAlerts } from "../actions";
 import type { StripeAlert } from "@workspace/db";
 
 interface Props {
@@ -10,6 +17,22 @@ interface Props {
 }
 
 export function BillingAlerts({ alerts }: Props) {
+  const slackFailureCount = alerts.filter((a) => a.slackPostFailed).length;
+  const [replayPending, startReplayTransition] = useTransition();
+  const [replayResult, setReplayResult] = useState<{
+    replayed: number;
+    failed: number;
+    skipped: number;
+  } | null>(null);
+
+  const handleReplay = () => {
+    setReplayResult(null);
+    startReplayTransition(async () => {
+      const result = await replayFailedSlackAlerts();
+      setReplayResult(result);
+    });
+  };
+
   return (
     <section className="mt-10">
       <div className="flex items-center gap-2 mb-3">
@@ -24,7 +47,54 @@ export function BillingAlerts({ alerts }: Props) {
             {alerts.length} unresolved
           </span>
         )}
+        {slackFailureCount > 0 && (
+          <button
+            onClick={handleReplay}
+            disabled={replayPending}
+            className="flex items-center gap-1.5 rounded-lg bg-stone-800 px-3 py-1 text-xs font-medium text-white hover:bg-stone-700 transition-colors disabled:opacity-50"
+            title="Re-post failed Slack notifications"
+          >
+            <RefreshCw
+              className={`h-3 w-3 ${replayPending ? "animate-spin" : ""}`}
+            />
+            {replayPending
+              ? "Replaying…"
+              : `Replay ${slackFailureCount} Slack failure${slackFailureCount === 1 ? "" : "s"}`}
+          </button>
+        )}
       </div>
+
+      {replayResult && (
+        <div
+          className={`mb-4 rounded-lg border px-4 py-2.5 text-xs ${
+            replayResult.failed > 0
+              ? "border-red-200 bg-red-50 text-red-700"
+              : "border-emerald-200 bg-emerald-50 text-emerald-700"
+          }`}
+        >
+          {replayResult.replayed > 0 && (
+            <span className="mr-3">
+              ✓ {replayResult.replayed} alert
+              {replayResult.replayed === 1 ? "" : "s"} replayed to Slack
+            </span>
+          )}
+          {replayResult.failed > 0 && (
+            <span className="mr-3">
+              ✗ {replayResult.failed} still failing — Slack may still be down
+            </span>
+          )}
+          {replayResult.skipped > 0 && (
+            <span>
+              {replayResult.skipped} skipped — no Slack channel configured
+            </span>
+          )}
+          {replayResult.replayed === 0 &&
+            replayResult.failed === 0 &&
+            replayResult.skipped === 0 && (
+              <span>No pending Slack failures found.</span>
+            )}
+        </div>
+      )}
 
       {alerts.length === 0 ? (
         <p className="text-xs text-stone-500">
@@ -85,6 +155,12 @@ function AlertRow({ alert }: { alert: StripeAlert }) {
               {alert.stripeEventId}
               <ExternalLink className="h-3 w-3" />
             </a>
+            {alert.slackPostFailed && (
+              <span className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                <Wifi className="h-3 w-3" />
+                Slack failed
+              </span>
+            )}
           </div>
           <div className="text-xs text-stone-500 space-y-0.5">
             {alert.customerId && (
