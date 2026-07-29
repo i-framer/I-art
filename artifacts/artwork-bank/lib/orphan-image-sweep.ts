@@ -16,7 +16,7 @@
 import { db } from "@workspace/db";
 import { artworkImagesTable, artworksTable } from "@workspace/db";
 import { inArray } from "drizzle-orm";
-import { BlobNotFoundError } from "@vercel/blob";
+import { BlobNotFoundError, BlobError } from "@vercel/blob";
 import { deleteObject } from "@/lib/object-storage";
 
 export interface OrphanSweepResult {
@@ -88,12 +88,19 @@ export async function sweepOrphanedImageFiles(): Promise<OrphanSweepResult> {
       // @vercel/blob throws BlobNotFoundError whose message is
       // "Vercel Blob: The requested blob does not exist" — no "404" substring
       // and no "not found" substring — so we check instanceof explicitly.
+      //
+      // Other BlobError subclasses (BlobStoreNotFoundError, BlobAccessError,
+      // etc.) indicate a real misconfiguration or infrastructure problem and
+      // must NOT be silenced as "file already gone".  We therefore short-circuit
+      // on any BlobError that is not a BlobNotFoundError before falling through
+      // to the generic regex checks.
       const is404 =
         err instanceof BlobNotFoundError ||
-        (err instanceof Error && "status" in err && (err as { status: unknown }).status === 404) ||
-        /\b404\b/.test(msg) ||
-        /not found/i.test(msg) ||
-        /does not exist/i.test(msg);
+        (!(err instanceof BlobError) &&
+          ((err instanceof Error && "status" in err && (err as { status: unknown }).status === 404) ||
+            /\b404\b/.test(msg) ||
+            /not found/i.test(msg) ||
+            /does not exist/i.test(msg)));
       if (is404) {
         storageOk = true;
         result.deleted++;

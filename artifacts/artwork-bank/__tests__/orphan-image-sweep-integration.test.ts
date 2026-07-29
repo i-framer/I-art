@@ -362,6 +362,47 @@ describe("sweepOrphanedImageFiles() — integration (real DB)", () => {
     if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
   });
 
+  it("counts a BlobStoreNotFoundError as errors=1, not errors=0", async () => {
+    // BlobStoreNotFoundError means the storage store itself is misconfigured —
+    // a very different problem from "file already gone".  It must NOT be
+    // silenced as a 404; it must surface as a real error so operators notice.
+    const { BlobStoreNotFoundError } = await import("@vercel/blob");
+
+    const tenantId = await createTenant();
+    const ghostArtworkId = uid();
+    const { id: orphanId, objectPath } = await insertOrphanImageRow(
+      tenantId,
+      ghostArtworkId,
+    );
+
+    vi.mocked(deleteObject).mockRejectedValueOnce(new BlobStoreNotFoundError());
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await sweepOrphanedImageFiles();
+
+    // Must be counted as a real error, not a silent 404
+    expect(result.errors).toBeGreaterThanOrEqual(1);
+    expect(result.failedPaths).toContain(objectPath);
+
+    // Must NOT be counted as a successful deletion
+    // (We can't assert deleted===0 because other rows in the DB may have
+    // succeeded, but the specific path must not appear as a deletion.)
+    // The failedPaths assertion above already confirms it was treated as error.
+
+    errSpy.mockRestore();
+
+    // The DB row must still have been removed so the next sweep doesn't retry
+    const remaining = await db
+      .select({ id: artworkImagesTable.id })
+      .from(artworkImagesTable)
+      .where(eq(artworkImagesTable.id, orphanId));
+    expect(remaining).toHaveLength(0);
+
+    // Remove from cleanup list — already gone
+    const idx = insertedOrphanImageIds.indexOf(orphanId);
+    if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
+  });
+
   it("records an error but continues and still removes the DB row when deleteObject throws", async () => {
     const tenantId = await createTenant();
     const ghostArtworkId = uid();
