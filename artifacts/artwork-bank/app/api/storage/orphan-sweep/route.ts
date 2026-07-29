@@ -9,7 +9,10 @@
  *
  * When ORPHAN_SWEEP_SECRET is set, requests must supply it as a Bearer token:
  *   Authorization: Bearer <secret>
- * When no secret is configured the endpoint is open (development convenience).
+ * When no secret is configured the endpoint is open in development. In
+ * production (NODE_ENV === "production") at least one of ORPHAN_SWEEP_SECRET
+ * or CRON_SECRET must be set — an unconfigured production deployment returns
+ * 403 to prevent strangers from triggering the sweep.
  */
 import { NextResponse } from "next/server";
 import { sweepOrphanedImageFiles } from "@/lib/orphan-image-sweep";
@@ -17,14 +20,43 @@ import { sweepOrphanedImageFiles } from "@/lib/orphan-image-sweep";
 export const dynamic = "force-dynamic";
 
 function isAuthorized(request: Request): boolean {
-  const secret = process.env.ORPHAN_SWEEP_SECRET;
-  if (!secret) return true; // no secret configured — open (dev)
+  // Accept the sweep secret or Vercel's CRON_SECRET (Vercel cron sends
+  // "Authorization: Bearer $CRON_SECRET" and can only issue GET requests).
+  const secrets = [
+    process.env.ORPHAN_SWEEP_SECRET,
+    process.env.CRON_SECRET,
+  ].filter(Boolean);
+
+  if (secrets.length === 0) {
+    // In production, refuse to run open — the operator must configure a secret.
+    if (process.env.NODE_ENV === "production") return false;
+    // In development/test, allow open access for convenience.
+    return true;
+  }
+
   const auth = request.headers.get("authorization");
-  return auth === `Bearer ${secret}`;
+  return secrets.some((s) => auth === `Bearer ${s}`);
 }
 
 async function runSweep(request: Request) {
   if (!isAuthorized(request)) {
+    const secrets = [
+      process.env.ORPHAN_SWEEP_SECRET,
+      process.env.CRON_SECRET,
+    ].filter(Boolean);
+    if (secrets.length === 0 && process.env.NODE_ENV === "production") {
+      console.error(
+        "[orphan-sweep] Endpoint blocked: no ORPHAN_SWEEP_SECRET or CRON_SECRET " +
+          "is configured. Set at least one to enable this endpoint in production."
+      );
+      return NextResponse.json(
+        {
+          error:
+            "Forbidden: ORPHAN_SWEEP_SECRET (or CRON_SECRET) must be set in production.",
+        },
+        { status: 403 }
+      );
+    }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
