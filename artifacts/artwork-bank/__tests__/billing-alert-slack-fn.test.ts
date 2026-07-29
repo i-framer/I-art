@@ -285,6 +285,122 @@ describe("sendBillingAlertSlackNotification: error resilience", () => {
   });
 });
 
+describe("resolveSlackChannel: empty / whitespace-only overrides", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.SLACK_BILLING_ALERTS_CHANNEL;
+    delete process.env.SLACK_CHANNEL_INVOICE_FAILED;
+    delete process.env.SLACK_CHANNEL_SUBSCRIPTION_EVENTS;
+  });
+
+  afterEach(() => {
+    delete process.env.SLACK_BILLING_ALERTS_CHANNEL;
+    delete process.env.SLACK_CHANNEL_INVOICE_FAILED;
+    delete process.env.SLACK_CHANNEL_SUBSCRIPTION_EVENTS;
+  });
+
+  it("falls back to SLACK_BILLING_ALERTS_CHANNEL when SLACK_CHANNEL_INVOICE_FAILED is an empty string", async () => {
+    process.env.SLACK_CHANNEL_INVOICE_FAILED = "";
+    process.env.SLACK_BILLING_ALERTS_CHANNEL = "#billing-alerts";
+    mockProxy.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await sendBillingAlertSlackNotification({ ...baseArgs, eventType: "invoice.payment_failed" });
+
+    const body = JSON.parse(mockProxy.mock.calls[0][2].body as string);
+    expect(body.channel).toBe("#billing-alerts");
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("SLACK_CHANNEL_INVOICE_FAILED"));
+    consoleSpy.mockRestore();
+  });
+
+  it("falls back to SLACK_BILLING_ALERTS_CHANNEL when SLACK_CHANNEL_INVOICE_FAILED is whitespace-only", async () => {
+    process.env.SLACK_CHANNEL_INVOICE_FAILED = "   ";
+    process.env.SLACK_BILLING_ALERTS_CHANNEL = "#billing-alerts";
+    mockProxy.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await sendBillingAlertSlackNotification({ ...baseArgs, eventType: "invoice.payment_failed" });
+
+    const body = JSON.parse(mockProxy.mock.calls[0][2].body as string);
+    expect(body.channel).toBe("#billing-alerts");
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("SLACK_CHANNEL_INVOICE_FAILED"));
+    consoleSpy.mockRestore();
+  });
+
+  it("falls back to SLACK_BILLING_ALERTS_CHANNEL when SLACK_CHANNEL_SUBSCRIPTION_EVENTS is an empty string", async () => {
+    process.env.SLACK_CHANNEL_SUBSCRIPTION_EVENTS = "";
+    process.env.SLACK_BILLING_ALERTS_CHANNEL = "#billing-alerts";
+    mockProxy.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await sendBillingAlertSlackNotification({ ...baseArgs, eventType: "customer.subscription.updated" });
+
+    const body = JSON.parse(mockProxy.mock.calls[0][2].body as string);
+    expect(body.channel).toBe("#billing-alerts");
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("SLACK_CHANNEL_SUBSCRIPTION_EVENTS"));
+    consoleSpy.mockRestore();
+  });
+
+  it("falls back to SLACK_BILLING_ALERTS_CHANNEL when SLACK_CHANNEL_SUBSCRIPTION_EVENTS is whitespace-only", async () => {
+    process.env.SLACK_CHANNEL_SUBSCRIPTION_EVENTS = "  ";
+    process.env.SLACK_BILLING_ALERTS_CHANNEL = "#billing-alerts";
+    mockProxy.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await sendBillingAlertSlackNotification({ ...baseArgs, eventType: "customer.subscription.deleted" });
+
+    const body = JSON.parse(mockProxy.mock.calls[0][2].body as string);
+    expect(body.channel).toBe("#billing-alerts");
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("SLACK_CHANNEL_SUBSCRIPTION_EVENTS"));
+    consoleSpy.mockRestore();
+  });
+
+  it("is a no-op when SLACK_BILLING_ALERTS_CHANNEL is an empty string", async () => {
+    process.env.SLACK_BILLING_ALERTS_CHANNEL = "";
+
+    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await sendBillingAlertSlackNotification(baseArgs);
+
+    expect(result).toMatchObject({ ok: true });
+    expect(mockProxy).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("SLACK_BILLING_ALERTS_CHANNEL"));
+    consoleSpy.mockRestore();
+  });
+
+  it("is a no-op when SLACK_BILLING_ALERTS_CHANNEL is whitespace-only", async () => {
+    process.env.SLACK_BILLING_ALERTS_CHANNEL = "   ";
+
+    const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await sendBillingAlertSlackNotification(baseArgs);
+
+    expect(result).toMatchObject({ ok: true });
+    expect(mockProxy).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("SLACK_BILLING_ALERTS_CHANNEL"));
+    consoleSpy.mockRestore();
+  });
+
+  it("logs a distinct console.warn (not just console.log) for an empty-string fallback channel", async () => {
+    process.env.SLACK_BILLING_ALERTS_CHANNEL = "";
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await sendBillingAlertSlackNotification(baseArgs);
+
+    // The misconfiguration must surface as a console.warn with an explicit message,
+    // not merely a silent no-op, so an operator can grep for it in logs.
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("empty or whitespace-only"));
+
+    vi.restoreAllMocks();
+  });
+});
+
 describe("sendBillingAlertSlackNotification: per-event-type channel routing", () => {
   it("uses SLACK_CHANNEL_INVOICE_FAILED for invoice.payment_failed events", async () => {
     process.env.SLACK_CHANNEL_INVOICE_FAILED = "#invoice-failures";

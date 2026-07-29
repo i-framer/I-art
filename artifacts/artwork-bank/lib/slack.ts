@@ -20,9 +20,9 @@ export function resolveSlackChannel(eventType: string): string | undefined {
   if (eventType === "invoice.payment_failed") {
     const override = process.env.SLACK_CHANNEL_INVOICE_FAILED;
     if (override !== undefined) {
-      if (override === "") {
+      if (override.trim() === "") {
         console.warn(
-          "[Billing alert Slack] SLACK_CHANNEL_INVOICE_FAILED is set to an empty string — " +
+          "[Billing alert Slack] SLACK_CHANNEL_INVOICE_FAILED is set to an empty or whitespace-only string — " +
             "falling back to SLACK_BILLING_ALERTS_CHANNEL. " +
             "Remove the variable or give it a non-empty value to suppress this warning.",
         );
@@ -35,9 +35,9 @@ export function resolveSlackChannel(eventType: string): string | undefined {
   if (eventType.startsWith("customer.subscription.")) {
     const override = process.env.SLACK_CHANNEL_SUBSCRIPTION_EVENTS;
     if (override !== undefined) {
-      if (override === "") {
+      if (override.trim() === "") {
         console.warn(
-          "[Billing alert Slack] SLACK_CHANNEL_SUBSCRIPTION_EVENTS is set to an empty string — " +
+          "[Billing alert Slack] SLACK_CHANNEL_SUBSCRIPTION_EVENTS is set to an empty or whitespace-only string — " +
             "falling back to SLACK_BILLING_ALERTS_CHANNEL. " +
             "Remove the variable or give it a non-empty value to suppress this warning.",
         );
@@ -47,7 +47,16 @@ export function resolveSlackChannel(eventType: string): string | undefined {
     }
   }
 
-  return process.env.SLACK_BILLING_ALERTS_CHANNEL;
+  const fallback = process.env.SLACK_BILLING_ALERTS_CHANNEL;
+  if (fallback !== undefined && fallback.trim() === "") {
+    console.warn(
+      "[Billing alert Slack] SLACK_BILLING_ALERTS_CHANNEL is set to an empty or whitespace-only string — " +
+        "Slack notifications will be skipped. " +
+        "Remove the variable or give it a non-empty channel name to suppress this warning.",
+    );
+    return undefined;
+  }
+  return fallback;
 }
 
 /**
