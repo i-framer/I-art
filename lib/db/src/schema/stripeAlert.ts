@@ -24,6 +24,13 @@ export const stripeAlertsTable = pgTable(
     reason: text("reason").notNull(),
     /** When the operator dismissed/resolved this alert. Null = unresolved. */
     dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    /**
+     * Set when the Slack billing-alert post failed (auth error, network error,
+     * etc.). Null means Slack either succeeded or was not configured.
+     * Operators can query this column to find alerts that were never delivered
+     * to Slack (e.g. after a token rotation) and decide whether to re-send.
+     */
+    slackPostFailed: timestamp("slack_post_failed", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

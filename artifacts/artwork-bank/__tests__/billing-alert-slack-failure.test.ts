@@ -182,6 +182,21 @@ describe("Slack auth failure escalation — subscription events", () => {
     );
   });
 
+  it("persists slackPostFailed on the alert row when Slack returns { ok: false }", async () => {
+    const { db } = await import("@workspace/db");
+    const { stripeAlertsTable } = await import("@workspace/db");
+    mockSendBillingAlertSlack.mockResolvedValueOnce({
+      ok: false,
+      error: "invalid_auth",
+    });
+
+    await postWebhook(subscriptionEvent("evt_slack_persist_sub_001"));
+
+    // db.update must be called with stripeAlertsTable to persist slackPostFailed.
+    // (It is also called with tenantsTable for the tenant lookup — both calls are fine.)
+    expect(db.update).toHaveBeenCalledWith(stripeAlertsTable);
+  });
+
   it("passes slackFailure when Slack returns a non-auth HTTP error", async () => {
     mockSendBillingAlertSlack.mockResolvedValueOnce({
       ok: false,
@@ -215,6 +230,25 @@ describe("Slack auth failure escalation — subscription events", () => {
     // slackFailure must be absent (or undefined) when Slack succeeded
     const callArgs = mockSendBillingAlertEmail.mock.calls[0][0];
     expect(callArgs.slackFailure).toBeUndefined();
+  });
+
+  it("does NOT call db.update with slackPostFailed when Slack succeeds", async () => {
+    const { db } = await import("@workspace/db");
+    mockSendBillingAlertSlack.mockResolvedValueOnce({ ok: true });
+
+    await postWebhook(subscriptionEvent("evt_slack_ok_no_persist_sub_001"));
+
+    // db.update may be called for the tenant update, but must NOT be called
+    // with a payload containing slackPostFailed
+    const updateCalls = (db.update as ReturnType<typeof vi.fn>).mock.calls;
+    for (const call of updateCalls) {
+      // Each call is db.update(table); get the set() args
+      const setResult = (db.update as ReturnType<typeof vi.fn>).mock.results[updateCalls.indexOf(call)].value;
+      if (setResult?.set?.mock?.calls?.length) {
+        const setArg = setResult.set.mock.calls[0][0];
+        expect(setArg?.slackPostFailed).toBeUndefined();
+      }
+    }
   });
 });
 

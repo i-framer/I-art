@@ -273,6 +273,18 @@ async function handleSubscriptionEvent(
           console.error("[webhook] Failed to send billing alert Slack message:", slackErr);
           slackFailure = (slackErr as any)?.message ?? String(slackErr);
         }
+        // Persist the Slack failure timestamp so operators and the smoke script
+        // can detect missed deliveries without tailing server logs.
+        if (slackFailure) {
+          try {
+            await db
+              .update(stripeAlertsTable)
+              .set({ slackPostFailed: new Date() })
+              .where(eq(stripeAlertsTable.stripeEventId, eventId));
+          } catch (updateErr) {
+            console.error("[webhook] Failed to persist slackPostFailed flag:", updateErr);
+          }
+        }
         try {
           await sendBillingAlertNotification({
             stripeEventId: eventId,
@@ -374,6 +386,18 @@ async function handleInvoicePaymentFailed(
         } catch (slackErr) {
           console.error("[webhook] Failed to send billing alert Slack message:", slackErr);
           slackFailure = (slackErr as any)?.message ?? String(slackErr);
+        }
+        // Persist the Slack failure timestamp so operators and the smoke script
+        // can detect missed deliveries without tailing server logs.
+        if (slackFailure) {
+          try {
+            await db
+              .update(stripeAlertsTable)
+              .set({ slackPostFailed: new Date() })
+              .where(eq(stripeAlertsTable.stripeEventId, eventId));
+          } catch (updateErr) {
+            console.error("[webhook] Failed to persist slackPostFailed flag:", updateErr);
+          }
         }
         try {
           await sendBillingAlertNotification({

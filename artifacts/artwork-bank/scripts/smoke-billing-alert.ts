@@ -213,7 +213,24 @@ async function main() {
     process.exit(1);
   }
   console.log(`OK    Alert row inserted (id: ${alert.id})`);
-  console.log(`      reason: ${alert.reason}\n`);
+  console.log(`      reason: ${alert.reason}`);
+
+  // Report the Slack delivery signal stored on the row.
+  if (alert.slackPostFailed) {
+    console.log(
+      `WARN  slackPostFailed is set on the alert row (${alert.slackPostFailed.toISOString()}).`,
+    );
+    console.log(
+      "      The Slack post failed — the operator was notified via the fallback email.",
+    );
+    console.log(
+      "      After re-connecting the Slack integration, re-run this script to verify delivery.\n",
+    );
+  } else {
+    console.log(
+      "OK    slackPostFailed is null — Slack was either skipped (no channel set) or delivered successfully.\n",
+    );
+  }
 
   // 3. Report email-send status
   console.log("Step 3: Email delivery check…");
