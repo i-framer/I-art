@@ -225,4 +225,85 @@ describe("orphan-sweep route integration — auth guard with real Request object
       expect(sweepOrphanedImageFiles).toHaveBeenCalledOnce();
     });
   });
+
+  describe("both ORPHAN_SWEEP_SECRET and CRON_SECRET set — each independently admits the right caller", () => {
+    it("GET with ORPHAN_SWEEP_SECRET token returns 200 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        ORPHAN_SWEEP_SECRET: "sweep-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      const res = await GET(realRequest("GET", "Bearer sweep-secret-aaa"));
+
+      expect(res.status).toBe(200);
+      expect(sweepOrphanedImageFiles).toHaveBeenCalledOnce();
+    });
+
+    it("GET with CRON_SECRET token returns 200 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        ORPHAN_SWEEP_SECRET: "sweep-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      const res = await GET(realRequest("GET", "Bearer cron-secret-bbb"));
+
+      expect(res.status).toBe(200);
+      expect(sweepOrphanedImageFiles).toHaveBeenCalledOnce();
+    });
+
+    it("GET with neither token returns 401 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        ORPHAN_SWEEP_SECRET: "sweep-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      const res = await GET(realRequest("GET", "Bearer wrong-secret-zzz"));
+
+      expect(res.status).toBe(401);
+      expect((res.body as any).error).toMatch(/Unauthorized/i);
+      expect(sweepOrphanedImageFiles).not.toHaveBeenCalled();
+    });
+
+    it("POST with ORPHAN_SWEEP_SECRET token returns 200 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        ORPHAN_SWEEP_SECRET: "sweep-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      const res = await POST(realRequest("POST", "Bearer sweep-secret-aaa"));
+
+      expect(res.status).toBe(200);
+      expect(sweepOrphanedImageFiles).toHaveBeenCalledOnce();
+    });
+
+    it("POST with CRON_SECRET token returns 200 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        ORPHAN_SWEEP_SECRET: "sweep-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      const res = await POST(realRequest("POST", "Bearer cron-secret-bbb"));
+
+      expect(res.status).toBe(200);
+      expect(sweepOrphanedImageFiles).toHaveBeenCalledOnce();
+    });
+
+    it("POST with neither token returns 401 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        ORPHAN_SWEEP_SECRET: "sweep-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      const res = await POST(realRequest("POST", "Bearer wrong-secret-zzz"));
+
+      expect(res.status).toBe(401);
+      expect(sweepOrphanedImageFiles).not.toHaveBeenCalled();
+    });
+  });
 });

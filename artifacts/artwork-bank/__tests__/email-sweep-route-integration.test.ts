@@ -224,4 +224,85 @@ describe("email-sweep route integration — auth guard with real Request objects
       expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
     });
   });
+
+  describe("both EMAIL_SWEEP_SECRET and CRON_SECRET set — each independently admits the right caller", () => {
+    it("GET with EMAIL_SWEEP_SECRET token returns 200 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        EMAIL_SWEEP_SECRET: "email-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      const res = await GET(realRequest("GET", "Bearer email-secret-aaa"));
+
+      expect(res.status).toBe(200);
+      expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
+    });
+
+    it("GET with CRON_SECRET token returns 200 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        EMAIL_SWEEP_SECRET: "email-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      const res = await GET(realRequest("GET", "Bearer cron-secret-bbb"));
+
+      expect(res.status).toBe(200);
+      expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
+    });
+
+    it("GET with neither token returns 401 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        EMAIL_SWEEP_SECRET: "email-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      const res = await GET(realRequest("GET", "Bearer wrong-secret-zzz"));
+
+      expect(res.status).toBe(401);
+      expect((res.body as any).error).toMatch(/Unauthorized/i);
+      expect(sweepUnsentConfirmationEmails).not.toHaveBeenCalled();
+    });
+
+    it("POST with EMAIL_SWEEP_SECRET token returns 200 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        EMAIL_SWEEP_SECRET: "email-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      const res = await POST(realRequest("POST", "Bearer email-secret-aaa"));
+
+      expect(res.status).toBe(200);
+      expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
+    });
+
+    it("POST with CRON_SECRET token returns 200 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        EMAIL_SWEEP_SECRET: "email-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      const res = await POST(realRequest("POST", "Bearer cron-secret-bbb"));
+
+      expect(res.status).toBe(200);
+      expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
+    });
+
+    it("POST with neither token returns 401 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        EMAIL_SWEEP_SECRET: "email-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      const res = await POST(realRequest("POST", "Bearer wrong-secret-zzz"));
+
+      expect(res.status).toBe(401);
+      expect(sweepUnsentConfirmationEmails).not.toHaveBeenCalled();
+    });
+  });
 });
