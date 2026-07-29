@@ -16,6 +16,7 @@
 import { db } from "@workspace/db";
 import { artworkImagesTable, artworksTable } from "@workspace/db";
 import { inArray } from "drizzle-orm";
+import { BlobNotFoundError } from "@vercel/blob";
 import { deleteObject } from "@/lib/object-storage";
 
 export interface OrphanSweepResult {
@@ -83,10 +84,16 @@ export async function sweepOrphanedImageFiles(): Promise<OrphanSweepResult> {
       // surface a 404 as a thrown error.  The file is already gone — treat
       // this as a successful deletion so the DB row is cleaned up and the
       // error count stays accurate.
+      //
+      // @vercel/blob throws BlobNotFoundError whose message is
+      // "Vercel Blob: The requested blob does not exist" — no "404" substring
+      // and no "not found" substring — so we check instanceof explicitly.
       const is404 =
+        err instanceof BlobNotFoundError ||
         (err instanceof Error && "status" in err && (err as { status: unknown }).status === 404) ||
         /\b404\b/.test(msg) ||
-        /not found/i.test(msg);
+        /not found/i.test(msg) ||
+        /does not exist/i.test(msg);
       if (is404) {
         storageOk = true;
         result.deleted++;

@@ -319,6 +319,49 @@ describe("sweepOrphanedImageFiles() — integration (real DB)", () => {
     if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
   });
 
+  it("treats a BlobNotFoundError from @vercel/blob as success: errors=0, deleted=1, DB row removed", async () => {
+    // This test uses the real BlobNotFoundError class from @vercel/blob to
+    // confirm the sweep handles the SDK-specific error shape, not just a
+    // generic Error whose message happens to contain "404".
+    //
+    // BlobNotFoundError message is "The requested blob does not exist" —
+    // no "404" in the string, so the sweep must rely on the /not found/i
+    // branch of its is404 check (or a future instanceof guard).
+    const { BlobNotFoundError } = await import("@vercel/blob");
+
+    const tenantId = await createTenant();
+    const ghostArtworkId = uid();
+    const { id: orphanId, objectPath } = await insertOrphanImageRow(
+      tenantId,
+      ghostArtworkId,
+    );
+
+    vi.mocked(deleteObject).mockRejectedValueOnce(new BlobNotFoundError());
+
+    const result = await sweepOrphanedImageFiles();
+
+    // A BlobNotFoundError means the blob is already gone — not a real error
+    expect(result.errors).toBe(0);
+    expect(result.failedPaths).not.toContain(objectPath);
+
+    // Must still count as deleted (blob is gone either way)
+    expect(result.deleted).toBeGreaterThanOrEqual(1);
+
+    // deleteObject was called for our specific orphan's objectPath
+    expect(deleteObject).toHaveBeenCalledWith(objectPath);
+
+    // The DB row must have been removed
+    const remaining = await db
+      .select({ id: artworkImagesTable.id })
+      .from(artworkImagesTable)
+      .where(eq(artworkImagesTable.id, orphanId));
+    expect(remaining).toHaveLength(0);
+
+    // Remove from cleanup list — already gone
+    const idx = insertedOrphanImageIds.indexOf(orphanId);
+    if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
+  });
+
   it("records an error but continues and still removes the DB row when deleteObject throws", async () => {
     const tenantId = await createTenant();
     const ghostArtworkId = uid();
