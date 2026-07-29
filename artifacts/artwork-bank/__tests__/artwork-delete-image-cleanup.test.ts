@@ -32,7 +32,7 @@ const tables = vi.hoisted(() => ({
   artworkCategoriesTable: { id: "categories.id", tenantId: "categories.tenantId" },
 }));
 
-const imagesFindMany = vi.hoisted(() => vi.fn(async () => []));
+const imagesFindMany = vi.hoisted(() => vi.fn(async (_opts?: unknown): Promise<any[]> => []));
 
 vi.mock("@workspace/db", () => ({
   db: {
