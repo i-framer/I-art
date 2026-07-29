@@ -159,6 +159,27 @@ describe("SMTP payload mapping", () => {
   });
 });
 
+describe("SMTP-only (no Resend) order confirmation", () => {
+  it("sends order confirmation via SMTP when only SMTP vars are set and Resend is absent", async () => {
+    process.env.SMTP_HOST = "smtp.example.com";
+    process.env.EMAIL_FROM = "orders@i-art.com.au";
+    // Deliberately leave RESEND_API_KEY unset — this is the scenario under test.
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await sendOrderConfirmation({
+      buyerEmail: "buyer@example.com",
+      buyerName: "Buyer",
+      artworkTitle: "Sunset",
+      fulfillmentType: "SHIPPING",
+      orderRef: "ORD-42",
+      tenantName: "Jane's Gallery",
+    });
+
+    expect(sendMailMock).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("SMTP failure propagation", () => {
   it("throwing senders wrap SMTP failures in EmailSendError", async () => {
     process.env.SMTP_HOST = "smtp.example.com";
