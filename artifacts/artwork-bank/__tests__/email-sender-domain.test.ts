@@ -417,3 +417,156 @@ describe("sendInquiryReply: Resend error handling", () => {
     await expect(sendInquiryReply(replyArgs)).rejects.toThrow("network failure");
   });
 });
+
+// ===========================================================================
+// sendOrderStatusUpdate — Resend error handling (unverified domain / server error)
+// ===========================================================================
+
+describe("sendOrderStatusUpdate: Resend error handling", () => {
+  beforeEach(() => {
+    clearOrderVars();
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.EMAIL_FROM_ORDERS = "orders@unverified-domain.com";
+  });
+  afterEach(() => {
+    clearOrderVars();
+    vi.restoreAllMocks();
+  });
+
+  it("throws EmailSendError when Resend responds 422 (domain not verified)", async () => {
+    mockFetchError(422, JSON.stringify({ message: "The domain is not verified." }));
+    await expect(sendOrderStatusUpdate(statusUpdateArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("thrown EmailSendError includes the HTTP status code for 422", async () => {
+    mockFetchError(422, JSON.stringify({ message: "The domain is not verified." }));
+    await expect(sendOrderStatusUpdate(statusUpdateArgs)).rejects.toThrow("422");
+  });
+
+  it("throws EmailSendError when Resend responds 403 (invalid API key)", async () => {
+    mockFetchError(403, JSON.stringify({ message: "API key is invalid." }));
+    await expect(sendOrderStatusUpdate(statusUpdateArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("thrown EmailSendError includes the HTTP status code for 403", async () => {
+    mockFetchError(403, JSON.stringify({ message: "API key is invalid." }));
+    await expect(sendOrderStatusUpdate(statusUpdateArgs)).rejects.toThrow("403");
+  });
+
+  it("throws EmailSendError when Resend responds 500 (server error)", async () => {
+    mockFetchError(500, "Internal Server Error");
+    await expect(sendOrderStatusUpdate(statusUpdateArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("thrown EmailSendError includes the HTTP status code for 500", async () => {
+    mockFetchError(500, "Internal Server Error");
+    await expect(sendOrderStatusUpdate(statusUpdateArgs)).rejects.toThrow("500");
+  });
+
+  it("throws EmailSendError when fetch itself throws a network error", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network failure"));
+    await expect(sendOrderStatusUpdate(statusUpdateArgs)).rejects.toThrow(EmailSendError);
+  });
+});
+
+// ===========================================================================
+// sendOrderConfirmation — Resend error handling (unverified domain / server error)
+// ===========================================================================
+
+describe("sendOrderConfirmation: Resend error handling", () => {
+  beforeEach(() => {
+    clearOrderVars();
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.EMAIL_FROM_ORDERS = "orders@unverified-domain.com";
+  });
+  afterEach(() => {
+    clearOrderVars();
+    vi.restoreAllMocks();
+  });
+
+  it("throws EmailSendError when Resend responds 422 (domain not verified)", async () => {
+    mockFetchError(422, JSON.stringify({ message: "The domain is not verified." }));
+    await expect(sendOrderConfirmation(confirmationArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("thrown EmailSendError includes the HTTP status code for 422", async () => {
+    mockFetchError(422, JSON.stringify({ message: "The domain is not verified." }));
+    await expect(sendOrderConfirmation(confirmationArgs)).rejects.toThrow("422");
+  });
+
+  it("throws EmailSendError when Resend responds 403 (invalid API key)", async () => {
+    mockFetchError(403, JSON.stringify({ message: "API key is invalid." }));
+    await expect(sendOrderConfirmation(confirmationArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("thrown EmailSendError includes the HTTP status code for 403", async () => {
+    mockFetchError(403, JSON.stringify({ message: "API key is invalid." }));
+    await expect(sendOrderConfirmation(confirmationArgs)).rejects.toThrow("403");
+  });
+
+  it("throws EmailSendError when Resend responds 500 (server error)", async () => {
+    mockFetchError(500, "Internal Server Error");
+    await expect(sendOrderConfirmation(confirmationArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("thrown EmailSendError includes the HTTP status code for 500", async () => {
+    mockFetchError(500, "Internal Server Error");
+    await expect(sendOrderConfirmation(confirmationArgs)).rejects.toThrow("500");
+  });
+
+  it("throws EmailSendError when fetch itself throws a network error", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network failure"));
+    await expect(sendOrderConfirmation(confirmationArgs)).rejects.toThrow(EmailSendError);
+  });
+});
+
+// ===========================================================================
+// sendConfirmationFailureNotice — Resend error handling (unverified domain / server error)
+// ===========================================================================
+
+describe("sendConfirmationFailureNotice: Resend error handling", () => {
+  beforeEach(() => {
+    clearOrderVars();
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.EMAIL_FROM_ORDERS = "orders@unverified-domain.com";
+  });
+  afterEach(() => {
+    clearOrderVars();
+    vi.restoreAllMocks();
+  });
+
+  it("throws EmailSendError when Resend responds 422 (domain not verified)", async () => {
+    mockFetchError(422, JSON.stringify({ message: "The domain is not verified." }));
+    await expect(sendConfirmationFailureNotice(failureNoticeArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("thrown EmailSendError includes the HTTP status code for 422", async () => {
+    mockFetchError(422, JSON.stringify({ message: "The domain is not verified." }));
+    await expect(sendConfirmationFailureNotice(failureNoticeArgs)).rejects.toThrow("422");
+  });
+
+  it("throws EmailSendError when Resend responds 403 (invalid API key)", async () => {
+    mockFetchError(403, JSON.stringify({ message: "API key is invalid." }));
+    await expect(sendConfirmationFailureNotice(failureNoticeArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("thrown EmailSendError includes the HTTP status code for 403", async () => {
+    mockFetchError(403, JSON.stringify({ message: "API key is invalid." }));
+    await expect(sendConfirmationFailureNotice(failureNoticeArgs)).rejects.toThrow("403");
+  });
+
+  it("throws EmailSendError when Resend responds 500 (server error)", async () => {
+    mockFetchError(500, "Internal Server Error");
+    await expect(sendConfirmationFailureNotice(failureNoticeArgs)).rejects.toThrow(EmailSendError);
+  });
+
+  it("thrown EmailSendError includes the HTTP status code for 500", async () => {
+    mockFetchError(500, "Internal Server Error");
+    await expect(sendConfirmationFailureNotice(failureNoticeArgs)).rejects.toThrow("500");
+  });
+
+  it("throws EmailSendError when fetch itself throws a network error", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network failure"));
+    await expect(sendConfirmationFailureNotice(failureNoticeArgs)).rejects.toThrow(EmailSendError);
+  });
+});
