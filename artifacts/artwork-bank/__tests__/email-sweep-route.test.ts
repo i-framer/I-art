@@ -22,7 +22,7 @@ vi.mock("next/server", () => ({
 // ── Mock the sweep implementation so no DB or email is touched ─────────────────
 
 const sweepUnsentConfirmationEmails = vi.hoisted(() =>
-  vi.fn().mockResolvedValue({ processed: 0, sent: 0, errors: 0 })
+  vi.fn().mockResolvedValue({ scanned: 0, sent: 0, failed: 0, skipped: 0 })
 );
 
 vi.mock("@/lib/email-sweep", () => ({
@@ -208,6 +208,66 @@ describe("email-sweep route — authentication guard", () => {
 
       expect(res.status).toBe(200);
       expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("per-row error surfacing", () => {
+    it("returns 207 and includes error count when sweep reports errors > 0", async () => {
+      setEnv({
+        NODE_ENV: "test",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: undefined,
+      });
+      sweepUnsentConfirmationEmails.mockResolvedValueOnce({
+        scanned: 3,
+        sent: 2,
+        failed: 1,
+        skipped: 0,
+      });
+
+      const res = await GET(makeRequest());
+
+      expect(res.status).toBe(207);
+      expect((res.body as any).failed).toBe(1);
+      expect((res.body as any).sent).toBe(2);
+      expect((res.body as any).scanned).toBe(3);
+    });
+
+    it("POST returns 207 when sweep reports errors > 0", async () => {
+      setEnv({
+        NODE_ENV: "test",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: undefined,
+      });
+      sweepUnsentConfirmationEmails.mockResolvedValueOnce({
+        scanned: 5,
+        sent: 3,
+        failed: 2,
+        skipped: 0,
+      });
+
+      const res = await POST(makeRequest());
+
+      expect(res.status).toBe(207);
+      expect((res.body as any).failed).toBe(2);
+    });
+
+    it("returns 200 when sweep reports zero errors", async () => {
+      setEnv({
+        NODE_ENV: "test",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: undefined,
+      });
+      sweepUnsentConfirmationEmails.mockResolvedValueOnce({
+        scanned: 4,
+        sent: 4,
+        failed: 0,
+        skipped: 0,
+      });
+
+      const res = await GET(makeRequest());
+
+      expect(res.status).toBe(200);
     });
   });
 });

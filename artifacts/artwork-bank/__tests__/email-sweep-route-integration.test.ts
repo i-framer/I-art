@@ -28,7 +28,7 @@ vi.mock("next/server", () => ({
 // ── Mock the sweep so no DB or email is touched ───────────────────────────────
 
 const sweepUnsentConfirmationEmails = vi.hoisted(() =>
-  vi.fn().mockResolvedValue({ processed: 0, sent: 0, errors: 0 }),
+  vi.fn().mockResolvedValue({ scanned: 0, sent: 0, failed: 0, skipped: 0 }),
 );
 
 vi.mock("@/lib/email-sweep", () => ({
@@ -222,6 +222,85 @@ describe("email-sweep route integration — auth guard with real Request objects
 
       expect(res.status).toBe(200);
       expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("per-row error surfacing", () => {
+    it("GET returns 207 and includes the error count when sweep reports errors > 0", async () => {
+      setEnv({
+        NODE_ENV: "test",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: undefined,
+      });
+      sweepUnsentConfirmationEmails.mockResolvedValueOnce({
+        scanned: 3,
+        sent: 2,
+        failed: 1,
+        skipped: 0,
+      });
+
+      const res = await GET(realRequest("GET"));
+
+      expect(res.status).toBe(207);
+      expect((res.body as any).failed).toBe(1);
+      expect((res.body as any).sent).toBe(2);
+      expect((res.body as any).scanned).toBe(3);
+    });
+
+    it("POST returns 207 when sweep reports errors > 0", async () => {
+      setEnv({
+        NODE_ENV: "test",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: undefined,
+      });
+      sweepUnsentConfirmationEmails.mockResolvedValueOnce({
+        scanned: 5,
+        sent: 3,
+        failed: 2,
+        skipped: 0,
+      });
+
+      const res = await POST(realRequest("POST"));
+
+      expect(res.status).toBe(207);
+      expect((res.body as any).failed).toBe(2);
+    });
+
+    it("GET returns 200 when sweep reports zero errors", async () => {
+      setEnv({
+        NODE_ENV: "test",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: undefined,
+      });
+      sweepUnsentConfirmationEmails.mockResolvedValueOnce({
+        scanned: 4,
+        sent: 4,
+        failed: 0,
+        skipped: 0,
+      });
+
+      const res = await GET(realRequest("GET"));
+
+      expect(res.status).toBe(200);
+    });
+
+    it("returns 207 even when authorized via Bearer token", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        EMAIL_SWEEP_SECRET: "my-secret",
+        CRON_SECRET: undefined,
+      });
+      sweepUnsentConfirmationEmails.mockResolvedValueOnce({
+        scanned: 10,
+        sent: 7,
+        failed: 3,
+        skipped: 0,
+      });
+
+      const res = await GET(realRequest("GET", "Bearer my-secret"));
+
+      expect(res.status).toBe(207);
+      expect((res.body as any).failed).toBe(3);
     });
   });
 

@@ -58,7 +58,10 @@ async function runSweep(request: Request) {
   try {
     const result = await sweepUnsentConfirmationEmails();
     console.log("[email-sweep] completed:", result);
-    return NextResponse.json(result);
+    // When per-row failures occurred, use 207 Multi-Status so operators are
+    // alerted even when some rows were processed successfully.
+    const status = result.failed > 0 ? 207 : 200;
+    return NextResponse.json(result, { status });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Email sweep failed:", msg);
