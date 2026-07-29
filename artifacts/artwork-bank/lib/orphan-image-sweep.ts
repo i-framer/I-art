@@ -78,11 +78,24 @@ export async function sweepOrphanedImageFiles(): Promise<OrphanSweepResult> {
       console.log(`[orphan-sweep] deleted storage object: ${row.objectPath}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      // 404-style responses are already swallowed inside deleteObject for the
-      // Replit backend; if we still get an error here it is unexpected.
-      console.error(`[orphan-sweep] failed to delete ${row.objectPath}: ${msg}`);
-      result.errors++;
-      result.failedPaths.push(row.objectPath);
+      // 404-style responses are swallowed inside deleteObject for the Replit
+      // backend, but other backends (e.g. Vercel Blob) or future changes may
+      // surface a 404 as a thrown error.  The file is already gone — treat
+      // this as a successful deletion so the DB row is cleaned up and the
+      // error count stays accurate.
+      const is404 =
+        (err instanceof Error && "status" in err && (err as { status: unknown }).status === 404) ||
+        /\b404\b/.test(msg) ||
+        /not found/i.test(msg);
+      if (is404) {
+        storageOk = true;
+        result.deleted++;
+        console.log(`[orphan-sweep] object already gone (404): ${row.objectPath}`);
+      } else {
+        console.error(`[orphan-sweep] failed to delete ${row.objectPath}: ${msg}`);
+        result.errors++;
+        result.failedPaths.push(row.objectPath);
+      }
     }
 
     // Remove the stale DB row regardless of storage outcome so a re-run

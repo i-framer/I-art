@@ -282,6 +282,43 @@ describe("sweepOrphanedImageFiles() — integration (real DB)", () => {
     expect(second.errors).toBe(0);
   });
 
+  it("treats a 404-style error from deleteObject as success: errors=0, deleted=1, DB row removed", async () => {
+    const tenantId = await createTenant();
+    const ghostArtworkId = uid();
+    const { id: orphanId, objectPath } = await insertOrphanImageRow(
+      tenantId,
+      ghostArtworkId,
+    );
+
+    // Simulate a 404 error leaking out of deleteObject (e.g. Vercel Blob or a
+    // future backend that doesn't swallow 404 internally).
+    const notFoundError = new Error("object not found (404)");
+    vi.mocked(deleteObject).mockRejectedValueOnce(notFoundError);
+
+    const result = await sweepOrphanedImageFiles();
+
+    // A 404 means the file is already gone — must NOT count as an error
+    expect(result.errors).toBe(0);
+    expect(result.failedPaths).not.toContain(objectPath);
+
+    // Must still count as deleted (file is gone, either way)
+    expect(result.deleted).toBeGreaterThanOrEqual(1);
+
+    // deleteObject was called for our specific orphan's objectPath
+    expect(deleteObject).toHaveBeenCalledWith(objectPath);
+
+    // The DB row must have been removed
+    const remaining = await db
+      .select({ id: artworkImagesTable.id })
+      .from(artworkImagesTable)
+      .where(eq(artworkImagesTable.id, orphanId));
+    expect(remaining).toHaveLength(0);
+
+    // Remove from cleanup list — already gone
+    const idx = insertedOrphanImageIds.indexOf(orphanId);
+    if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
+  });
+
   it("records an error but continues and still removes the DB row when deleteObject throws", async () => {
     const tenantId = await createTenant();
     const ghostArtworkId = uid();
