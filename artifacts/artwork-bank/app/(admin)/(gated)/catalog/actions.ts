@@ -183,11 +183,28 @@ export async function deleteArtwork(id: string): Promise<void> {
   if (!session.userId) return;
   await requireActiveBillingAccess(session.tenantId);
 
+  // Fetch images before deleting so we can clean up stored files.
+  // The DB rows are cascade-deleted automatically with the artwork row.
+  const images = await db.query.artworkImagesTable.findMany({
+    where: and(
+      eq(artworkImagesTable.artworkId, id),
+      eq(artworkImagesTable.tenantId, session.tenantId),
+    ),
+  });
+
   await db
     .delete(artworksTable)
     .where(
       and(eq(artworksTable.id, id), eq(artworksTable.tenantId, session.tenantId)),
     );
+
+  // Best-effort: remove each stored image file. A storage failure must not
+  // prevent the artwork from being deleted — the DB row is the source of truth.
+  for (const image of images) {
+    deleteObject(image.objectPath).catch((err) =>
+      console.error(`Failed to delete stored image ${image.objectPath}:`, err),
+    );
+  }
 }
 
 export async function bulkUpdateStatus(
