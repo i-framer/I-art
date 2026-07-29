@@ -15,7 +15,9 @@
  * 403 to prevent strangers from triggering the sweep.
  */
 import { NextResponse } from "next/server";
+import { BlobStoreNotFoundError } from "@vercel/blob";
 import { sweepOrphanedImageFiles } from "@/lib/orphan-image-sweep";
+import { StorageNotConfiguredError } from "@/lib/object-storage";
 
 export const dynamic = "force-dynamic";
 
@@ -65,6 +67,19 @@ async function runSweep(request: Request) {
     return NextResponse.json(result);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (
+      err instanceof BlobStoreNotFoundError ||
+      err instanceof StorageNotConfiguredError
+    ) {
+      console.error("[orphan-sweep] Storage misconfigured:", msg);
+      return NextResponse.json(
+        {
+          error:
+            "Storage misconfigured: check BLOB_READ_WRITE_TOKEN / PRIVATE_OBJECT_DIR.",
+        },
+        { status: 500 },
+      );
+    }
     console.error("Orphan image sweep failed:", msg);
     return NextResponse.json({ error: "Sweep failed" }, { status: 500 });
   }
