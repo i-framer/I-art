@@ -35,7 +35,7 @@
  *     (invoice handler uses the same sendBillingAlertNotification call; tested
  *     separately so a domain rotation that breaks only the invoice path is caught)
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 // base-url is imported lazily inside sendBillingAlertNotification; provide a
 // stub so tests that DO run don't require a Next.js server.
@@ -46,6 +46,26 @@ vi.mock("@/lib/base-url", () => ({
 }));
 
 import { sendBillingAlertNotification } from "@/lib/email";
+
+// SMTP vars must be cleared so a developer's or CI environment that sets
+// SMTP_HOST doesn't silently switch to the SMTP transport for these tests.
+// The integration tests exercise the Resend path (or are skipped entirely).
+const SMTP_VARS = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_SECURE"] as const;
+const savedSmtp: Record<string, string | undefined> = {};
+
+beforeEach(() => {
+  for (const k of SMTP_VARS) {
+    savedSmtp[k] = process.env[k];
+    delete process.env[k];
+  }
+});
+
+afterEach(() => {
+  for (const k of SMTP_VARS) {
+    if (savedSmtp[k] === undefined) delete process.env[k];
+    else process.env[k] = savedSmtp[k];
+  }
+});
 
 const hasResendKey = Boolean(process.env.RESEND_API_KEY);
 const hasAdminEmail = Boolean(process.env.PLATFORM_ADMIN_EMAIL);

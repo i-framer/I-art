@@ -1,8 +1,8 @@
 /**
  * Asserts that every outbound email function picks up its `from` address from
  * the configured environment variables and correctly honours the precedence
- * chain, so a rotated sender domain that hasn't been verified with Resend
- * produces a visible failure rather than a silent bounce.
+ * chain, so a rotated sender domain produces a visible failure rather than a
+ * silent bounce — regardless of which mail transport (Resend or SMTP) is active.
  *
  * Precedence:
  *   Inquiry emails  — EMAIL_FROM_INQUIRIES > EMAIL_FROM > "onboarding@resend.dev"
@@ -116,6 +116,25 @@ function clearInquiryVars() {
 function clearOrderVars() {
   for (const k of ORDER_VARS) delete process.env[k];
 }
+
+// SMTP vars must be cleared so tests always exercise the Resend path even
+// when an SMTP_HOST is configured in the developer's shell or CI environment.
+const SMTP_VARS = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_SECURE"] as const;
+const savedSmtp: Record<string, string | undefined> = {};
+
+beforeEach(() => {
+  for (const k of SMTP_VARS) {
+    savedSmtp[k] = process.env[k];
+    delete process.env[k];
+  }
+});
+
+afterEach(() => {
+  for (const k of SMTP_VARS) {
+    if (savedSmtp[k] === undefined) delete process.env[k];
+    else process.env[k] = savedSmtp[k];
+  }
+});
 
 // ===========================================================================
 // sendArtworkInquiry — inquiry sender
@@ -333,10 +352,10 @@ describe("sendConfirmationFailureNotice: sender address (domain-rotation safety)
 });
 
 // ===========================================================================
-// sendArtworkInquiry — Resend error handling (unverified domain / server error)
+// sendArtworkInquiry — email-send error handling (unverified domain / server error)
 // ===========================================================================
 
-describe("sendArtworkInquiry: Resend error handling", () => {
+describe("sendArtworkInquiry: email-send error handling", () => {
   beforeEach(() => {
     clearInquiryVars();
     process.env.RESEND_API_KEY = "re_test_key";
@@ -373,10 +392,10 @@ describe("sendArtworkInquiry: Resend error handling", () => {
 });
 
 // ===========================================================================
-// sendInquiryReply — Resend error handling (unverified domain / server error)
+// sendInquiryReply — email-send error handling (unverified domain / server error)
 // ===========================================================================
 
-describe("sendInquiryReply: Resend error handling", () => {
+describe("sendInquiryReply: email-send error handling", () => {
   beforeEach(() => {
     clearInquiryVars();
     process.env.RESEND_API_KEY = "re_test_key";
@@ -419,10 +438,10 @@ describe("sendInquiryReply: Resend error handling", () => {
 });
 
 // ===========================================================================
-// sendOrderStatusUpdate — Resend error handling (unverified domain / server error)
+// sendOrderStatusUpdate — email-send error handling (unverified domain / server error)
 // ===========================================================================
 
-describe("sendOrderStatusUpdate: Resend error handling", () => {
+describe("sendOrderStatusUpdate: email-send error handling", () => {
   beforeEach(() => {
     clearOrderVars();
     process.env.RESEND_API_KEY = "re_test_key";
@@ -470,10 +489,10 @@ describe("sendOrderStatusUpdate: Resend error handling", () => {
 });
 
 // ===========================================================================
-// sendOrderConfirmation — Resend error handling (unverified domain / server error)
+// sendOrderConfirmation — email-send error handling (unverified domain / server error)
 // ===========================================================================
 
-describe("sendOrderConfirmation: Resend error handling", () => {
+describe("sendOrderConfirmation: email-send error handling", () => {
   beforeEach(() => {
     clearOrderVars();
     process.env.RESEND_API_KEY = "re_test_key";
@@ -521,10 +540,10 @@ describe("sendOrderConfirmation: Resend error handling", () => {
 });
 
 // ===========================================================================
-// sendConfirmationFailureNotice — Resend error handling (unverified domain / server error)
+// sendConfirmationFailureNotice — email-send error handling (unverified domain / server error)
 // ===========================================================================
 
-describe("sendConfirmationFailureNotice: Resend error handling", () => {
+describe("sendConfirmationFailureNotice: email-send error handling", () => {
   beforeEach(() => {
     clearOrderVars();
     process.env.RESEND_API_KEY = "re_test_key";

@@ -20,6 +20,11 @@ vi.mock("@/lib/base-url", () => ({
 
 import { sendBillingAlertNotification } from "@/lib/email";
 
+// SMTP vars must be cleared in every test so a developer's or CI environment
+// that sets SMTP_HOST doesn't silently switch the transport under these tests.
+const SMTP_VARS = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_SECURE"] as const;
+const savedSmtp: Record<string, string | undefined> = {};
+
 const alertArgs = {
   stripeEventId: "evt_test_001",
   eventType: "customer.subscription.deleted",
@@ -31,11 +36,19 @@ const alertArgs = {
 beforeEach(() => {
   delete process.env.RESEND_API_KEY;
   delete process.env.PLATFORM_ADMIN_EMAIL;
+  for (const k of SMTP_VARS) {
+    savedSmtp[k] = process.env[k];
+    delete process.env[k];
+  }
 });
 
 afterEach(() => {
   delete process.env.RESEND_API_KEY;
   delete process.env.PLATFORM_ADMIN_EMAIL;
+  for (const k of SMTP_VARS) {
+    if (savedSmtp[k] === undefined) delete process.env[k];
+    else process.env[k] = savedSmtp[k];
+  }
   vi.restoreAllMocks();
 });
 
@@ -172,6 +185,9 @@ describe("sendBillingAlertNotification: sender address (domain-rotation safety)"
     delete process.env.PLATFORM_ADMIN_EMAIL;
     delete process.env.EMAIL_FROM_ORDERS;
     delete process.env.EMAIL_FROM;
+    // SMTP vars are restored by the top-level afterEach; explicitly clear them
+    // here too so they cannot leak between tests within this describe block.
+    for (const k of SMTP_VARS) delete process.env[k];
     vi.restoreAllMocks();
   });
 
