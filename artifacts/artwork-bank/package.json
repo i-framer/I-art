@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev --port $PORT",
     "build": "next build",
-    "build:no-db": "env -u DATABASE_URL next build",
+    "build:no-db": "env -u DATABASE_URL -u SESSION_SECRET next build",
     "start": "next start --port $PORT",
     "typecheck": "rm -rf .next/types && tsc --noEmit",
     "test": "vitest run",

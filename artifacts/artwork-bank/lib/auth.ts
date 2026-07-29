@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
 import { getIronSession } from "iron-session";
-import { sessionOptions, type SessionData } from "@/lib/session";
+import { getSessionOptions, type SessionData } from "@/lib/session";
 
 const SALT_ROUNDS = 12;
 
@@ -18,7 +18,7 @@ export async function verifyPassword(
 
 export async function getSession() {
   const cookieStore = await cookies();
-  return getIronSession<SessionData>(cookieStore, sessionOptions);
+  return getIronSession<SessionData>(cookieStore, getSessionOptions());
 }
 
 export async function requireSession(): Promise<SessionData> {

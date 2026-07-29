@@ -12,7 +12,7 @@ import {
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, verifyPassword, slugify, getSession } from "@/lib/auth";
-import { sessionOptions, type SessionData } from "@/lib/session";
+import { getSessionOptions, type SessionData } from "@/lib/session";
 
 // ---------------------------------------------------------------------------
 // Shared state type used by useActionState on the client
@@ -66,7 +66,7 @@ export async function login(
   }
 
   const cookieStore = await cookies();
-  const session = await getIronSession<SessionData>(cookieStore, sessionOptions);
+  const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
   session.userId = user.id;
   session.tenantId = tenantUser.tenantId;
   session.role = tenantUser.role as "owner" | "staff";
@@ -136,7 +136,7 @@ export async function register(
   });
 
   const cookieStore = await cookies();
-  const session = await getIronSession<SessionData>(cookieStore, sessionOptions);
+  const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
   session.userId = user.id;
   session.tenantId = tenant.id;
   session.role = "owner";
