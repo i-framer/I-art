@@ -12,7 +12,7 @@ import {
 import { eq, and, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, verifyPassword } from "@/lib/auth";
-import { sessionOptions, type SessionData } from "@/lib/session";
+import { getSessionOptions, type SessionData } from "@/lib/session";
 
 export type InviteState = { error: string };
 
@@ -109,7 +109,7 @@ export async function acceptInvite(
   }
 
   const cookieStore = await cookies();
-  const session = await getIronSession<SessionData>(cookieStore, sessionOptions);
+  const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
   session.userId = user.id;
   session.tenantId = invite.tenantId;
   session.role = invite.role as "owner" | "staff";
