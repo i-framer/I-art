@@ -413,6 +413,90 @@ export async function sendConfirmationFailureNotice({
 }
 
 /**
+ * Notify the platform operator when the orphan image sweep completes with
+ * storage-deletion errors. Failures are logged but must not affect the sweep
+ * response — the sweep result is already determined before this is called.
+ *
+ * Skipped silently when PLATFORM_ADMIN_EMAIL or a transport is not configured.
+ */
+export async function sendOrphanSweepErrorNotification({
+  errors,
+  failedPaths,
+  slackFailure,
+}: {
+  errors: number;
+  failedPaths: string[];
+  /**
+   * When the Slack notification failed, pass the error here so the operator
+   * can see at a glance that the Slack channel is also broken.
+   */
+  slackFailure?: string;
+}): Promise<void> {
+  const adminEmail = process.env.PLATFORM_ADMIN_EMAIL;
+
+  if (!isEmailTransportConfigured() || !adminEmail) {
+    console.log(
+      `[Orphan sweep email skipped — ${!isEmailTransportConfigured() ? "email transport (SMTP_HOST or RESEND_API_KEY)" : "PLATFORM_ADMIN_EMAIL"} not set]`,
+    );
+    return;
+  }
+
+  const escapeHtml = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const pathListHtml =
+    failedPaths.length > 0
+      ? `<ul style="margin:8px 0;padding-left:20px;">${failedPaths
+          .slice(0, 50)
+          .map((p) => `<li><code style="font-family:monospace;">${escapeHtml(p)}</code></li>`)
+          .join("")}${
+          failedPaths.length > 50
+            ? `<li>… and ${failedPaths.length - 50} more</li>`
+            : ""
+        }</ul>`
+      : "<p style='margin:0;color:#78716c;'>(no paths recorded)</p>";
+
+  try {
+    await deliverEmail({
+      from: getOrdersFrom(),
+      to: adminEmail,
+      subject: `Action needed — orphan image sweep failed to delete ${errors} file${errors === 1 ? "" : "s"}`,
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+          <h2 style="color:#1c1917;">Orphan image sweep completed with errors</h2>
+          <p>The orphan image sweep ran but could not delete <strong>${errors} storage file${errors === 1 ? "" : "s"}</strong>. These files remain in storage and will need manual investigation.</p>
+          <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
+            <p style="margin:0 0 8px;"><strong>Failed deletions:</strong> ${errors}</p>
+            <p style="margin:0 0 4px;"><strong>Paths that could not be deleted:</strong></p>
+            ${pathListHtml}
+          </div>
+          ${
+            slackFailure
+              ? `<div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
+              <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">⚠️ Slack notification also failed</p>
+              <p style="margin:0;color:#7f1d1d;font-size:13px;">The Slack alert could not be delivered. Your Slack connector may need to be reconnected.</p>
+              <p style="margin:8px 0 0;color:#7f1d1d;font-size:12px;font-family:monospace;">${escapeHtml(slackFailure.slice(0, 300))}</p>
+            </div>`
+              : ""
+          }
+          <p>Check server logs for the specific errors, resolve the underlying storage issue, then re-run the sweep to clean up the remaining files.</p>
+        </div>
+      `,
+    });
+  } catch (err) {
+    // Best-effort — log but do not propagate so the sweep response is unaffected.
+    console.error(
+      "[Orphan sweep email] Failed to send operator notification:",
+      (err as any)?.message ?? String(err),
+    );
+  }
+}
+
+/**
  * Notify the platform operator when an unmatched Stripe event is saved as a
  * billing alert. Failures are logged but must not affect the webhook response —
  * the alert row is already committed before this is called.

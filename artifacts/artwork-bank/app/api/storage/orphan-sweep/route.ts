@@ -18,6 +18,8 @@ import { NextResponse } from "next/server";
 import { BlobStoreNotFoundError } from "@vercel/blob";
 import { sweepOrphanedImageFiles } from "@/lib/orphan-image-sweep";
 import { StorageNotConfiguredError } from "@/lib/object-storage";
+import { sendOrphanSweepSlackNotification } from "@/lib/slack";
+import { sendOrphanSweepErrorNotification } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +66,23 @@ async function runSweep(request: Request) {
   try {
     const result = await sweepOrphanedImageFiles();
     console.log("[orphan-sweep] completed:", result);
+
+    // When errors occurred, notify the operator via Slack and/or email so they
+    // don't have to spot the failure from logs or the HTTP 207 response.
+    if (result.errors > 0) {
+      const slackResult = await sendOrphanSweepSlackNotification({
+        errors: result.errors,
+        failedPaths: result.failedPaths,
+      });
+      const slackFailure = slackResult.ok ? undefined : slackResult.error;
+      // Fire email regardless of Slack outcome; include Slack failure info if present.
+      await sendOrphanSweepErrorNotification({
+        errors: result.errors,
+        failedPaths: result.failedPaths,
+        slackFailure,
+      });
+    }
+
     // When per-row storage errors occurred, use 207 Multi-Status so operators
     // are alerted even when some rows were cleaned up successfully.
     const status = result.errors > 0 ? 207 : 200;

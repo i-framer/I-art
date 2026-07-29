@@ -60,6 +60,72 @@ export function resolveSlackChannel(eventType: string): string | undefined {
 }
 
 /**
+ * Post an orphan-sweep error alert to the configured Slack channel when the
+ * sweep completes with one or more storage-deletion failures.
+ *
+ * Reuses SLACK_BILLING_ALERTS_CHANNEL so no additional configuration is needed.
+ * If no channel is configured the call is a no-op. Failures are logged but
+ * never re-thrown.
+ */
+export async function sendOrphanSweepSlackNotification({
+  errors,
+  failedPaths,
+}: {
+  errors: number;
+  failedPaths: string[];
+}): Promise<SlackNotificationResult> {
+  const channel = process.env.SLACK_BILLING_ALERTS_CHANNEL?.trim();
+
+  if (!channel) {
+    console.log(
+      "[Orphan sweep Slack skipped — SLACK_BILLING_ALERTS_CHANNEL not configured]",
+    );
+    return { ok: true };
+  }
+
+  const pathList =
+    failedPaths.length > 0
+      ? failedPaths
+          .slice(0, 20)
+          .map((p) => `• \`${p}\``)
+          .join("\n") +
+        (failedPaths.length > 20
+          ? `\n• … and ${failedPaths.length - 20} more`
+          : "")
+      : "(no paths recorded)";
+
+  const text =
+    `:warning: *Orphan image sweep completed with errors*\n` +
+    `*Failed deletions:* ${errors}\n` +
+    `*Paths that could not be deleted:*\n${pathList}\n` +
+    `Check server logs for details and re-run the sweep once the underlying issue is resolved.`;
+
+  try {
+    const connectors = new ReplitConnectors();
+    const response = await connectors.proxy("slack", "/chat.postMessage", {
+      method: "POST",
+      body: JSON.stringify({ channel, text }),
+    });
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok || (body && !body.ok)) {
+      const errorDetail = body?.error ?? `HTTP ${response.status}`;
+      console.error(
+        `[Orphan sweep Slack] Post failed (HTTP ${response.status}):`,
+        body?.error ?? "(no error field)",
+      );
+      return { ok: false, error: errorDetail };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    const errorMessage = (err as any)?.message ?? String(err);
+    console.error(`[Orphan sweep Slack] Failed to post message: ${errorMessage}`);
+    return { ok: false, error: errorMessage };
+  }
+}
+
+/**
  * Post a billing-alert message to the configured Slack channel when an
  * unmatched Stripe event is saved as a stripe_alert row.
  *
