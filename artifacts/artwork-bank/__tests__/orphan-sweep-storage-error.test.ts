@@ -131,3 +131,132 @@ describe("orphan-sweep route — storage misconfiguration errors", () => {
     expect((res.body as any).orphaned).toBe(2);
   });
 });
+
+// ── Per-row error surfacing ────────────────────────────────────────────────────
+//
+// When sweepOrphanedImageFiles() returns errors > 0 the route must:
+//   a) include the error count in the response body
+//   b) include the failed paths in the response body
+//   c) respond with HTTP 207 (Multi-Status) so callers and monitoring tools
+//      know that some files were not cleaned up
+//
+// A pure HTTP 200 with no visible error flag would allow operators to miss
+// storage failures silently.
+
+describe("orphan-sweep route — per-row error forwarding", () => {
+  beforeEach(() => {
+    sweepOrphanedImageFiles.mockReset();
+    delete process.env.ORPHAN_SWEEP_SECRET;
+    delete process.env.CRON_SECRET;
+  });
+
+  it("GET returns 207 when errors > 0", async () => {
+    sweepOrphanedImageFiles.mockResolvedValueOnce({
+      checked: 5,
+      orphaned: 3,
+      deleted: 2,
+      errors: 1,
+      failedPaths: ["/objects/uploads/bad-file.jpg"],
+    });
+
+    const res = await GET(openRequest);
+
+    expect(res.status).toBe(207);
+  });
+
+  it("POST returns 207 when errors > 0", async () => {
+    sweepOrphanedImageFiles.mockResolvedValueOnce({
+      checked: 5,
+      orphaned: 3,
+      deleted: 2,
+      errors: 1,
+      failedPaths: ["/objects/uploads/bad-file.jpg"],
+    });
+
+    const res = await POST(openRequest);
+
+    expect(res.status).toBe(207);
+  });
+
+  it("GET response body includes the error count when errors > 0", async () => {
+    sweepOrphanedImageFiles.mockResolvedValueOnce({
+      checked: 5,
+      orphaned: 3,
+      deleted: 2,
+      errors: 1,
+      failedPaths: ["/objects/uploads/bad-file.jpg"],
+    });
+
+    const res = await GET(openRequest);
+
+    expect((res.body as any).errors).toBe(1);
+  });
+
+  it("GET response body includes the failed paths when errors > 0", async () => {
+    const failedPath = "/objects/uploads/broken-abc123.jpg";
+    sweepOrphanedImageFiles.mockResolvedValueOnce({
+      checked: 4,
+      orphaned: 2,
+      deleted: 1,
+      errors: 1,
+      failedPaths: [failedPath],
+    });
+
+    const res = await GET(openRequest);
+
+    expect((res.body as any).failedPaths).toContain(failedPath);
+  });
+
+  it("GET response body includes all failed paths when multiple errors occurred", async () => {
+    const path1 = "/objects/uploads/err-1.jpg";
+    const path2 = "/objects/uploads/err-2.jpg";
+    sweepOrphanedImageFiles.mockResolvedValueOnce({
+      checked: 5,
+      orphaned: 3,
+      deleted: 1,
+      errors: 2,
+      failedPaths: [path1, path2],
+    });
+
+    const res = await GET(openRequest);
+
+    expect(res.status).toBe(207);
+    expect((res.body as any).errors).toBe(2);
+    expect((res.body as any).failedPaths).toContain(path1);
+    expect((res.body as any).failedPaths).toContain(path2);
+  });
+
+  it("GET returns 200 (not 207) when errors === 0 even if some paths were deleted", async () => {
+    sweepOrphanedImageFiles.mockResolvedValueOnce({
+      checked: 10,
+      orphaned: 3,
+      deleted: 3,
+      errors: 0,
+      failedPaths: [],
+    });
+
+    const res = await GET(openRequest);
+
+    expect(res.status).toBe(200);
+    expect((res.body as any).errors).toBe(0);
+    expect((res.body as any).failedPaths).toEqual([]);
+  });
+
+  it("GET response body always includes deleted count alongside errors", async () => {
+    sweepOrphanedImageFiles.mockResolvedValueOnce({
+      checked: 6,
+      orphaned: 4,
+      deleted: 3,
+      errors: 1,
+      failedPaths: ["/objects/uploads/one-failure.jpg"],
+    });
+
+    const res = await GET(openRequest);
+
+    expect(res.status).toBe(207);
+    // Both successful and failed counts must be present so operators see the
+    // full picture — not just that something went wrong.
+    expect((res.body as any).deleted).toBe(3);
+    expect((res.body as any).errors).toBe(1);
+  });
+});

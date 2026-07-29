@@ -64,7 +64,10 @@ async function runSweep(request: Request) {
   try {
     const result = await sweepOrphanedImageFiles();
     console.log("[orphan-sweep] completed:", result);
-    return NextResponse.json(result);
+    // When per-row storage errors occurred, use 207 Multi-Status so operators
+    // are alerted even when some rows were cleaned up successfully.
+    const status = result.errors > 0 ? 207 : 200;
+    return NextResponse.json(result, { status });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (
