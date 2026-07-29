@@ -304,5 +304,35 @@ describe("email-sweep route integration — auth guard with real Request objects
       expect(res.status).toBe(401);
       expect(sweepUnsentConfirmationEmails).not.toHaveBeenCalled();
     });
+
+    it("GET with no Authorization header returns 401 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        EMAIL_SWEEP_SECRET: "email-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      // No Authorization header at all — not even a wrong token
+      const res = await GET(realRequest("GET"));
+
+      expect(res.status).toBe(401);
+      expect((res.body as any).error).toMatch(/Unauthorized/i);
+      expect(sweepUnsentConfirmationEmails).not.toHaveBeenCalled();
+    });
+
+    it("POST with no Authorization header returns 401 when both secrets are configured", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        EMAIL_SWEEP_SECRET: "email-secret-aaa",
+        CRON_SECRET: "cron-secret-bbb",
+      });
+
+      // No Authorization header at all — not even a wrong token
+      const res = await POST(realRequest("POST"));
+
+      expect(res.status).toBe(401);
+      expect((res.body as any).error).toMatch(/Unauthorized/i);
+      expect(sweepUnsentConfirmationEmails).not.toHaveBeenCalled();
+    });
   });
 });
