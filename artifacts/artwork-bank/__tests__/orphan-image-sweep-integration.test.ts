@@ -436,4 +436,64 @@ describe("sweepOrphanedImageFiles() — integration (real DB)", () => {
     const idx = insertedOrphanImageIds.indexOf(orphanId);
     if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
   });
+
+  it("continues past a per-row storage error: successful rows are still deleted and errors count only the failures", async () => {
+    // This test verifies the sweep never silently skips files when the storage
+    // backend becomes unreachable for some rows mid-sweep.  When deleteObject
+    // throws for one row but succeeds for the rest:
+    //  - errors must equal exactly the number of rows that threw
+    //  - failedPaths must contain exactly the paths that threw
+    //  - deleted must include the rows that succeeded
+    //  - all DB rows are removed (whether storage succeeded or failed)
+    const tenantId = await createTenant();
+    const ghostArtworkId = uid();
+
+    const failing = await insertOrphanImageRow(tenantId, ghostArtworkId);
+    const ok1 = await insertOrphanImageRow(tenantId, ghostArtworkId);
+    const ok2 = await insertOrphanImageRow(tenantId, ghostArtworkId);
+
+    // deleteObject will reject the first call and resolve for subsequent ones.
+    // We use mockImplementation so the rejection is keyed by path, not call
+    // order, which makes the assertion robust regardless of iteration order.
+    vi.mocked(deleteObject).mockImplementation(async (path: string) => {
+      if (path === failing.objectPath) {
+        throw new Error("simulated backend unreachable");
+      }
+    });
+
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await sweepOrphanedImageFiles();
+
+    errSpy.mockRestore();
+
+    // Restore default mock so later tests are unaffected
+    vi.mocked(deleteObject).mockResolvedValue(undefined);
+
+    // The failing path must be recorded as an error
+    expect(result.errors).toBeGreaterThanOrEqual(1);
+    expect(result.failedPaths).toContain(failing.objectPath);
+
+    // The successful paths must NOT appear in failedPaths
+    expect(result.failedPaths).not.toContain(ok1.objectPath);
+    expect(result.failedPaths).not.toContain(ok2.objectPath);
+
+    // At least the two successful rows must be counted as deleted
+    expect(result.deleted).toBeGreaterThanOrEqual(2);
+
+    // All three DB rows must have been removed so re-runs don't retry them
+    for (const { id } of [failing, ok1, ok2]) {
+      const rows = await db
+        .select({ id: artworkImagesTable.id })
+        .from(artworkImagesTable)
+        .where(eq(artworkImagesTable.id, id));
+      expect(rows).toHaveLength(0);
+    }
+
+    // Remove from cleanup lists — already gone
+    for (const { id } of [failing, ok1, ok2]) {
+      const idx = insertedOrphanImageIds.indexOf(id);
+      if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
+    }
+  });
 });
