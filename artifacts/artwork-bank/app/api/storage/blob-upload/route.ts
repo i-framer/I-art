@@ -9,6 +9,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
+import { BlobError, BlobNotFoundError } from "@vercel/blob";
 import { getSession } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
@@ -39,6 +40,17 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json(jsonResponse);
   } catch (err) {
+    // BlobStoreNotFoundError and other BlobError subclasses (except
+    // BlobNotFoundError, which means a specific file is absent) indicate a
+    // storage misconfiguration.  Return 500 so operators see a hard failure
+    // rather than a client-looking 400 that is easy to ignore.
+    if (err instanceof BlobError && !(err instanceof BlobNotFoundError)) {
+      console.error("Blob upload token error (store misconfigured):", err);
+      return NextResponse.json(
+        { error: "Storage misconfigured — check BLOB_READ_WRITE_TOKEN" },
+        { status: 500 },
+      );
+    }
     console.error("Blob upload token error:", err);
     return NextResponse.json({ error: "Upload failed" }, { status: 400 });
   }
