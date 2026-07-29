@@ -3,7 +3,14 @@ import "./globals.css";
 import { ensureEmailSweepScheduler } from "@/lib/email-sweep-scheduler";
 
 // Start the background confirmation-email sweep (no-op if already running).
-ensureEmailSweepScheduler();
+// Skip during `next build` page-data collection and when no database is
+// configured, so builds succeed without DATABASE_URL.
+if (
+  process.env.NEXT_PHASE !== "phase-production-build" &&
+  process.env.DATABASE_URL
+) {
+  ensureEmailSweepScheduler();
+}
 
 export const metadata: Metadata = {
   title: {
