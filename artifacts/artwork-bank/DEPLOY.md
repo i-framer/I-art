@@ -107,10 +107,91 @@ on Vercel — re-upload any artwork images you want in production (seed/demo dat
 Sales use Stripe Connect (Express): tenants onboard from Settings → Billing and are
 paid into their own Stripe accounts; the platform takes the application fee.
 
-## 6. Verify after deploy
+## 6. Email delivery (SMTP)
+
+The app uses `SMTP_HOST` for transactional email when set, and falls back to Resend
+(`RESEND_API_KEY`) otherwise. For production on a real domain, SMTP via your own mail
+server is strongly preferred — it lets SPF/DKIM pass automatically because the sending
+domain matches your MX records.
+
+### 6a. Provider-specific settings
+
+**Google Workspace (smtp.gmail.com)**
+
+| Variable | Value |
+| --- | --- |
+| `SMTP_HOST` | `smtp.gmail.com` |
+| `SMTP_PORT` | `587` |
+| `SMTP_SECURE` | `false` (STARTTLS on port 587) |
+| `SMTP_USER` | Full Gmail/Workspace address, e.g. `orders@i-art.com.au` |
+| `SMTP_PASS` | **App password** — not your account password. Generate one at Google Account → Security → 2-Step Verification → App passwords. |
+
+SPF/DKIM: Google Workspace automatically signs outgoing mail with DKIM using your domain
+once you enable it (Admin Console → Apps → Google Workspace → Gmail → Authenticate email).
+SPF is set up automatically when you add Google's MX records. No extra DNS changes needed.
+
+**Microsoft 365 / Office 365 (smtp.office365.com)**
+
+| Variable | Value |
+| --- | --- |
+| `SMTP_HOST` | `smtp.office365.com` |
+| `SMTP_PORT` | `587` |
+| `SMTP_SECURE` | `false` (STARTTLS on port 587) |
+| `SMTP_USER` | Full Microsoft 365 address, e.g. `orders@i-art.com.au` |
+| `SMTP_PASS` | Account password, or an app password if MFA is enabled. |
+
+SPF/DKIM: Microsoft 365 signs with DKIM by default once you publish the two CNAME records
+shown in Microsoft 365 admin → Security → Email authentication.
+
+**Domain host / generic SMTP (cPanel, Zoho, Mailgun SMTP, etc.)**
+
+Use the SMTP credentials from your hosting panel. Port 587 + STARTTLS is standard; port
+465 + TLS is also fine — set `SMTP_PORT=465` and `SMTP_SECURE=true`.
+SPF/DKIM records are usually created automatically when you enable the mailbox; check your
+provider's documentation.
+
+### 6b. SPF & DKIM checklist (run before go-live)
+
+After configuring `EMAIL_FROM` / `EMAIL_FROM_ORDERS` / `EMAIL_FROM_INQUIRIES`, send a
+test message and verify alignment with a free tool such as
+[mail-tester.com](https://www.mail-tester.com) or
+[MXToolbox Email Health](https://mxtoolbox.com/emailhealth/):
+
+- [ ] SPF: **pass** — the sending IP is listed in the domain's SPF record.
+- [ ] DKIM: **pass** — the message is signed with a key that matches a DNS TXT record.
+- [ ] DMARC: **pass** (SPF or DKIM must be aligned with the `From:` domain).
+- [ ] Spam score ≤ 1 / 10 on mail-tester.com.
+
+If SPF or DKIM fails, the email will land in spam. Fix the DNS records before go-live —
+do not proceed until both checks are green.
+
+### 6c. Test real email delivery
+
+Set the SMTP variables in the Vercel production environment (or locally with a `.env`
+file), then send a real test message for each email type:
+
+**Order-confirmation (inquiry) email**
+1. Open the live storefront (e.g. `https://jane.i-art.com.au/artwork/<slug>`).
+2. Submit the contact/inquiry form with your real email address.
+3. Confirm the inquiry email arrives in the gallery's inbox (not spam) and the
+   `Reply-To:` header is the buyer's address.
+
+**Order-confirmation email**
+1. Complete a test checkout (use a Stripe test card, e.g. `4242 4242 4242 4242`).
+2. Confirm the buyer receives the order-confirmation email in their inbox (not spam).
+3. In the admin panel, mark the order as Fulfilled and add a tracking note.
+4. Confirm the order-status update email arrives.
+
+Both tests must succeed before go-live. If delivery fails, check Vercel logs for the
+`SMTP error:` prefix and compare against the settings in §6a above.
+
+## 7. Verify after deploy
 
 - `pnpm run build` succeeds locally from `artifacts/artwork-bank/` (same build Vercel runs).
 - Log in, upload an artwork image, confirm it renders on the storefront, delete it.
+- Real inquiry email delivered to gallery inbox — see §6c above.
+- Real order-confirmation email delivered to buyer inbox — see §6c above.
+- SPF + DKIM both **pass** on mail-tester.com for the `EMAIL_FROM` domain — see §6b above.
 - `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://i-art.com.au/api/email-sweep`
   returns JSON (and Vercel → Crons shows successful runs).
 - A test checkout completes and the webhook creates the order.
