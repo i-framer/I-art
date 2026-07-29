@@ -49,16 +49,30 @@ Restart the Artwork Bank dev server so it picks up the refreshed credentials:
 pnpm --filter @workspace/artwork-bank dev
 ```
 
-#### 4 — Run the smoke script
+#### 4 — Run the integration smoke test
+
+The fastest way to confirm the connector is healthy after a reconnect is to run
+the dedicated integration test, which calls `sendBillingAlertSlackNotification`
+directly against the live Replit connectors SDK and asserts `{ ok: true }`:
+
+```bash
+SLACK_INTEGRATION_TEST=true \
+SLACK_BILLING_ALERTS_CHANNEL=#your-channel \
+  pnpm --filter @workspace/artwork-bank test -- --reporter=verbose slack-reconnect-smoke
+```
+
+Replace `#your-channel` with the channel name or ID stored in
+`SLACK_BILLING_ALERTS_CHANNEL`. The test is skipped unless
+`SLACK_INTEGRATION_TEST=true` is explicitly set, so it never runs in CI by
+accident.
+
+Alternatively, run the full end-to-end smoke script (fires a synthetic Stripe
+webhook and checks the database, email, and Slack):
 
 ```bash
 SLACK_BILLING_ALERTS_CHANNEL=#your-channel \
   pnpm --filter @workspace/artwork-bank smoke:billing-alert
 ```
-
-Replace `#your-channel` with the channel name or ID stored in
-`SLACK_BILLING_ALERTS_CHANNEL`. The script fires a synthetic Stripe event and
-reports whether the Slack post path was reached.
 
 #### 5 — Verify in Slack
 
