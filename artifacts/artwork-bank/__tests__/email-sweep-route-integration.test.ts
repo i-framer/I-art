@@ -284,6 +284,65 @@ describe("email-sweep route integration — auth guard with real Request objects
     });
   });
 
+  describe("development with only CRON_SECRET configured — token is still required", () => {
+    // The symmetric case to the EMAIL_SWEEP_SECRET dev tests above: CRON_SECRET
+    // alone (no EMAIL_SWEEP_SECRET) must also enforce auth in development.
+
+    it("GET returns 401 when no Authorization header is sent in development", async () => {
+      setEnv({
+        NODE_ENV: "development",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: "cron-only-dev-secret",
+      });
+
+      const res = await GET(realRequest("GET"));
+
+      expect(res.status).toBe(401);
+      expect((res.body as any).error).toMatch(/Unauthorized/i);
+      expect(sweepUnsentConfirmationEmails).not.toHaveBeenCalled();
+    });
+
+    it("POST returns 401 when no Authorization header is sent in development", async () => {
+      setEnv({
+        NODE_ENV: "development",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: "cron-only-dev-secret",
+      });
+
+      const res = await POST(realRequest("POST"));
+
+      expect(res.status).toBe(401);
+      expect((res.body as any).error).toMatch(/Unauthorized/i);
+      expect(sweepUnsentConfirmationEmails).not.toHaveBeenCalled();
+    });
+
+    it("GET with correct Bearer CRON_SECRET runs the sweep and returns 200 in development", async () => {
+      setEnv({
+        NODE_ENV: "development",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: "cron-only-dev-secret",
+      });
+
+      const res = await GET(realRequest("GET", "Bearer cron-only-dev-secret"));
+
+      expect(res.status).toBe(200);
+      expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
+    });
+
+    it("POST with correct Bearer CRON_SECRET runs the sweep and returns 200 in development", async () => {
+      setEnv({
+        NODE_ENV: "development",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: "cron-only-dev-secret",
+      });
+
+      const res = await POST(realRequest("POST", "Bearer cron-only-dev-secret"));
+
+      expect(res.status).toBe(200);
+      expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
+    });
+  });
+
   describe("per-row error surfacing", () => {
     it("GET returns 207 and includes the error count when sweep reports errors > 0", async () => {
       setEnv({
