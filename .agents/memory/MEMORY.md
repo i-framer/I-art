@@ -2,3 +2,4 @@
 - [Iron-Session Next.js Auth Pattern](iron-session-nextjs.md) — session read/write pattern for Next.js 15 App Router with iron-session v8
 - [Stripe testing in task env](stripe-testing-in-task-env.md) — connector creds are withheld in isolated task envs; verify routing + webhook via dev bypass, leave live payment to main workspace
 - [GitHub push via token](github-push-token.md) — built-in GitHub connection unavailable here; push to i-framer/I-art with GITHUB_PUSH_TOKEN via GIT_ASKPASS
+- [Vercel go-live checks](vercel-golive-checks.md) — how to audit i-art.com.au prod from a task env without Vercel access (probe endpoints; error messages reveal missing env vars)
