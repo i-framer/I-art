@@ -87,6 +87,12 @@ export default async function HomePage() {
               Browse artwork
             </Link>
             <Link
+              href="/sellers"
+              className="text-stone-600 hover:text-stone-900 transition-colors"
+            >
+              Sellers
+            </Link>
+            <Link
               href="/login"
               className="text-stone-600 hover:text-stone-900 transition-colors"
             >
@@ -208,6 +214,9 @@ export default async function HomePage() {
           <nav className="flex items-center gap-5">
             <Link href="/browse" className="hover:text-stone-600 transition-colors">
               Browse
+            </Link>
+            <Link href="/sellers" className="hover:text-stone-600 transition-colors">
+              Sellers
             </Link>
             <Link href="/login" className="hover:text-stone-600 transition-colors">
               Sign in

@@ -193,6 +193,12 @@ export default async function BrowsePage({
               Browse
             </Link>
             <Link
+              href="/sellers"
+              className="text-stone-600 hover:text-stone-900 transition-colors"
+            >
+              Sellers
+            </Link>
+            <Link
               href="/login"
               className="text-stone-600 hover:text-stone-900 transition-colors"
             >
