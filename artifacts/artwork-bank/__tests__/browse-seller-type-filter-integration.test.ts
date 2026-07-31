@@ -203,3 +203,113 @@ describeIntegration("browse query — sellerType filter", () => {
     expect(matched).toHaveLength(2);
   });
 });
+
+describeIntegration("browse query — sellerType filter with SOLD / RESERVED / HIDDEN statuses", () => {
+  it("returns a SOLD ARTIST artwork when filtering by sellerType=ARTIST", async () => {
+    const artistTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    const framerTenantId = await createTenant({ type: "FRAMER", storefrontEnabled: true });
+    createdTenantIds.push(artistTenantId, framerTenantId);
+
+    const artistArtworkId = await createArtwork({ tenantId: artistTenantId, status: "SOLD" });
+    const framerArtworkId = await createArtwork({ tenantId: framerTenantId, status: "SOLD" });
+    createdArtworkIds.push(artistArtworkId, framerArtworkId);
+
+    const rows = await runBrowseQuery({ sellerType: "ARTIST" });
+
+    const seededIds = new Set<string>([artistArtworkId, framerArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(artistArtworkId);
+  });
+
+  it("returns a RESERVED ARTIST artwork when filtering by sellerType=ARTIST", async () => {
+    const artistTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    const framerTenantId = await createTenant({ type: "FRAMER", storefrontEnabled: true });
+    createdTenantIds.push(artistTenantId, framerTenantId);
+
+    const artistArtworkId = await createArtwork({ tenantId: artistTenantId, status: "RESERVED" });
+    const framerArtworkId = await createArtwork({ tenantId: framerTenantId, status: "RESERVED" });
+    createdArtworkIds.push(artistArtworkId, framerArtworkId);
+
+    const rows = await runBrowseQuery({ sellerType: "ARTIST" });
+
+    const seededIds = new Set<string>([artistArtworkId, framerArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(artistArtworkId);
+  });
+
+  it("returns a SOLD FRAMER artwork when filtering by sellerType=FRAMER", async () => {
+    const artistTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    const framerTenantId = await createTenant({ type: "FRAMER", storefrontEnabled: true });
+    createdTenantIds.push(artistTenantId, framerTenantId);
+
+    const artistArtworkId = await createArtwork({ tenantId: artistTenantId, status: "SOLD" });
+    const framerArtworkId = await createArtwork({ tenantId: framerTenantId, status: "SOLD" });
+    createdArtworkIds.push(artistArtworkId, framerArtworkId);
+
+    const rows = await runBrowseQuery({ sellerType: "FRAMER" });
+
+    const seededIds = new Set<string>([artistArtworkId, framerArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(framerArtworkId);
+  });
+
+  it("returns a RESERVED FRAMER artwork when filtering by sellerType=FRAMER", async () => {
+    const artistTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    const framerTenantId = await createTenant({ type: "FRAMER", storefrontEnabled: true });
+    createdTenantIds.push(artistTenantId, framerTenantId);
+
+    const artistArtworkId = await createArtwork({ tenantId: artistTenantId, status: "RESERVED" });
+    const framerArtworkId = await createArtwork({ tenantId: framerTenantId, status: "RESERVED" });
+    createdArtworkIds.push(artistArtworkId, framerArtworkId);
+
+    const rows = await runBrowseQuery({ sellerType: "FRAMER" });
+
+    const seededIds = new Set<string>([artistArtworkId, framerArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(framerArtworkId);
+  });
+
+  it("excludes HIDDEN artworks even when their tenant type matches the sellerType filter", async () => {
+    const artistTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    createdTenantIds.push(artistTenantId);
+
+    const hiddenArtworkId = await createArtwork({ tenantId: artistTenantId, status: "HIDDEN" });
+    const visibleArtworkId = await createArtwork({ tenantId: artistTenantId, status: "AVAILABLE" });
+    createdArtworkIds.push(hiddenArtworkId, visibleArtworkId);
+
+    const rows = await runBrowseQuery({ sellerType: "ARTIST" });
+
+    const seededIds = new Set<string>([hiddenArtworkId, visibleArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    // Only the AVAILABLE artwork should appear; the HIDDEN one must be excluded.
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(visibleArtworkId);
+  });
+
+  it("excludes HIDDEN FRAMER artworks even when sellerType=FRAMER is requested", async () => {
+    const framerTenantId = await createTenant({ type: "FRAMER", storefrontEnabled: true });
+    createdTenantIds.push(framerTenantId);
+
+    const hiddenArtworkId = await createArtwork({ tenantId: framerTenantId, status: "HIDDEN" });
+    const soldArtworkId = await createArtwork({ tenantId: framerTenantId, status: "SOLD" });
+    createdArtworkIds.push(hiddenArtworkId, soldArtworkId);
+
+    const rows = await runBrowseQuery({ sellerType: "FRAMER" });
+
+    const seededIds = new Set<string>([hiddenArtworkId, soldArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    // HIDDEN must be excluded; the SOLD artwork must appear.
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(soldArtworkId);
+  });
+});
