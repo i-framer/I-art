@@ -1,0 +1,91 @@
+name: Schema-drift guard
+
+# Verifies that:
+#   1. The artwork-bank build script still chains check-drift before next build
+#      (so no one can silently remove the gate).
+#   2. check-drift exits 1 when DATABASE_URL is absent
+#      (proves the guard actually fires when the secret is missing in Vercel).
+#
+# This job runs on every push / PR that touches relevant files and requires
+# no live database — it deliberately omits DATABASE_URL to test the guard.
+
+on:
+  push:
+    paths:
+      - "artifacts/artwork-bank/package.json"
+      - "lib/db/scripts/check-drift.ts"
+      - ".github/workflows/schema-drift-guard.yml"
+  pull_request:
+    paths:
+      - "artifacts/artwork-bank/package.json"
+      - "lib/db/scripts/check-drift.ts"
+      - ".github/workflows/schema-drift-guard.yml"
+
+jobs:
+  schema-drift-guard:
+    name: Schema-drift guard (no DB required)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ── Check 1: build script still gates on check-drift ─────────────────
+      - name: Verify build script includes check-drift
+        run: |
+          BUILD_SCRIPT=$(node -e "const p=require('./artifacts/artwork-bank/package.json'); console.log(p.scripts.build ?? '')")
+          echo "build script: $BUILD_SCRIPT"
+          if [[ "$BUILD_SCRIPT" != *"check-drift"* ]]; then
+            echo "❌  The 'build' script in artifacts/artwork-bank/package.json no longer"
+            echo "    references check-drift. The DATABASE_URL guard has been removed."
+            echo "    Restore it: \"build\": \"pnpm --filter @workspace/db run check-drift && next build\""
+            exit 1
+          fi
+          # Also verify the check-drift call precedes next build (shell && ordering)
+          if [[ "$BUILD_SCRIPT" != *"check-drift"*"next build"* ]]; then
+            echo "❌  check-drift does not appear before 'next build' in the build script."
+            echo "    The schema check must run first so a missing DATABASE_URL blocks the build."
+            exit 1
+          fi
+          echo "✅  build script correctly gates on check-drift before next build."
+
+      # ── Check 2: check-drift exits 1 when DATABASE_URL is absent ─────────
+      - name: Assert check-drift exits 1 without DATABASE_URL
+        run: |
+          # Run the drift script with no DATABASE_URL set.
+          # We expect exit code 1 and the specific error message.
+          set +e
+          OUTPUT=$(pnpm --filter @workspace/db run check-drift 2>&1)
+          EXIT_CODE=$?
+          set -e
+
+          echo "Exit code: $EXIT_CODE"
+          echo "Output:    $OUTPUT"
+
+          if [ "$EXIT_CODE" -ne 1 ]; then
+            echo "❌  check-drift exited with code $EXIT_CODE instead of 1."
+            echo "    The DATABASE_URL guard is broken — a missing secret would not stop the build."
+            exit 1
+          fi
+
+          if [[ "$OUTPUT" != *"DATABASE_URL"* ]]; then
+            echo "❌  check-drift exited 1 but the output does not mention DATABASE_URL."
+            echo "    The error message may have changed — verify the guard is still meaningful."
+            exit 1
+          fi
+
+          echo "✅  check-drift correctly exits 1 with a clear DATABASE_URL error when the secret is absent."
+        env:
+          # Explicitly absent — this is the scenario we are testing.
+          DATABASE_URL: ""

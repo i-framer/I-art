@@ -185,6 +185,42 @@ file), then send a real test message for each email type:
 Both tests must succeed before go-live. If delivery fails, check Vercel logs for the
 `SMTP error:` prefix and compare against the settings in §6a above.
 
+## 7. Schema-drift check at build time
+
+Every Vercel build runs `pnpm --filter @workspace/db run check-drift` **before**
+`next build` (see the `build` script in `artifacts/artwork-bank/package.json`).
+The check compares the Drizzle TypeScript schema against the live database and
+aborts the build with a clear error if any table or column is missing.
+
+> **⚠️ The drift check only works when `DATABASE_URL` is set in Vercel.**
+> If `DATABASE_URL` is absent the check script exits 1 immediately and the
+> build fails — Vercel will surface this as a build error and will not
+> deploy the new code. This is intentional: a missing secret is treated as
+> a hard failure, not a silent pass.
+
+### What to verify before the first deploy
+
+- [ ] `DATABASE_URL` is set under **Vercel → Project → Settings → Environment
+      Variables → Production** (and Preview if you want drift checks on preview
+      deploys too).
+- [ ] The schema has been applied to the production database:
+      `DATABASE_URL=<prod-url> pnpm --filter @workspace/db run push`
+- [ ] A test deploy succeeds and the build log shows
+      `✅  Schema OK — N tables verified against the database.`
+
+### CI enforcement
+
+A GitHub Actions workflow (`.github/workflows/schema-drift-guard.yml`) runs on
+every change to `package.json`, `check-drift.ts`, or the workflow file itself.
+It:
+
+1. **Asserts the build script still chains `check-drift` before `next build`** —
+   fails if someone silently removes the gate.
+2. **Runs `check-drift` without `DATABASE_URL` and asserts it exits 1** —
+   proves the guard fires correctly when the secret is misconfigured.
+
+No live database is needed for this CI job.
+
 ## 8. Keeping the production database schema in sync
 
 Every code merge runs `scripts/post-merge.sh` automatically. That script already
@@ -229,7 +265,7 @@ SELECT column_name FROM information_schema.columns
 The new columns must appear. If they do not, run the manual command above and
 investigate why `PROD_DATABASE_URL` is not reaching the post-merge script.
 
-## 7. Verify after deploy
+## 9. Verify after deploy
 
 - `pnpm run build` succeeds locally from `artifacts/artwork-bank/` (same build Vercel runs).
 - Log in, upload an artwork image, confirm it renders on the storefront, delete it.
