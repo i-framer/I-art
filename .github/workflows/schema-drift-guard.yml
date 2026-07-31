@@ -7,6 +7,8 @@ name: Schema-drift guard
 #      (proves the guard actually fires when the secret is missing in Vercel).
 #   3. check-drift exits 1 quickly when DATABASE_URL is set to a bad value
 #      (catches stale / wrong URLs before a long TCP timeout hangs the build).
+#   4. The pg client honours connectionTimeoutMillis within 5.5 s
+#      (direct-client vitest smoke test — tight ceiling, no subprocess jitter).
 #
 # This job runs on every push / PR that touches relevant files and requires
 # no live database — it deliberately omits or spoofs DATABASE_URL to test the guard.
@@ -16,11 +18,19 @@ on:
     paths:
       - "artifacts/artwork-bank/package.json"
       - "lib/db/scripts/check-drift.ts"
+      - "lib/db/scripts/check-drift-logic.ts"
+      - "lib/db/__tests__/check-drift-timeout.test.ts"
+      - "lib/db/package.json"
+      - "lib/db/vitest.config.ts"
       - ".github/workflows/schema-drift-guard.yml"
   pull_request:
     paths:
       - "artifacts/artwork-bank/package.json"
       - "lib/db/scripts/check-drift.ts"
+      - "lib/db/scripts/check-drift-logic.ts"
+      - "lib/db/__tests__/check-drift-timeout.test.ts"
+      - "lib/db/package.json"
+      - "lib/db/vitest.config.ts"
       - ".github/workflows/schema-drift-guard.yml"
 
 jobs:
@@ -95,10 +105,22 @@ jobs:
       # ── Check 3: check-drift exits 1 fast when DATABASE_URL is a bad value ─
       - name: Assert check-drift exits 1 quickly with a bad DATABASE_URL
         run: |
-          # Use a syntactically-valid-but-unreachable URL (wrong host/port) so
-          # the connection attempt would normally hang until the TCP timeout.
-          # The script must exit 1 within a generous 10 s ceiling — well inside
-          # what a hung connect (60 s default) would take.
+          # Use 192.0.2.1 (TEST-NET-1, RFC 5737) — a documentation-range address
+          # never routed on the public internet.  Packets are dropped at the first
+          # upstream router so no TCP RST is returned; the pg client must rely
+          # solely on connectionTimeoutMillis to stop waiting.
+          #
+          # Ceiling = CONNECT_TIMEOUT_MS (5 s) + startup overhead.
+          # Startup overhead budget (pnpm + tsx + Node.js module load) is up to
+          # ~5 s on a GitHub-hosted runner — giving a total ceiling of 10 s.
+          #
+          # This is still far below the OS-level TCP timeout (~120 s), so the
+          # check reliably catches a broken connectionTimeoutMillis.
+          #
+          # Note: the *mechanism* (whether pg actually honours the timeout) is
+          # tested with a tight 5.5 s ceiling in the vitest smoke test
+          # (lib/db/__tests__/check-drift-timeout.test.ts).  This step only
+          # confirms that the full pnpm command does not hang indefinitely.
           set +e
           START=$(date +%s)
           OUTPUT=$(pnpm --filter @workspace/db run check-drift 2>&1)
@@ -116,11 +138,12 @@ jobs:
             exit 1
           fi
 
-          # The script should detect the bad URL before (or immediately after)
-          # attempting a connection — it must NOT hang for the default TCP timeout.
+          # The script must honour connectionTimeoutMillis and NOT hang for the
+          # OS-level TCP timeout.  10 s ceiling = 5 s timeout + ~5 s startup overhead.
           if [ "$ELAPSED" -gt 10 ]; then
-            echo "❌  check-drift took ${ELAPSED}s — the short-timeout guard is not firing."
-            echo "    Expected failure within 10 s for an unreachable host."
+            echo "❌  check-drift took ${ELAPSED}s — connectionTimeoutMillis is not being honoured."
+            echo "    Expected exit within 10 s (5 s timeout + startup overhead)."
+            echo "    Without connectionTimeoutMillis the OS TCP timeout would block for ~120 s."
             exit 1
           fi
 
@@ -136,8 +159,36 @@ jobs:
             exit 1
           fi
 
-          echo "✅  check-drift correctly exits 1 quickly (${ELAPSED}s) with a distinct error for a bad DATABASE_URL."
+          echo "✅  check-drift correctly exits 1 in ${ELAPSED}s with a distinct error for a bad DATABASE_URL."
         env:
-          # Syntactically valid PostgreSQL URL pointing at a host that will never
-          # accept a connection — exercises both the format check and the connect timeout.
+          # 192.0.2.1 — TEST-NET-1 (RFC 5737).  Not routed on the public internet;
+          # packets are silently dropped, creating a real TCP blackhole that forces
+          # the pg client to rely on connectionTimeoutMillis rather than a fast RST.
           DATABASE_URL: "postgresql://user:password@192.0.2.1:5432/testdb"
+
+      # ── Check 4: connectionTimeoutMillis fires correctly (vitest, local stalling server) ──
+      - name: Assert connectionTimeoutMillis fires correctly (vitest smoke tests)
+        run: |
+          # Runs lib/db/__tests__/check-drift-timeout.test.ts via vitest.
+          #
+          # Both tests in that file use a local TCP server that completes the
+          # OS-level handshake but never writes the PostgreSQL startup response.
+          # This guarantees the failure is a connectionTimeoutMillis timeout,
+          # not a fast ECONNREFUSED — and it is fully deterministic (no
+          # dependence on external routing or firewall rules).
+          #
+          # Test 1 (direct pg Client, 5.5 s ceiling):
+          #   Creates a pg Client with the same CONNECT_TIMEOUT_MS value used
+          #   by check-drift.ts and asserts it rejects within 5 500 ms with a
+          #   "timeout" error.  Tight ceiling; no subprocess overhead.
+          #
+          # Test 2 (subprocess, 8 s ceiling):
+          #   Runs the actual check-drift.ts script against the stalling server.
+          #   If CONNECT_TIMEOUT_MS is removed or raised in check-drift.ts this
+          #   test fails, providing a direct regression guard on the production
+          #   configuration.
+          pnpm --filter @workspace/db exec vitest run __tests__/check-drift-timeout.test.ts
+        env:
+          # DATABASE_URL must be absent so the test injects the stalling-server
+          # URL itself without the real production URL interfering.
+          DATABASE_URL: ""
