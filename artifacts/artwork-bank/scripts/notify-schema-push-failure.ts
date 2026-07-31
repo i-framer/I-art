@@ -6,15 +6,17 @@
  *     pnpm --filter @workspace/artwork-bank exec tsx scripts/notify-schema-push-failure.ts
  *
  * Slack channel: SLACK_BILLING_ALERTS_CHANNEL (reuses existing operator channel).
- * If neither a Slack channel nor PLATFORM_ADMIN_EMAIL is configured, the error is
- * printed to stderr and the script exits 0 so the caller can still propagate its
- * own non-zero exit code.
+ * Fallback: when Slack is absent or fails, sends an email to PLATFORM_ADMIN_EMAIL
+ * via the configured transport (SMTP or Resend) matching the billing-alert pattern.
+ * If neither channel is configured, the error is printed to stderr and the script
+ * exits 0 so the caller can still propagate its own non-zero exit code.
  *
  * The script always exits 0 — notification failures must not mask the original
  * push failure that the caller reports.
  */
 
 import { ReplitConnectors } from "@replit/connectors-sdk";
+import { sendSchemaPushFailureEmail } from "../lib/email";
 
 const errorText = process.env.SCHEMA_PUSH_ERROR ?? "(no output captured)";
 // Strip a leading '#' so operators can configure the channel as either
@@ -22,9 +24,9 @@ const errorText = process.env.SCHEMA_PUSH_ERROR ?? "(no output captured)";
 // name without the '#' prefix (or a channel ID like C0123456789).
 const channel = process.env.SLACK_BILLING_ALERTS_CHANNEL?.trim().replace(/^#/, "");
 
-async function sendSlackAlert(): Promise<boolean> {
+async function sendSlackAlert(): Promise<{ sent: boolean; error?: string }> {
   if (!channel) {
-    return false;
+    return { sent: false };
   }
 
   // Truncate very long output so the Slack message stays readable.
@@ -55,23 +57,25 @@ async function sendSlackAlert(): Promise<boolean> {
       const errorDetail = body?.error ?? "(no error field)";
       const extraDetail =
         body?.response_metadata?.messages?.join("; ") ?? "";
+      const errMsg = `HTTP ${response.status}: ${errorDetail}${extraDetail ? ` — ${extraDetail}` : ""}`;
       console.error(
         `[Schema push alert] Slack post failed (HTTP ${response.status}):`,
         errorDetail,
         extraDetail ? `— ${extraDetail}` : "",
       );
-      return false;
+      return { sent: false, error: errMsg };
     }
 
     console.log(
       `[Schema push alert] Slack message sent to ${channel}.`,
     );
-    return true;
+    return { sent: true };
   } catch (err: any) {
+    const errMsg = err?.message ?? String(err);
     console.error(
-      `[Schema push alert] Failed to post Slack message: ${err?.message ?? String(err)}`,
+      `[Schema push alert] Failed to post Slack message: ${errMsg}`,
     );
-    return false;
+    return { sent: false, error: errMsg };
   }
 }
 
@@ -80,31 +84,44 @@ async function main() {
     "[post-merge] Production schema push failed — attempting operator notification…",
   );
 
-  const slackSent = await sendSlackAlert();
+  const slackResult = await sendSlackAlert();
 
-  if (!slackSent) {
-    // No Slack channel or Slack call failed: print a prominent stderr banner so
-    // the failure is visible in CI logs even without a real notification channel.
+  if (!slackResult.sent) {
+    // No Slack channel or Slack call failed: attempt email fallback.
     if (!channel) {
       console.error(
         "[Schema push alert] SLACK_BILLING_ALERTS_CHANNEL is not set — " +
           "Slack alert skipped. Configure the channel to receive automated alerts.",
       );
     }
-    console.error(
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    );
-    console.error(
-      "OPERATOR ACTION REQUIRED: Production schema push failed after merge.",
-    );
-    console.error(
-      "The production database may be out of sync with the current schema.",
-    );
-    console.error("Error output:");
-    console.error(errorText);
-    console.error(
-      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    );
+
+    const emailSent = await sendSchemaPushFailureEmail({
+      errorText,
+      slackFailure: slackResult.error,
+    });
+
+    if (emailSent) {
+      console.error(
+        "[Schema push alert] Fallback email sent to PLATFORM_ADMIN_EMAIL.",
+      );
+    } else {
+      // Neither Slack nor email worked — print a prominent stderr banner so
+      // the failure is visible in CI logs even without a real notification channel.
+      console.error(
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      );
+      console.error(
+        "OPERATOR ACTION REQUIRED: Production schema push failed after merge.",
+      );
+      console.error(
+        "The production database may be out of sync with the current schema.",
+      );
+      console.error("Error output:");
+      console.error(errorText);
+      console.error(
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+      );
+    }
   }
 
   // Always exit 0 — the caller (post-merge.sh) owns the non-zero exit.
