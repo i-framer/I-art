@@ -185,17 +185,23 @@ export async function verifyCustomDomain(): Promise<void> {
   // Dynamic import so the dns module is only loaded server-side
   const dns = await import("node:dns/promises");
 
-  let verified: boolean;
+  let verified = false;
+  let conflict = false;
   try {
     const records = await dns.resolveCname(tenant.customDomain);
-    verified = records.some(
+    const matchesUs = records.some(
       (r) =>
         r.toLowerCase() === cnameTarget.toLowerCase() ||
         r.toLowerCase() === `${cnameTarget.toLowerCase()}.`,
     );
+    if (matchesUs) {
+      verified = true;
+    } else if (records.length > 0) {
+      // CNAME exists but points to a different host — conflict, not just pending.
+      conflict = true;
+    }
   } catch {
-    // DNS resolution failed (NXDOMAIN, ENODATA, etc.)
-    verified = false;
+    // DNS resolution failed (NXDOMAIN, ENODATA, etc.) — treat as unverified.
   }
 
   await db
@@ -210,7 +216,8 @@ export async function verifyCustomDomain(): Promise<void> {
     await provisionVercelDomain(tenant.customDomain);
   }
 
-  redirect(`/settings?domain_status=${verified ? "verified" : "unverified"}`);
+  const status = verified ? "verified" : conflict ? "conflict" : "unverified";
+  redirect(`/settings?domain_status=${status}`);
 }
 
 // ---------------------------------------------------------------------------

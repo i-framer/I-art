@@ -30,7 +30,7 @@ export const metadata: Metadata = { title: "Settings" };
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ saved?: string; stripe?: string; domain_status?: string }>;
+  searchParams: Promise<{ saved?: string; stripe?: string; domain_status?: string; }>;
 }) {
   const session = await getSession();
   if (!session.userId) redirect("/login");
@@ -132,6 +132,13 @@ export default async function SettingsPage({
       {domain_status === "unverified" && (
         <div className="mb-6 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700">
           Domain not yet verified. Make sure the CNAME record has been added and DNS has propagated (can take up to 48 hours).
+        </div>
+      )}
+      {domain_status === "conflict" && (
+        <div className="mb-6 rounded-lg bg-orange-50 border border-orange-200 px-4 py-3 text-sm text-orange-700">
+          Domain conflict — your CNAME record points to a different host. Update it to point
+          to <span className="font-mono">{cnameTarget ?? "the CNAME target shown below"}</span> and
+          click &ldquo;Re-verify&rdquo;.
         </div>
       )}
 
@@ -304,6 +311,11 @@ export default async function SettingsPage({
                     Verified — live at{" "}
                     <span className="font-mono">{tenant.customDomain}</span>
                   </span>
+                </div>
+              ) : domain_status === "conflict" ? (
+                <div className="flex items-center gap-2 text-sm text-orange-700">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>Conflict — CNAME points to a different host</span>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-sm text-amber-700">
