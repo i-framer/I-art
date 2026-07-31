@@ -18,9 +18,14 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import { checkDrift } from "../scripts/check-drift-logic.js";
 import type { TableSpec } from "../scripts/check-drift-logic.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -144,6 +149,32 @@ describe("checkDrift — real database", () => {
     // The base table should be clean too.
     expect(forTable(missingFromDb, tbl)).toHaveLength(0);
     expect(forTable(orphanedInDb, tbl)).toHaveLength(0);
+  });
+
+  it("full script: exits 1 and prints 'Orphaned in DB' when a stale column exists", async () => {
+    // Add a dummy column to the real `tenant` table so the script detects drift.
+    const colName = `_stale_drift_${uid()}`;
+    await exec(client, `ALTER TABLE "tenant" ADD COLUMN "${colName}" TEXT`);
+    cleanupSql.push(`ALTER TABLE "tenant" DROP COLUMN IF EXISTS "${colName}"`);
+
+    // Run the full check-drift.ts script via tsx as a subprocess.
+    const scriptPath = resolve(__dirname, "../scripts/check-drift.ts");
+    const tsxBin = resolve(__dirname, "../node_modules/.bin/tsx");
+    const result = spawnSync(tsxBin, [scriptPath], {
+      env: { ...process.env },
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
+
+    // The script must exit 1.
+    expect(result.status).toBe(1);
+
+    // stderr must contain the "Orphaned in DB" section header.
+    const combined = (result.stderr ?? "") + (result.stdout ?? "");
+    expect(combined).toContain("Orphaned in DB");
+
+    // And must mention the specific dummy column.
+    expect(combined).toContain(colName);
   });
 
   it("reports a missing column (schema ahead of DB) in missingFromDb, not orphanedInDb", async () => {
