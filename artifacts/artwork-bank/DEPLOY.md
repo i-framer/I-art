@@ -28,7 +28,7 @@ Preview too where noted).
 
 | Variable | Description | Where to get it |
 | --- | --- | --- |
-| `DATABASE_URL` | Postgres connection string | Your Postgres provider (Neon recommended — create a project at neon.tech and copy the pooled connection string). Apply the schema with `DATABASE_URL=... pnpm --filter @workspace/db run push` from your machine. |
+| `DATABASE_URL` | Postgres connection string | Your Postgres provider (Neon recommended — create a project at neon.tech and copy the pooled connection string). Apply the schema with `DATABASE_URL=... pnpm --filter @workspace/db run push` from your machine. **Set in both Production and Preview** (see §7 for Preview options). |
 | `SESSION_SECRET` | iron-session cookie encryption key (32+ chars) | Generate: `openssl rand -base64 32` |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob store token — enables the portable image-storage backend | Vercel → Storage → Create Blob store → connect to the project (token is injected automatically) |
 | `NEXT_PUBLIC_SITE_URL` | Canonical production URL, e.g. `https://i-art.com.au` | You choose it. Also drives tenant-subdomain routing (`{slug}.i-art.com.au`). Production only — leave unset on previews so `VERCEL_URL` is used. |
@@ -198,11 +198,60 @@ aborts the build with a clear error if any table or column is missing.
 > deploy the new code. This is intentional: a missing secret is treated as
 > a hard failure, not a silent pass.
 
+### Preview deployments and `DATABASE_URL`
+
+Vercel creates a Preview deployment for every pull-request branch. Because the
+drift check runs unconditionally, Preview deploys behave one of two ways
+depending on how you configure `DATABASE_URL`:
+
+**Option A — Skip `DATABASE_URL` on Preview (simpler, intentional failures)**
+
+Leave `DATABASE_URL` unset in the Preview environment. Every Preview build will
+fail the drift check with:
+
+```
+❌  DATABASE_URL is not set — cannot check schema drift.
+    Set DATABASE_URL to the production database connection string.
+```
+
+This is **expected and intentional** — not a bug. It means no Preview build can
+accidentally ship code against an unchecked database. The failure is
+self-explanatory in the Vercel build log. Choose this option if you do not need
+running Preview deployments (e.g. you review PRs locally or via the dev
+environment in Replit).
+
+**Option B — Dedicated Preview database (recommended for team review)**
+
+Create a second Neon project (or a Neon branch off the main project) to act as
+your Preview database. Then:
+
+1. Apply the schema once:
+   ```bash
+   DATABASE_URL="<preview-neon-url>" pnpm --filter @workspace/db run push
+   ```
+2. In Vercel → Project → Settings → Environment Variables, add `DATABASE_URL`
+   scoped to **Preview** with the preview database URL.
+3. (Optional) Add `SESSION_SECRET`, `STRIPE_SECRET_KEY`, and other required vars
+   scoped to Preview if you want the full app to work in Preview deploys.
+
+Preview builds will then run the drift check against the dedicated preview
+database. Because that database is never shared with production, there is no
+risk of a Preview deploy affecting live data.
+
+> **Keeping the preview database in sync:** after any PR that adds schema
+> changes, run:
+> ```bash
+> DATABASE_URL="<preview-neon-url>" pnpm --filter @workspace/db run push
+> ```
+> before merging, or the next Preview build will report drift on the preview
+> database just as it would on production.
+
 ### What to verify before the first deploy
 
 - [ ] `DATABASE_URL` is set under **Vercel → Project → Settings → Environment
-      Variables → Production** (and Preview if you want drift checks on preview
-      deploys too).
+      Variables → Production**.
+- [ ] Decide on Option A or Option B above for Preview, and configure (or
+      intentionally leave unset) `DATABASE_URL` under the **Preview** scope.
 - [ ] The schema has been applied to the production database:
       `DATABASE_URL=<prod-url> pnpm --filter @workspace/db run push`
 - [ ] A test deploy succeeds and the build log shows
