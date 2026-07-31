@@ -376,3 +376,82 @@ describeIntegration("browse artist filter — no-op when artist is absent", () =
     expect(matched).toHaveLength(1);
   });
 });
+
+describeIntegration(
+  "browse artist filter — base conditions interact correctly with artist OR clause",
+  () => {
+    it("excludes a HIDDEN artwork even when its represented artist matches the filter", async () => {
+      const tenantId = await createTenant({ type: "FRAMER" });
+      createdTenantIds.push(tenantId);
+
+      const artistId = await createRepresentedArtist({
+        tenantId,
+        name: "Diana Marsh",
+      });
+      createdArtistIds.push(artistId);
+
+      // Control: AVAILABLE + showInGallery=true — must appear.
+      const visibleArtworkId = await createArtwork({
+        tenantId,
+        title: "Visible Work",
+        representedArtistId: artistId,
+        status: "AVAILABLE",
+        showInGallery: true,
+      });
+      createdArtworkIds.push(visibleArtworkId);
+
+      // Subject: HIDDEN — must be excluded even though the artist matches.
+      const hiddenArtworkId = await createArtwork({
+        tenantId,
+        title: "Hidden Work",
+        representedArtistId: artistId,
+        status: "HIDDEN",
+        showInGallery: true,
+      });
+      createdArtworkIds.push(hiddenArtworkId);
+
+      const rows = await runBrowseQuery({ artist: "Diana Marsh" });
+      const matchedIds = rows.map((r) => r.artworkId);
+
+      expect(matchedIds).toContain(visibleArtworkId);
+      expect(matchedIds).not.toContain(hiddenArtworkId);
+    });
+
+    it("excludes a showInGallery=false artwork even when its represented artist matches the filter", async () => {
+      const tenantId = await createTenant({ type: "FRAMER" });
+      createdTenantIds.push(tenantId);
+
+      const artistId = await createRepresentedArtist({
+        tenantId,
+        name: "Diana Marsh",
+      });
+      createdArtistIds.push(artistId);
+
+      // Control: AVAILABLE + showInGallery=true — must appear.
+      const visibleArtworkId = await createArtwork({
+        tenantId,
+        title: "Visible Work",
+        representedArtistId: artistId,
+        status: "AVAILABLE",
+        showInGallery: true,
+      });
+      createdArtworkIds.push(visibleArtworkId);
+
+      // Subject: showInGallery=false — must be excluded even though the artist matches.
+      const hiddenFromGalleryId = await createArtwork({
+        tenantId,
+        title: "Not In Gallery",
+        representedArtistId: artistId,
+        status: "AVAILABLE",
+        showInGallery: false,
+      });
+      createdArtworkIds.push(hiddenFromGalleryId);
+
+      const rows = await runBrowseQuery({ artist: "Diana Marsh" });
+      const matchedIds = rows.map((r) => r.artworkId);
+
+      expect(matchedIds).toContain(visibleArtworkId);
+      expect(matchedIds).not.toContain(hiddenFromGalleryId);
+    });
+  },
+);
