@@ -116,7 +116,9 @@ export default async function SettingsPage({
       {stripe === "connect_not_enabled" && (
         <div className="mb-6 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
           Stripe rejected the request: Connect isn&apos;t enabled on the platform&apos;s
-          Stripe account yet. Enable Connect in the Stripe dashboard, then try again.
+          Stripe account yet. This is a platform-side configuration issue being
+          handled by the platform operator — no action is needed from your gallery.
+          Please try again later.
         </div>
       )}
       {stripe === "rejected" && (

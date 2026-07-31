@@ -114,6 +114,115 @@ export async function getStripeWebhookSecret(): Promise<string | undefined> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Stripe environment diagnostic (operator-facing)
+// ---------------------------------------------------------------------------
+
+/**
+ * True when Stripe rejected a Connect-scoped call because Connect is not
+ * enabled on the platform account. Mirrors the classification used by the
+ * onboarding action.
+ */
+export function isConnectNotEnabledError(err: unknown): boolean {
+  const msg = String((err as { message?: string } | null)?.message ?? "");
+  return /connect/i.test(msg) && /(signed up|not.*enabled|platform)/i.test(msg);
+}
+
+export type StripeConnectStatus = "enabled" | "disabled" | "unknown";
+
+export type StripeEnvironmentDiagnostic =
+  | { status: "not_configured"; message: string }
+  | { status: "invalid_key"; message: string }
+  | { status: "unreachable"; message: string }
+  | {
+      status: "ok";
+      /** The platform account ID the configured key resolves to (acct_…). */
+      accountId: string;
+      /** Business/display name of the account, if set. */
+      accountName: string | null;
+      /** true = live-mode key, false = test/sandbox key. */
+      livemode: boolean;
+      /**
+       * Whether Stripe Connect is usable on this account.
+       * - "enabled": a Connect-scoped read succeeded and connected accounts exist
+       * - "disabled": Stripe rejected the read with its Connect-not-enabled error
+       * - "unknown": the read succeeded but returned no connected accounts (Stripe
+       *   returns an empty list for non-Connect platforms too), or it failed for
+       *   an unrelated/transient reason — the panel should not assert either way
+       */
+      connectStatus: StripeConnectStatus;
+    };
+
+/**
+ * Resolves which Stripe account and mode the configured secret key belongs
+ * to, and probes whether Connect is enabled — via a harmless Connect-scoped
+ * read (listing connected accounts). Never throws; never exposes key
+ * material, only non-sensitive account metadata.
+ */
+export async function getStripeEnvironmentDiagnostic(): Promise<StripeEnvironmentDiagnostic> {
+  let stripe: Stripe;
+  try {
+    stripe = await getStripeClient();
+  } catch (err) {
+    return {
+      status: "not_configured",
+      message:
+        err instanceof StripeNotConfiguredError
+          ? err.message
+          : "Stripe is not configured.",
+    };
+  }
+
+  let account: Stripe.Account;
+  try {
+    // No-arg form retrieves the platform's own account; the installed type
+    // definitions only declare the (id, params) overloads.
+    account = await (
+      stripe.accounts.retrieve as unknown as () => Promise<Stripe.Account>
+    )();
+  } catch (err: any) {
+    const type = err?.type ?? err?.raw?.type;
+    if (type === "StripeAuthenticationError" || err?.statusCode === 401) {
+      return {
+        status: "invalid_key",
+        message:
+          "The configured Stripe secret key was rejected by Stripe. It may have been revoked or rolled — update the key.",
+      };
+    }
+    // Not an auth failure — likely a network/API problem, not a bad key.
+    return {
+      status: "unreachable",
+      message: `Stripe could not be reached: ${err?.message ?? String(err)}`,
+    };
+  }
+
+  // Probe Connect with a harmless read (listing connected accounts).
+  // - Rejected with the Connect-not-enabled error → definitively disabled.
+  // - Succeeds with at least one connected account → definitively enabled.
+  // - Succeeds but empty → ambiguous (Stripe also returns an empty list for
+  //   non-Connect platforms), so report "unknown" rather than asserting.
+  let connectStatus: StripeConnectStatus = "unknown";
+  try {
+    const list = await stripe.accounts.list({ limit: 1 });
+    connectStatus = list.data.length > 0 ? "enabled" : "unknown";
+  } catch (err) {
+    if (isConnectNotEnabledError(err)) {
+      connectStatus = "disabled";
+    }
+    // Any other failure: leave "unknown" — don't falsely alarm the operator.
+  }
+
+  const settingsName = (account.settings?.dashboard?.display_name ??
+    null) as string | null;
+  return {
+    status: "ok",
+    accountId: account.id,
+    accountName: account.business_profile?.name ?? settingsName,
+    livemode: Boolean((account as { livemode?: boolean }).livemode),
+    connectStatus,
+  };
+}
+
 /** Platform application fee as a percentage (default 5%). */
 export const PLATFORM_FEE_PERCENT = parseFloat(
   process.env.PLATFORM_FEE_PERCENT ?? "5",
