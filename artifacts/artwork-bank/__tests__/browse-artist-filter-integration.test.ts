@@ -24,6 +24,7 @@ import {
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { buildBrowseWhere } from "@/lib/browse-where";
+import { representedArtistFilterWhere } from "@/lib/browse-filter-options";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -106,6 +107,19 @@ async function runBrowseQuery(searchParams: Record<string, string> = {}) {
       ),
     )
     .where(whereClause);
+}
+
+/**
+ * Run the represented-artist dropdown query — the same query the browse page
+ * uses to populate the artist filter dropdown.  Returns one row per artist
+ * that passes representedArtistFilterWhere().
+ */
+async function runRepresentedArtistDropdownQuery() {
+  return db
+    .select({ artistId: representedArtistsTable.id, name: representedArtistsTable.name })
+    .from(representedArtistsTable)
+    .innerJoin(tenantsTable, eq(tenantsTable.id, representedArtistsTable.tenantId))
+    .where(representedArtistFilterWhere());
 }
 
 // Track created row IDs for cleanup.
@@ -528,6 +542,86 @@ describeIntegration(
 
       expect(matchedIds).toContain(visibleArtworkId);
       expect(matchedIds).not.toContain(hiddenFromGalleryId);
+    });
+  },
+);
+
+describeIntegration(
+  "represented-artist dropdown — SOLD and RESERVED artworks keep the artist visible",
+  () => {
+    it("includes a represented artist whose only artwork is SOLD", async () => {
+      // SOLD is a visible status — the artist should still appear in the dropdown
+      // so buyers can browse sold artworks by that artist.
+      const tenantId = await createTenant({ type: "FRAMER" });
+      createdTenantIds.push(tenantId);
+
+      const artistId = await createRepresentedArtist({
+        tenantId,
+        name: "Naomi Keller",
+      });
+      createdArtistIds.push(artistId);
+
+      const artworkId = await createArtwork({
+        tenantId,
+        representedArtistId: artistId,
+        status: "SOLD",
+      });
+      createdArtworkIds.push(artworkId);
+
+      const rows = await runRepresentedArtistDropdownQuery();
+      const matched = rows.filter((r) => r.artistId === artistId);
+
+      expect(matched).toHaveLength(1);
+    });
+
+    it("includes a represented artist whose only artwork is RESERVED", async () => {
+      // RESERVED is a visible status — the artist should still appear in the
+      // dropdown so buyers can see reserved artworks by that artist.
+      const tenantId = await createTenant({ type: "FRAMER" });
+      createdTenantIds.push(tenantId);
+
+      const artistId = await createRepresentedArtist({
+        tenantId,
+        name: "Hiroshi Fujii",
+      });
+      createdArtistIds.push(artistId);
+
+      const artworkId = await createArtwork({
+        tenantId,
+        representedArtistId: artistId,
+        status: "RESERVED",
+      });
+      createdArtworkIds.push(artworkId);
+
+      const rows = await runRepresentedArtistDropdownQuery();
+      const matched = rows.filter((r) => r.artistId === artistId);
+
+      expect(matched).toHaveLength(1);
+    });
+
+    it("excludes a represented artist whose only artwork is HIDDEN", async () => {
+      // HIDDEN artworks are not visible — an artist with only hidden artworks
+      // must not appear in the dropdown.
+      const tenantId = await createTenant({ type: "FRAMER" });
+      createdTenantIds.push(tenantId);
+
+      const artistId = await createRepresentedArtist({
+        tenantId,
+        name: "Ghost Painter",
+      });
+      createdArtistIds.push(artistId);
+
+      const artworkId = await createArtwork({
+        tenantId,
+        representedArtistId: artistId,
+        status: "HIDDEN",
+      });
+      createdArtworkIds.push(artworkId);
+
+      const rows = await runRepresentedArtistDropdownQuery();
+      const matched = rows.filter((r) => r.artistId === artistId);
+
+      expect(matched).toHaveLength(0);
     });
   },
 );
