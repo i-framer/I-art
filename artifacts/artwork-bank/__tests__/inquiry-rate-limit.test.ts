@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import { it, expect, beforeEach, afterAll } from "vitest";
+import { describeIntegration } from "./helpers/skip-if-no-db";
 import { checkRateLimit, resetRateLimiter } from "../lib/rate-limit";
 import { pool } from "@workspace/db";
 
@@ -6,7 +7,7 @@ import { pool } from "@workspace/db";
 // unique key prefix so runs don't interfere with real data or each other.
 const prefix = `test-rl-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-describe("checkRateLimit (Postgres-backed)", () => {
+describeIntegration("checkRateLimit (Postgres-backed)", () => {
   beforeEach(async () => {
     await resetRateLimiter(prefix);
   });
