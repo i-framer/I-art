@@ -1,0 +1,126 @@
+name: Scheduled schema-drift check
+
+# Runs the production schema drift check on a daily schedule so that manual
+# database changes (Drizzle Studio sessions, hotfixes, PROD_DATABASE_URL swaps)
+# are caught before they cause user-facing errors — not just at merge time.
+#
+# On drift: calls notify-drift-failure.ts which tries, in order:
+#   1. Replit Connectors → Slack
+#   2. Direct Slack API  (SLACK_BOT_TOKEN + SLACK_BILLING_ALERTS_CHANNEL)
+#   3. Slack Incoming Webhook (SLACK_WEBHOOK_URL)
+#   4. Email             (RESEND_API_KEY or SMTP_* + PLATFORM_ADMIN_EMAIL)
+#   5. Prominent CI log banner (always — visible even without a configured channel)
+#
+# Required GitHub Actions repository secrets:
+#   PROD_DATABASE_URL          — production Neon / Postgres connection string
+#
+# Optional secrets (at least one Slack option is recommended):
+#   SLACK_BILLING_ALERTS_CHANNEL  — channel name or ID (e.g. "ops-alerts")
+#   SLACK_BOT_TOKEN               — Slack bot OAuth token (xoxb-...)
+#   SLACK_WEBHOOK_URL             — Slack incoming webhook URL
+#   PLATFORM_ADMIN_EMAIL          — fallback email recipient
+#   RESEND_API_KEY                — Resend API key for email fallback
+#   SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS — SMTP fallback
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC — early enough to catch overnight drift before
+    # business hours without hammering the database at peak times.
+    - cron: "0 6 * * *"
+
+  # Allow manual trigger from the GitHub Actions UI for on-demand checks.
+  workflow_dispatch:
+
+jobs:
+  drift-check:
+    name: Check production schema drift
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ── Guard + drift check (combined so the skip is actually enforced) ─────
+      # Combining the PROD_DATABASE_URL guard and the drift check in one step
+      # prevents the guard from exiting 0 while a separate step still runs the
+      # check against an empty DATABASE_URL (which would cause false failures).
+      - name: Run schema drift check against production database
+        run: |
+          # Guard: skip cleanly when the secret has not been added yet.
+          # A missing PROD_DATABASE_URL is not a drift failure — it just means
+          # the scheduled check is not yet configured for this repository.
+          if [ -z "$PROD_DATABASE_URL" ]; then
+            echo "⚠️  PROD_DATABASE_URL is not set — skipping production drift check."
+            echo "   Add the PROD_DATABASE_URL secret to this repository to enable"
+            echo "   automatic daily drift detection."
+            exit 0
+          fi
+
+          echo "PROD_DATABASE_URL is set — running drift check…"
+
+          # Capture combined stdout+stderr so the error output can be included
+          # in the operator alert.  Use a temp file to avoid subshell
+          # variable-scoping issues.
+          DRIFT_OUTPUT_FILE=$(mktemp)
+
+          set +e
+          DATABASE_URL="$PROD_DATABASE_URL" \
+            pnpm --filter @workspace/db run check-drift 2>&1 | tee "$DRIFT_OUTPUT_FILE"
+          DRIFT_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          # check-drift uses distinct exit codes:
+          #   0 — schema matches the database (no drift)
+          #   1 — operational failure (bad URL, connection refused, internal error)
+          #   2 — confirmed schema drift (missing or orphaned tables/columns)
+
+          if [ "$DRIFT_EXIT" -eq 2 ]; then
+            # Confirmed schema drift — alert the operator with repair instructions.
+            echo ""
+            echo "❌ Confirmed schema drift (exit 2) — sending operator alert…"
+            DRIFT_ERROR=$(cat "$DRIFT_OUTPUT_FILE") \
+              pnpm --filter @workspace/artwork-bank exec tsx scripts/notify-drift-failure.ts || true
+            rm -f "$DRIFT_OUTPUT_FILE"
+            exit 2
+          fi
+
+          if [ "$DRIFT_EXIT" -ne 0 ]; then
+            # Operational failure — the check could not run (bad URL, connection
+            # refused, internal error).  Fail the job so GitHub notifies the
+            # operator, but do NOT send a drift alert (which would include unsafe
+            # push-force instructions that don't apply here).
+            echo ""
+            echo "⚠️  Drift check could not run (exit $DRIFT_EXIT) — see output above."
+            echo "   This is a configuration or connectivity issue, not schema drift."
+            echo "   Check that PROD_DATABASE_URL is correct and the database is reachable."
+            rm -f "$DRIFT_OUTPUT_FILE"
+            exit "$DRIFT_EXIT"
+          fi
+
+          rm -f "$DRIFT_OUTPUT_FILE"
+          echo ""
+          echo "✅ No schema drift — production database matches the TypeScript schema."
+        env:
+          PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          # Slack — tried in order by the notifier:
+          SLACK_BILLING_ALERTS_CHANNEL: ${{ secrets.SLACK_BILLING_ALERTS_CHANNEL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Email fallback:
+          PLATFORM_ADMIN_EMAIL: ${{ secrets.PLATFORM_ADMIN_EMAIL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}

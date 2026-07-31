@@ -756,6 +756,90 @@ export async function sendSchemaPushFailureEmail({
   }
 }
 
+export async function sendDriftFailureEmail({
+  errorText,
+  slackFailure,
+}: {
+  /** Captured output from the failed check-drift command. */
+  errorText: string;
+  /**
+   * When the Slack notification also failed, pass the error here so the
+   * operator can see at a glance that Slack is broken too.
+   */
+  slackFailure?: string;
+}): Promise<boolean> {
+  const adminEmail = process.env.PLATFORM_ADMIN_EMAIL;
+
+  if (!isEmailTransportConfigured() || !adminEmail) {
+    console.log(
+      `[Drift alert email skipped — ${!isEmailTransportConfigured() ? "email transport (SMTP_HOST or RESEND_API_KEY)" : "PLATFORM_ADMIN_EMAIL"} not set]`,
+    );
+    return false;
+  }
+
+  const escapeHtml = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  // Truncate very long output so the email stays readable.
+  const MAX_CHARS = 4000;
+  const truncatedError =
+    errorText.length > MAX_CHARS
+      ? errorText.slice(0, MAX_CHARS) + "\n… (truncated)"
+      : errorText;
+
+  try {
+    await deliverEmail({
+      from: getOrdersFrom(),
+      to: adminEmail,
+      subject: `Action needed — Production schema drift detected (scheduled check)`,
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+          <h2 style="color:#b91c1c;">Production schema drift detected</h2>
+          <p>The daily scheduled drift check found that the production database schema
+          no longer matches the TypeScript schema. This often means a manual change was
+          applied directly to the database (e.g. via Drizzle Studio or a hotfix) without
+          a corresponding schema update.</p>
+          <div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
+            <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">Action required</p>
+            <ul style="margin:0;padding-left:20px;color:#7f1d1d;">
+              <li>If the DB is <strong>ahead</strong> of the schema (orphaned columns/tables):
+                add a migration that DROPs them, or restore them in the schema.</li>
+              <li>If the schema is <strong>ahead</strong> of the DB (missing columns/tables):
+                run the push command below, then redeploy.</li>
+            </ul>
+            <pre style="margin:12px 0 0;padding:12px;background:#1c1917;color:#f5f5f4;border-radius:4px;font-size:12px;overflow-x:auto;">DATABASE_URL="$PROD_DATABASE_URL" pnpm --filter @workspace/db run push-force</pre>
+          </div>
+          <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
+            <p style="margin:0 0 8px;font-weight:bold;">Drift output:</p>
+            <pre style="margin:0;white-space:pre-wrap;font-size:12px;font-family:monospace;overflow-x:auto;">${escapeHtml(truncatedError)}</pre>
+          </div>
+          ${
+            slackFailure
+              ? `<div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
+              <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">⚠️ Slack notification also failed</p>
+              <p style="margin:0;color:#7f1d1d;font-size:13px;">The Slack alert could not be delivered. Your Slack connector may need to be reconnected.</p>
+              <p style="margin:8px 0 0;color:#7f1d1d;font-size:12px;font-family:monospace;">${escapeHtml(slackFailure.slice(0, 300))}</p>
+            </div>`
+              : ""
+          }
+        </div>
+      `,
+    });
+    return true;
+  } catch (err) {
+    // Best-effort — log but do not propagate.
+    console.error(
+      "[Drift alert email] Failed to send operator notification:",
+      (err as any)?.message ?? String(err),
+    );
+    return false;
+  }
+}
+
 export async function sendOrderConfirmation({
   buyerEmail,
   buyerName,

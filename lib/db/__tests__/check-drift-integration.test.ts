@@ -166,8 +166,8 @@ describe("checkDrift — real database", () => {
       timeout: 30_000,
     });
 
-    // The script must exit 1.
-    expect(result.status).toBe(1);
+    // The script must exit 2 (confirmed schema drift — not an operational failure).
+    expect(result.status).toBe(2);
 
     // stderr must contain the "Orphaned in DB" section header.
     const combined = (result.stderr ?? "") + (result.stdout ?? "");

@@ -2,8 +2,17 @@
  * check-drift.ts
  *
  * Compares the Drizzle schema (TypeScript source) against the live database
- * and exits 1 with a clear error message when any table or column is missing
- * or orphaned.
+ * and exits with a status code that identifies what happened:
+ *
+ *   0 — schema matches the database exactly (no drift)
+ *   1 — operational failure: DATABASE_URL missing/invalid, connection refused,
+ *       or an internal error prevented the check from running
+ *   2 — confirmed schema drift: one or more tables or columns are missing from
+ *       or orphaned in the live database
+ *
+ * Callers (CI, scheduled workflows, post-merge scripts) can branch on these
+ * exit codes to send the appropriate operator alert for each case — a
+ * connection failure should not be reported as "schema drift".
  *
  * Run automatically as part of the Vercel build so schema drift is caught
  * before the new code goes live.
@@ -128,7 +137,10 @@ try {
         "                        or restore them in the schema if removal was unintentional.\n" +
         "    Then redeploy.\n",
     );
-    process.exit(1);
+    // Exit 2 = confirmed schema drift (distinct from exit 1 = operational failure).
+    // Callers can branch on this to send a drift-specific alert only for real drift,
+    // not for connection or configuration errors.
+    process.exit(2);
   }
 
   console.log(`✅  Schema OK — ${tables.length} tables verified against the database.`);
