@@ -7,7 +7,8 @@
  * gap between the query shape and what the database actually executes (e.g.
  * type or enum mismatches the mock cannot surface).
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { it, expect, beforeEach, afterEach } from "vitest";
+import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 
 // ── Real DB (no mock) — that is the whole point of this integration test ──────
@@ -107,7 +108,7 @@ afterEach(async () => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("browse query — sellerType filter", () => {
+describeIntegration("browse query — sellerType filter", () => {
   it("returns only the ARTIST artwork when filtering by sellerType=ARTIST", async () => {
     // Seed one ARTIST tenant and one FRAMER tenant, both with enabled storefronts.
     const artistTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });

@@ -18,7 +18,8 @@
  *   - Positive controls confirm that a category / artist DOES appear when
  *     the artwork is visible.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { it, expect, beforeEach, afterEach } from "vitest";
+import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 
 // ── Real DB (no mock) — that is the whole point of this integration test ──────
@@ -188,7 +189,7 @@ afterEach(async () => {
 
 // ── categoryFilterWhere tests ─────────────────────────────────────────────────
 
-describe("categoryFilterWhere — categories with no visible artworks are hidden", () => {
+describeIntegration("categoryFilterWhere — categories with no visible artworks are hidden", () => {
   it("excludes a category whose only artwork has showInGallery=false", async () => {
     const tenantId = await createTenant();
     createdTenantIds.push(tenantId);
@@ -308,7 +309,7 @@ describe("categoryFilterWhere — categories with no visible artworks are hidden
 
 // ── representedArtistFilterWhere tests ───────────────────────────────────────
 
-describe("representedArtistFilterWhere — artists with no visible artworks are hidden", () => {
+describeIntegration("representedArtistFilterWhere — artists with no visible artworks are hidden", () => {
   it("excludes a represented artist whose only artwork has showInGallery=false", async () => {
     const tenantId = await createTenant();
     createdTenantIds.push(tenantId);

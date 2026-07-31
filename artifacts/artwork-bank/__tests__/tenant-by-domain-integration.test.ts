@@ -9,7 +9,8 @@
  * The route handler is imported directly and called with a synthetic Request
  * so no HTTP server is needed.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { it, expect, beforeEach, afterEach } from "vitest";
+import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 
 // ── Real DB (no mock) — that is the whole point of this integration test ──────
@@ -68,7 +69,7 @@ afterEach(async () => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("GET /api/tenant/by-domain — real database", () => {
+describeIntegration("GET /api/tenant/by-domain — real database", () => {
   // ── Happy path ──────────────────────────────────────────────────────────────
 
   it("returns 200 and the correct slug for a verified custom domain", async () => {

@@ -10,7 +10,8 @@
  *  3. The no-match ERROR path: an event that matches no tenant writes a
  *     stripe_alert row and logs an error.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 
 // ── Stub out non-DB collaborators; keep the real @workspace/db untouched ─────
@@ -119,7 +120,7 @@ afterEach(async () => {
 
 // ── Lookup path: billingTenantId metadata ─────────────────────────────────────
 
-describe("tenant lookup by billingTenantId metadata", () => {
+describeIntegration("tenant lookup by billingTenantId metadata", () => {
   it("customer.subscription.updated mirrors status onto the matched tenant row", async () => {
     const tenantId = await createTenant();
     createdTenantIds.push(tenantId);
@@ -175,7 +176,7 @@ describe("tenant lookup by billingTenantId metadata", () => {
 
 // ── Lookup path: stripeCustomerId ─────────────────────────────────────────────
 
-describe("tenant lookup by stripeCustomerId (no metadata)", () => {
+describeIntegration("tenant lookup by stripeCustomerId (no metadata)", () => {
   it("customer.subscription.updated matches by customer ID and updates status", async () => {
     const cusId = `cus_byid_${uid()}`;
     const tenantId = await createTenant({ stripeCustomerId: cusId });
@@ -206,7 +207,7 @@ describe("tenant lookup by stripeCustomerId (no metadata)", () => {
 
 // ── Lookup path: stripeSubscriptionId ─────────────────────────────────────────
 
-describe("tenant lookup by stripeSubscriptionId (no metadata, no customer match)", () => {
+describeIntegration("tenant lookup by stripeSubscriptionId (no metadata, no customer match)", () => {
   it("customer.subscription.updated matches by subscription ID alone", async () => {
     const subId = `sub_bysubid_${uid()}`;
     const tenantId = await createTenant({ stripeSubscriptionId: subId });
@@ -236,7 +237,7 @@ describe("tenant lookup by stripeSubscriptionId (no metadata, no customer match)
 
 // ── checkout.session.completed reactivation via customer ID ──────────────────
 
-describe("checkout.session.completed re-subscription matched by stripeCustomerId", () => {
+describeIntegration("checkout.session.completed re-subscription matched by stripeCustomerId", () => {
   it("reactivates a canceled tenant when checkout carries a known customer ID but no billingTenantId metadata", async () => {
     const cusId = `cus_checkout_reactivate_${uid()}`;
     const subOld = `sub_old_checkout_${uid()}`;
@@ -275,7 +276,7 @@ describe("checkout.session.completed re-subscription matched by stripeCustomerId
 
 // ── Checkout re-delivery guard ───────────────────────────────────────────────
 
-describe("checkout.session.completed re-delivery blocked for same subscription ID", () => {
+describeIntegration("checkout.session.completed re-delivery blocked for same subscription ID", () => {
   it("does NOT reset subscriptionStatus to active when same sub ID is already on the tenant (customer-ID lookup path)", async () => {
     // Simulate a tenant that was active, then a customer.subscription.deleted
     // event ran and set it to "canceled".  The checkout.session.completed event
@@ -318,7 +319,7 @@ describe("checkout.session.completed re-delivery blocked for same subscription I
 
 // ── Checkout re-delivery on already-active tenant (happy path) ───────────────
 
-describe("checkout.session.completed re-delivery when tenant is already active", () => {
+describeIntegration("checkout.session.completed re-delivery when tenant is already active", () => {
   it("is a no-op — subscriptionStatus stays active and stripeSubscriptionId is unchanged", async () => {
     // Tenant is active with sub_X. The original checkout.session.completed event
     // is re-delivered by Stripe (e.g. a network retry). Because isNewSubscription
@@ -360,7 +361,7 @@ describe("checkout.session.completed re-delivery when tenant is already active",
 
 // ── Checkout re-delivery (billingTenantId metadata path, active tenant) ──────
 
-describe("checkout.session.completed re-delivery via billingTenantId metadata when tenant is already active", () => {
+describeIntegration("checkout.session.completed re-delivery via billingTenantId metadata when tenant is already active", () => {
   it("is a no-op — subscriptionStatus stays active and stripeSubscriptionId is unchanged", async () => {
     // Tenant is active with sub_X. A checkout.session.completed event that
     // carries billingTenantId in its metadata is re-delivered by Stripe (e.g. a
@@ -401,7 +402,7 @@ describe("checkout.session.completed re-delivery via billingTenantId metadata wh
 
 // ── Out-of-order guard ────────────────────────────────────────────────────────
 
-describe("out-of-order subscription events", () => {
+describeIntegration("out-of-order subscription events", () => {
   it("deleted processed before updated leaves the tenant canceled, not active", async () => {
     const tenantId = await createTenant({ subscriptionStatus: "active" });
     createdTenantIds.push(tenantId);
@@ -566,7 +567,7 @@ describe("out-of-order subscription events", () => {
 
 // ── invoice.payment_failed matched path ──────────────────────────────────────
 
-describe("invoice.payment_failed matched path", () => {
+describeIntegration("invoice.payment_failed matched path", () => {
   it("sets subscriptionStatus to past_due on the matched tenant row", async () => {
     const cusId = `cus_inv_pd_${uid()}`;
     const tenantId = await createTenant({
@@ -668,7 +669,7 @@ describe("invoice.payment_failed matched path", () => {
 
 // ── No-match ERROR path ───────────────────────────────────────────────────────
 
-describe("no-match error path against real DB", () => {
+describeIntegration("no-match error path against real DB", () => {
   it("writes a stripe_alert row and logs an error when no tenant matches a subscription event", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const eventId = `evt_nomatch_integ_${uid()}`;

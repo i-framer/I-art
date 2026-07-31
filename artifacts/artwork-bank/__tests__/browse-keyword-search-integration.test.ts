@@ -10,7 +10,8 @@
  *
  * Follows the pattern in browse-storefront-disabled-integration.test.ts.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { it, expect, beforeEach, afterEach } from "vitest";
+import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 
 // ── Real DB (no mock) — that is the whole point of this integration test ──────
@@ -136,7 +137,7 @@ afterEach(async () => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("browse keyword search — title matching", () => {
+describeIntegration("browse keyword search — title matching", () => {
   it("returns an artwork whose title contains the exact keyword", async () => {
     const tenantId = await createTenant({});
     createdTenantIds.push(tenantId);
@@ -215,7 +216,7 @@ describe("browse keyword search — title matching", () => {
   });
 });
 
-describe("browse keyword search — represented artist name matching", () => {
+describeIntegration("browse keyword search — represented artist name matching", () => {
   it("returns an artwork linked to a represented artist whose name contains the keyword", async () => {
     const tenantId = await createTenant({ type: "FRAMER" });
     createdTenantIds.push(tenantId);
@@ -336,7 +337,7 @@ describe("browse keyword search — represented artist name matching", () => {
   });
 });
 
-describe("browse keyword search — business name matching", () => {
+describeIntegration("browse keyword search — business name matching", () => {
   it("returns an artwork from a gallery whose business name contains the keyword", async () => {
     const tenantId = await createTenant({ businessName: "Harbour Bridge Gallery" });
     createdTenantIds.push(tenantId);
@@ -393,7 +394,7 @@ describe("browse keyword search — business name matching", () => {
   });
 });
 
-describe("browse keyword search — OR across all three fields", () => {
+describeIntegration("browse keyword search — OR across all three fields", () => {
   it("returns artworks matching by title OR artist name OR business name in a single query", async () => {
     // One tenant matching by business name only.
     const bizTenantId = await createTenant({ businessName: "UniqueKeywordGallery" });
@@ -444,7 +445,7 @@ describe("browse keyword search — OR across all three fields", () => {
   });
 });
 
-describe("browse keyword search — no-op when q is blank", () => {
+describeIntegration("browse keyword search — no-op when q is blank", () => {
   it("returns all visible artworks when q is an empty string (no keyword filter)", async () => {
     const tenantId = await createTenant({});
     createdTenantIds.push(tenantId);

@@ -13,6 +13,7 @@
  *  3. A wrong Bearer token returns 401 without running the sweep.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describeIntegration } from "./helpers/skip-if-no-db";
 
 // ── Mock next/server so the route can run in a plain Node environment ─────────
 
@@ -96,7 +97,7 @@ afterEach(() => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("email-sweep route integration — auth guard with real Request objects", () => {
+describeIntegration("email-sweep route integration — auth guard with real Request objects", () => {
   describe("production with no secret configured → 403", () => {
     it("GET returns 403 and does not run the sweep", async () => {
       setEnv({

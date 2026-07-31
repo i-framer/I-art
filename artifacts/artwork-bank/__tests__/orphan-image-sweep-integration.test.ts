@@ -11,7 +11,8 @@
  * the unit tests for object-storage cover that surface separately.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 
 // ── Mock storage — keep the real DB untouched ─────────────────────────────────
@@ -129,7 +130,7 @@ afterEach(async () => {
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
-describe("sweepOrphanedImageFiles() — integration (real DB)", () => {
+describeIntegration("sweepOrphanedImageFiles() — integration (real DB)", () => {
   it("returns checked=0 and orphaned=0 when there are no image rows at all", async () => {
     // This test assumes the DB may have existing rows from other tests;
     // we only check the shape of the result, not the absolute count.

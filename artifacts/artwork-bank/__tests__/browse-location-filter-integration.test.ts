@@ -7,7 +7,8 @@
  * gap between the query shape and what the database actually executes (e.g.
  * type or collation mismatches the mock cannot surface).
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { it, expect, beforeEach, afterEach } from "vitest";
+import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 
 // ── Real DB (no mock) — that is the whole point of this integration test ──────
@@ -109,7 +110,7 @@ afterEach(async () => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("browse query — location filter", () => {
+describeIntegration("browse query — location filter", () => {
   it("returns only the Sydney artwork when filtering by location=Sydney", async () => {
     // Seed two tenants in different locations, both with enabled storefronts.
     const sydneyTenantId = await createTenant({ storefrontEnabled: true, location: "Sydney" });
@@ -201,7 +202,7 @@ async function runLocationDropdownQuery() {
     .where(whereClause);
 }
 
-describe("locationFilterWhere — location dropdown", () => {
+describeIntegration("locationFilterWhere — location dropdown", () => {
   it("excludes a tenant whose only artwork is HIDDEN", async () => {
     // A tenant in "Brisbane" with a single HIDDEN artwork should not appear in
     // the dropdown — selecting it would give the buyer an empty result grid.

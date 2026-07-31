@@ -8,7 +8,8 @@
  * gap between the query shape and what the database actually executes (e.g.
  * column type mismatches, default-value surprises, or schema drift).
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { it, expect, beforeEach, afterEach } from "vitest";
+import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 
 // ── Real DB (no mock) — that is the whole point of this integration test ──────
@@ -107,7 +108,7 @@ afterEach(async () => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("browse query — disabled storefronts", () => {
+describeIntegration("browse query — disabled storefronts", () => {
   it("returns zero rows when all storefronts are disabled, even with showInGallery=true and status=AVAILABLE", async () => {
     // Seed two tenants with storefrontEnabled=false, each with one visible artwork.
     const t1 = await createTenant({ storefrontEnabled: false });
@@ -141,7 +142,7 @@ describe("browse query — disabled storefronts", () => {
   });
 });
 
-describe("browse query — HIDDEN artworks excluded", () => {
+describeIntegration("browse query — HIDDEN artworks excluded", () => {
   it("returns zero rows for a HIDDEN artwork even when the storefront is enabled", async () => {
     const tenantId = await createTenant({ storefrontEnabled: true });
     createdTenantIds.push(tenantId);
@@ -176,7 +177,7 @@ describe("browse query — HIDDEN artworks excluded", () => {
   });
 });
 
-describe("browse query — showInGallery=false excluded", () => {
+describeIntegration("browse query — showInGallery=false excluded", () => {
   it("returns zero rows when showInGallery is false, even with an enabled storefront and AVAILABLE status", async () => {
     const tenantId = await createTenant({ storefrontEnabled: true });
     createdTenantIds.push(tenantId);

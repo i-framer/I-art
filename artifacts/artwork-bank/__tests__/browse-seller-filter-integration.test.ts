@@ -13,7 +13,8 @@
  * schema drift, and any gap between the Drizzle query shape and actual SQL that
  * mock-based tests cannot surface.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { it, expect, beforeEach, afterEach } from "vitest";
+import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 
 // ── Real DB (no mock) — that is the whole point of this integration test ──────
@@ -95,7 +96,7 @@ afterEach(async () => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe("sellerFilterWhere — galleries with no visible artworks are hidden", () => {
+describeIntegration("sellerFilterWhere — galleries with no visible artworks are hidden", () => {
   it("excludes a storefrontEnabled tenant whose only artwork is HIDDEN", async () => {
     const tenantId = await createTenant({ storefrontEnabled: true });
     createdTenantIds.push(tenantId);

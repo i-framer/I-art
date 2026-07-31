@@ -35,7 +35,8 @@
  *     (invoice handler uses the same sendBillingAlertNotification call; tested
  *     separately so a domain rotation that breaks only the invoice path is caught)
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { it, expect, beforeEach, afterEach } from "vitest";
+import { describeIntegration } from "./helpers/skip-if-no-db";
 
 // base-url is imported lazily inside sendBillingAlertNotification; provide a
 // stub so tests that DO run don't require a Next.js server.
@@ -74,7 +75,7 @@ const canRealSend = hasResendKey && hasAdminEmail;
 const TEST_EVENT_TYPE = "customer.subscription.updated";
 const TEST_EVENT_ID = `evt_smoke_${Date.now()}`;
 
-describe("sendBillingAlertNotification: real Resend API send", () => {
+describeIntegration("sendBillingAlertNotification: real Resend API send", () => {
   it.skipIf(!canRealSend)(
     "Resend accepts the email and returns a message ID (real send)",
     async () => {
@@ -193,7 +194,7 @@ describe("sendBillingAlertNotification: real Resend API send", () => {
 const INVOICE_EVENT_TYPE = "invoice.payment_failed";
 const INVOICE_EVENT_ID = `evt_invoice_smoke_${Date.now()}`;
 
-describe("sendBillingAlertNotification (invoice.payment_failed): real Resend API send", () => {
+describeIntegration("sendBillingAlertNotification (invoice.payment_failed): real Resend API send", () => {
   it.skipIf(!canRealSend)(
     "Resend accepts the invoice.payment_failed alert and returns a message ID (real send)",
     async () => {
