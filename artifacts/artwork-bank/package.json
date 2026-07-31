@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port $PORT",
-    "build": "next build",
+    "build": "pnpm --filter @workspace/db run check-drift && next build",
     "build:no-db": "rm -rf .next && env -u DATABASE_URL -u SESSION_SECRET next build",
     "start": "next start --port $PORT",
     "typecheck": "rm -rf .next/types && tsc --noEmit",
