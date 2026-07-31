@@ -313,3 +313,138 @@ describeIntegration("browse query — sellerType filter with SOLD / RESERVED / H
     expect(matched[0].artworkId).toBe(soldArtworkId);
   });
 });
+
+// ── seller (slug) filter ───────────────────────────────────────────────────────
+
+/** Creates a tenant with a deterministic slug so we can pass it as a filter. */
+async function createTenantWithSlug(overrides: {
+  type: "ARTIST" | "FRAMER";
+  slug: string;
+  storefrontEnabled?: boolean;
+}) {
+  const id = uid();
+  await db.insert(tenantsTable).values({
+    id,
+    type: overrides.type,
+    businessName: `Test Gallery ${id}`,
+    slug: overrides.slug,
+    storefrontEnabled: overrides.storefrontEnabled ?? true,
+  } as any);
+  return id;
+}
+
+describeIntegration("browse query — seller (slug) filter", () => {
+  it("returns an AVAILABLE artwork when filtering by seller=slug", async () => {
+    const slug = `slug-avail-${uid()}`;
+    const targetTenantId = await createTenantWithSlug({ type: "ARTIST", slug });
+    const otherTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    createdTenantIds.push(targetTenantId, otherTenantId);
+
+    const targetArtworkId = await createArtwork({ tenantId: targetTenantId, status: "AVAILABLE" });
+    const otherArtworkId = await createArtwork({ tenantId: otherTenantId, status: "AVAILABLE" });
+    createdArtworkIds.push(targetArtworkId, otherArtworkId);
+
+    const rows = await runBrowseQuery({ seller: slug });
+
+    const seededIds = new Set<string>([targetArtworkId, otherArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(targetArtworkId);
+  });
+
+  it("returns a SOLD artwork when filtering by seller=slug", async () => {
+    const slug = `slug-sold-${uid()}`;
+    const targetTenantId = await createTenantWithSlug({ type: "ARTIST", slug });
+    const otherTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    createdTenantIds.push(targetTenantId, otherTenantId);
+
+    const targetArtworkId = await createArtwork({ tenantId: targetTenantId, status: "SOLD" });
+    const otherArtworkId = await createArtwork({ tenantId: otherTenantId, status: "SOLD" });
+    createdArtworkIds.push(targetArtworkId, otherArtworkId);
+
+    const rows = await runBrowseQuery({ seller: slug });
+
+    const seededIds = new Set<string>([targetArtworkId, otherArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(targetArtworkId);
+  });
+
+  it("returns a RESERVED artwork when filtering by seller=slug", async () => {
+    const slug = `slug-reserved-${uid()}`;
+    const targetTenantId = await createTenantWithSlug({ type: "FRAMER", slug });
+    const otherTenantId = await createTenant({ type: "FRAMER", storefrontEnabled: true });
+    createdTenantIds.push(targetTenantId, otherTenantId);
+
+    const targetArtworkId = await createArtwork({ tenantId: targetTenantId, status: "RESERVED" });
+    const otherArtworkId = await createArtwork({ tenantId: otherTenantId, status: "RESERVED" });
+    createdArtworkIds.push(targetArtworkId, otherArtworkId);
+
+    const rows = await runBrowseQuery({ seller: slug });
+
+    const seededIds = new Set<string>([targetArtworkId, otherArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(targetArtworkId);
+  });
+
+  it("returns all non-HIDDEN statuses (AVAILABLE, SOLD, RESERVED) for a slug in one query", async () => {
+    const slug = `slug-multi-${uid()}`;
+    const targetTenantId = await createTenantWithSlug({ type: "ARTIST", slug });
+    createdTenantIds.push(targetTenantId);
+
+    const availableId = await createArtwork({ tenantId: targetTenantId, status: "AVAILABLE" });
+    const soldId = await createArtwork({ tenantId: targetTenantId, status: "SOLD" });
+    const reservedId = await createArtwork({ tenantId: targetTenantId, status: "RESERVED" });
+    const hiddenId = await createArtwork({ tenantId: targetTenantId, status: "HIDDEN" });
+    createdArtworkIds.push(availableId, soldId, reservedId, hiddenId);
+
+    const rows = await runBrowseQuery({ seller: slug });
+
+    const seededIds = new Set<string>([availableId, soldId, reservedId, hiddenId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    // HIDDEN is excluded; the other three statuses must all appear.
+    expect(matched).toHaveLength(3);
+    const matchedArtworkIds = new Set(matched.map((r) => r.artworkId));
+    expect(matchedArtworkIds.has(availableId)).toBe(true);
+    expect(matchedArtworkIds.has(soldId)).toBe(true);
+    expect(matchedArtworkIds.has(reservedId)).toBe(true);
+    expect(matchedArtworkIds.has(hiddenId)).toBe(false);
+  });
+
+  it("excludes HIDDEN artworks even when the slug matches", async () => {
+    const slug = `slug-hidden-${uid()}`;
+    const targetTenantId = await createTenantWithSlug({ type: "ARTIST", slug });
+    createdTenantIds.push(targetTenantId);
+
+    const hiddenArtworkId = await createArtwork({ tenantId: targetTenantId, status: "HIDDEN" });
+    const visibleArtworkId = await createArtwork({ tenantId: targetTenantId, status: "AVAILABLE" });
+    createdArtworkIds.push(hiddenArtworkId, visibleArtworkId);
+
+    const rows = await runBrowseQuery({ seller: slug });
+
+    const seededIds = new Set<string>([hiddenArtworkId, visibleArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    // Only the AVAILABLE artwork should appear; HIDDEN must be excluded.
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(visibleArtworkId);
+  });
+
+  it("returns no artworks for an unknown slug (no cross-tenant leakage)", async () => {
+    const otherTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    createdTenantIds.push(otherTenantId);
+
+    const otherArtworkId = await createArtwork({ tenantId: otherTenantId, status: "AVAILABLE" });
+    createdArtworkIds.push(otherArtworkId);
+
+    const rows = await runBrowseQuery({ seller: `nonexistent-slug-${uid()}` });
+
+    // The other tenant's artwork must not appear.
+    expect(rows.some((r) => r.artworkId === otherArtworkId)).toBe(false);
+  });
+});
