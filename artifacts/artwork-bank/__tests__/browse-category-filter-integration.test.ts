@@ -48,6 +48,7 @@ async function createTenant(overrides: { id?: string; storefrontEnabled?: boolea
 /** Minimal artwork insert — showInGallery=true, status=AVAILABLE by default. */
 async function createArtwork(overrides: {
   tenantId: string;
+  title?: string;
   showInGallery?: boolean;
   status?: "AVAILABLE" | "SOLD" | "RESERVED" | "HIDDEN";
 }) {
@@ -55,7 +56,7 @@ async function createArtwork(overrides: {
   await db.insert(artworksTable).values({
     id,
     tenantId: overrides.tenantId,
-    title: `Test Artwork ${id}`,
+    title: overrides.title ?? `Test Artwork ${id}`,
     sku: `SKU-${id}`,
     showInGallery: overrides.showInGallery ?? true,
     status: overrides.status ?? "AVAILABLE",
@@ -235,5 +236,39 @@ describeIntegration("browse query — category filter", () => {
     const matched = rows.filter((r) => seeded.has(r.artworkId));
 
     expect(matched).toHaveLength(2);
+  });
+
+  it("combined q + category returns only the artwork that satisfies both filters", async () => {
+    const tenantId = await createTenant();
+    createdTenantIds.push(tenantId);
+
+    // Artwork A: matches keyword AND is in the target category — should appear.
+    const matchBothId = await createArtwork({ tenantId, title: "Unique Sunrise Oil" });
+
+    // Artwork B: is in the target category but does NOT match the keyword — should not appear.
+    const categoryOnlyId = await createArtwork({ tenantId, title: "Quiet Mountains" });
+
+    // Artwork C: matches the keyword but belongs to a DIFFERENT category — should not appear.
+    const keywordOnlyId = await createArtwork({ tenantId, title: "Unique Sunrise Watercolour" });
+
+    createdArtworkIds.push(matchBothId, categoryOnlyId, keywordOnlyId);
+
+    // Target category: "Oil"
+    const oilCategoryId = await createCategory(tenantId, "Oil");
+    // Different category: "Watercolour"
+    const watercolourCategoryId = await createCategory(tenantId, "Watercolour");
+    createdCategoryIds.push(oilCategoryId, watercolourCategoryId);
+
+    await assignCategory(matchBothId, oilCategoryId);
+    await assignCategory(categoryOnlyId, oilCategoryId);
+    await assignCategory(keywordOnlyId, watercolourCategoryId);
+
+    const rows = await runBrowseQuery({ q: "Unique Sunrise", category: "Oil" });
+    const seeded = new Set<string>([matchBothId, categoryOnlyId, keywordOnlyId]);
+    const matched = rows.filter((r) => seeded.has(r.artworkId));
+
+    // Only matchBothId satisfies both the keyword and the category condition.
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(matchBothId);
   });
 });
