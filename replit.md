@@ -41,7 +41,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- **Never commit credential screenshots.** Uploaded screenshots land in `attached_assets/` and get auto-committed. `.gitignore` blocks filenames containing token/secret/credential/password/api-key patterns, and `scripts/check-sensitive-assets.sh` (installed as a pre-push hook via `bash scripts/install-git-hooks.sh`) scans outgoing commits for credential-like asset filenames and secret-looking strings. **Always run `bash scripts/check-sensitive-assets.sh origin/main` before any manual push to GitHub.** After a fresh clone/workspace, re-run `bash scripts/install-git-hooks.sh` (`.git/hooks` is not versioned). If a screenshot of a live credential was ever committed, rewrite local history to remove the blob before pushing and rotate the credential.
 
 ## Pointers
 

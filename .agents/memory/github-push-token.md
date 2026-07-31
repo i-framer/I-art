@@ -7,3 +7,5 @@ Replit's built-in GitHub connection (`gitPush`) returns NO_CREDENTIALS in this w
 **How to apply:** temporary GIT_ASKPASS script echoing `$GITHUB_PUSH_TOKEN`, then `git push https://x-access-token@github.com/i-framer/I-art.git main`. Never put the token in the remote URL or command line. `origin` remote is set to the plain https URL.
 
 **Why:** user's Git pane showed no "Connect to GitHub" option; token flow was the working fallback (July 2026).
+
+**Before every push:** run `bash scripts/check-sensitive-assets.sh origin/main` (also installed as a pre-push hook via `bash scripts/install-git-hooks.sh`). A credential screenshot was once auto-committed into `attached_assets/` — if the scan blocks, rewrite local history to drop the blob before pushing.
