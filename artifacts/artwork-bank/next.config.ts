@@ -9,6 +9,9 @@ const nextConfig: NextConfig = {
   // Monorepo: trace files from the workspace root so standalone/Vercel
   // builds include hoisted pnpm dependencies
   outputFileTracingRoot: path.join(__dirname, "../.."),
+  // Allow build:no-db to use a separate output directory so it never races
+  // with the concurrent `next dev` process in the Replit workspace.
+  distDir: process.env.BUILD_DIR ?? ".next",
 };
 
 export default nextConfig;
