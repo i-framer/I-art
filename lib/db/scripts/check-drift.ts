@@ -2,7 +2,8 @@
  * check-drift.ts
  *
  * Compares the Drizzle schema (TypeScript source) against the live database
- * and exits 1 with a clear error message when any table or column is missing.
+ * and exits 1 with a clear error message when any table or column is missing
+ * or orphaned.
  *
  * Run automatically as part of the Vercel build so schema drift is caught
  * before the new code goes live.
@@ -14,6 +15,8 @@
 import { Client } from "pg";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import * as schema from "../src/schema/index.js";
+import { checkDrift } from "./check-drift-logic.js";
+import type { TableSpec } from "./check-drift-logic.js";
 
 // ── Env guard ──────────────────────────────────────────────────────────────
 
@@ -27,11 +30,6 @@ if (!DATABASE_URL) {
 }
 
 // ── Extract tables from the Drizzle schema ─────────────────────────────────
-
-interface TableSpec {
-  tableName: string;
-  columns: string[];
-}
 
 const tables: TableSpec[] = [];
 
@@ -62,49 +60,37 @@ const client = new Client({ connectionString: DATABASE_URL });
 try {
   await client.connect();
 
-  const { rows } = await client.query<{ table_name: string; column_name: string }>(
-    `SELECT table_name, column_name
-     FROM information_schema.columns
-     WHERE table_schema = 'public'
-     ORDER BY table_name, ordinal_position`,
-  );
-
-  // Build a map: tableName → Set<columnName>
-  const dbTables = new Map<string, Set<string>>();
-  for (const { table_name, column_name } of rows) {
-    if (!dbTables.has(table_name)) dbTables.set(table_name, new Set());
-    dbTables.get(table_name)!.add(column_name);
-  }
-
-  // ── Compare schema against DB ────────────────────────────────────────────
-
-  const errors: string[] = [];
-
-  for (const { tableName, columns } of tables) {
-    if (!dbTables.has(tableName)) {
-      errors.push(`Table "${tableName}" does not exist in the database`);
-      continue;
-    }
-    const dbCols = dbTables.get(tableName)!;
-    for (const col of columns) {
-      if (!dbCols.has(col)) {
-        errors.push(`Column "${tableName}"."${col}" is missing from the database`);
-      }
-    }
-  }
+  const { missingFromDb, orphanedInDb } = await checkDrift(client, tables);
 
   // ── Report ───────────────────────────────────────────────────────────────
 
-  if (errors.length > 0) {
-    console.error(
-      `\n❌  Schema drift detected — ${errors.length} missing item(s):\n`,
-    );
-    for (const err of errors) {
-      console.error(`    • ${err}`);
+  const totalIssues = missingFromDb.length + orphanedInDb.length;
+
+  if (totalIssues > 0) {
+    console.error(`\n❌  Schema drift detected — ${totalIssues} issue(s):\n`);
+
+    if (missingFromDb.length > 0) {
+      console.error(`  Missing from DB (schema ahead of database — run a migration):`);
+      for (const err of missingFromDb) {
+        console.error(`    • ${err}`);
+      }
     }
+
+    if (orphanedInDb.length > 0) {
+      if (missingFromDb.length > 0) console.error();
+      console.error(
+        `  Orphaned in DB (database ahead of schema — column/table was removed from schema but not dropped):`,
+      );
+      for (const err of orphanedInDb) {
+        console.error(`    • ${err}`);
+      }
+    }
+
     console.error(
-      "\n    Fix: run  pnpm --filter @workspace/db run push\n" +
-        "    then redeploy.\n",
+      "\n    Fix missing items:  pnpm --filter @workspace/db run push\n" +
+        "    Fix orphaned items: add a migration that DROPs the extra column(s)/table(s),\n" +
+        "                        or restore them in the schema if removal was unintentional.\n" +
+        "    Then redeploy.\n",
     );
     process.exit(1);
   }
