@@ -105,12 +105,26 @@ describe("custom domain rewrite", () => {
   });
 
   describe("unknown custom domain", () => {
-    it("falls through without a rewrite (Next.js serves 404)", async () => {
+    it("rewrites to /unknown-domain when the lookup returns not-found", async () => {
       const fetchMock = mockLookupNotFound();
       const res = await middleware(makeRequest("unknown.example.com", "/"));
-      expect(rewrittenPath(res)).toBeNull();
+      expect(rewrittenPath(res)).toBe("/unknown-domain");
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
+  });
+
+  describe("lookup service errors (non-404 non-OK responses)", () => {
+    it.each([500, 502, 503, 504])(
+      "falls through without a rewrite when the lookup returns %i",
+      async (status) => {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async () => ({ ok: false, status, json: async () => ({}) })),
+        );
+        const res = await middleware(makeRequest(CUSTOM_HOST, "/"));
+        expect(rewrittenPath(res)).toBeNull();
+      },
+    );
   });
 
   describe("lookup failures", () => {

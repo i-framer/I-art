@@ -128,10 +128,20 @@ export async function middleware(request: NextRequest) {
             : `/t/${slug}${pathname}`;
         return NextResponse.rewrite(rewriteUrl);
       }
+      // Only a definitive 404 means the domain isn't registered.
+      // 5xx / gateway errors are operational failures — fall through so we
+      // don't falsely tell a valid gallery's visitors the domain isn't registered.
+      if (res.status === 404) {
+        const notFoundUrl = request.nextUrl.clone();
+        notFoundUrl.pathname = "/unknown-domain";
+        return NextResponse.rewrite(notFoundUrl);
+      }
     } catch {
-      // DNS lookup timed out or lookup API unavailable — fall through to 404
+      // Lookup timed out or network error — operational failure, not an unknown
+      // domain. Fall through so Next.js serves whatever it can (or its own 404),
+      // rather than falsely telling a valid gallery's visitors the domain isn't
+      // registered.
     }
-    // Unknown custom domain: let Next.js serve a 404
     return NextResponse.next();
   }
 
