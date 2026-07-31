@@ -273,4 +273,36 @@ describeIntegration("locationFilterWhere — location dropdown", () => {
 
     expect(matched).toHaveLength(0);
   });
+
+  it("includes a tenant whose only artwork is SOLD", async () => {
+    // SOLD is a visible status — the location should still appear in the dropdown
+    // so buyers can browse sold artworks in that location.
+    const tenantId = await createTenant({ storefrontEnabled: true, location: "Darwin" });
+    createdTenantIds.push(tenantId);
+
+    const artworkId = await createArtwork({ tenantId, status: "SOLD" });
+    createdArtworkIds.push(artworkId);
+
+    const rows = await runLocationDropdownQuery();
+    const matched = rows.filter((r) => r.tenantId === tenantId);
+
+    expect(matched).toHaveLength(1);
+    expect(matched[0].location).toBe("Darwin");
+  });
+
+  it("includes a tenant whose only artwork is RESERVED", async () => {
+    // RESERVED is a visible status — the location should still appear in the
+    // dropdown so buyers can see reserved artworks in that location.
+    const tenantId = await createTenant({ storefrontEnabled: true, location: "Canberra" });
+    createdTenantIds.push(tenantId);
+
+    const artworkId = await createArtwork({ tenantId, status: "RESERVED" });
+    createdArtworkIds.push(artworkId);
+
+    const rows = await runLocationDropdownQuery();
+    const matched = rows.filter((r) => r.tenantId === tenantId);
+
+    expect(matched).toHaveLength(1);
+    expect(matched[0].location).toBe("Canberra");
+  });
 });
