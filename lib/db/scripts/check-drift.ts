@@ -29,6 +29,30 @@ if (!DATABASE_URL) {
   process.exit(1);
 }
 
+// ── URL format guard ────────────────────────────────────────────────────────
+
+try {
+  const parsed = new URL(DATABASE_URL);
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
+    throw new Error(`unsupported protocol "${parsed.protocol}"`);
+  }
+  if (!parsed.hostname) {
+    throw new Error("hostname is missing");
+  }
+  if (!parsed.pathname || parsed.pathname === "/") {
+    throw new Error("database name is missing from the path");
+  }
+} catch (err) {
+  console.error(
+    "❌  DATABASE_URL is set but is not a valid PostgreSQL connection string.\n" +
+      "    Expected format: postgresql://user:password@host:port/database\n" +
+      `    Parse error: ${err instanceof Error ? err.message : String(err)}`,
+  );
+  process.exit(1);
+}
+
+const CONNECT_TIMEOUT_MS = 5_000;
+
 // ── Extract tables from the Drizzle schema ─────────────────────────────────
 
 const tables: TableSpec[] = [];
@@ -55,10 +79,22 @@ if (tables.length === 0) {
 
 // ── Query the live database ────────────────────────────────────────────────
 
-const client = new Client({ connectionString: DATABASE_URL });
+const client = new Client({
+  connectionString: DATABASE_URL,
+  connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+});
 
 try {
-  await client.connect();
+  try {
+    await client.connect();
+  } catch (connErr) {
+    console.error(
+      "❌  Could not connect to the database — check DATABASE_URL.\n" +
+        "    The host may be wrong, unreachable, or the credentials may be invalid.\n" +
+        `    Connection error: ${connErr instanceof Error ? connErr.message : String(connErr)}`,
+    );
+    process.exit(1);
+  }
 
   const { missingFromDb, orphanedInDb } = await checkDrift(client, tables);
 
