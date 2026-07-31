@@ -12,6 +12,8 @@ const nextConfig: NextConfig = {
   // Allow build:no-db to use a separate output directory so it never races
   // with the concurrent `next dev` process in the Replit workspace.
   distDir: process.env.BUILD_DIR ?? ".next",
+  // Silence the cross-origin warning from the Replit preview proxy.
+  allowedDevOrigins: ["*.riker.replit.dev", "*.replit.dev"],
 };
 
 export default nextConfig;
