@@ -17,7 +17,10 @@
 import { ReplitConnectors } from "@replit/connectors-sdk";
 
 const errorText = process.env.SCHEMA_PUSH_ERROR ?? "(no output captured)";
-const channel = process.env.SLACK_BILLING_ALERTS_CHANNEL?.trim();
+// Strip a leading '#' so operators can configure the channel as either
+// "billing-alerts" or "#billing-alerts" — Slack's Web API only accepts the
+// name without the '#' prefix (or a channel ID like C0123456789).
+const channel = process.env.SLACK_BILLING_ALERTS_CHANNEL?.trim().replace(/^#/, "");
 
 async function sendSlackAlert(): Promise<boolean> {
   if (!channel) {
@@ -43,14 +46,19 @@ async function sendSlackAlert(): Promise<boolean> {
     const connectors = new ReplitConnectors();
     const response = await connectors.proxy("slack", "/chat.postMessage", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ channel, text }),
     });
 
     const body = await response.json().catch(() => null);
     if (!response.ok || (body && !body.ok)) {
+      const errorDetail = body?.error ?? "(no error field)";
+      const extraDetail =
+        body?.response_metadata?.messages?.join("; ") ?? "";
       console.error(
         `[Schema push alert] Slack post failed (HTTP ${response.status}):`,
-        body?.error ?? "(no error field)",
+        errorDetail,
+        extraDetail ? `— ${extraDetail}` : "",
       );
       return false;
     }

@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:integration": "node scripts/require-db.js && vitest run --reporter=verbose integration",
     "db:seed": "tsx scripts/seed.ts",
-    "smoke:billing-alert": "tsx scripts/smoke-billing-alert.ts"
+    "smoke:billing-alert": "tsx scripts/smoke-billing-alert.ts",
+    "smoke:schema-push-alert": "tsx scripts/smoke-schema-push-alert.ts"
   },
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.1",
