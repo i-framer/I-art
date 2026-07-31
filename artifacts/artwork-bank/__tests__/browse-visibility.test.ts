@@ -300,10 +300,19 @@ describe("filter-option — location (locationFilterWhere)", () => {
     expect(j(w)).toContain(j(isNotNull(t.tenantsTable.location as any)));
   });
 
-  it("does not include artwork-visibility conditions (location is tenant-level)", () => {
+  it("requires showInGallery = true via an EXISTS subquery", () => {
+    const w = locationFilterWhere();
+    expect(j(w)).toContain('"artworks.showInGallery"');
+    expect(j(w)).toContain("true");
+  });
+
+  it("excludes HIDDEN via status allowlist in the EXISTS subquery", () => {
     const w = locationFilterWhere();
     const s = j(w);
-    expect(s).not.toContain('"artworks.showInGallery"');
+    expect(s).toContain("AVAILABLE");
+    expect(s).toContain("SOLD");
+    expect(s).toContain("RESERVED");
+    expect(s).not.toContain("HIDDEN");
   });
 });
 

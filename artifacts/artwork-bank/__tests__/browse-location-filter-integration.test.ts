@@ -20,6 +20,7 @@ import {
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { buildBrowseWhere } from "@/lib/browse-where";
+import { locationFilterWhere } from "@/lib/browse-filter-options";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -183,5 +184,92 @@ describe("browse query — location filter", () => {
     // Only the enabled-storefront artwork should appear.
     expect(matched).toHaveLength(1);
     expect(matched[0].artworkId).toBe(enabledArtworkId);
+  });
+});
+
+// ── locationFilterWhere() dropdown tests ──────────────────────────────────────
+
+/**
+ * Run the same tenant query the location dropdown runs and return matching rows.
+ * Uses locationFilterWhere() — the function under test.
+ */
+async function runLocationDropdownQuery() {
+  const whereClause = locationFilterWhere();
+  return db
+    .select({ tenantId: tenantsTable.id, location: tenantsTable.location })
+    .from(tenantsTable)
+    .where(whereClause);
+}
+
+describe("locationFilterWhere — location dropdown", () => {
+  it("excludes a tenant whose only artwork is HIDDEN", async () => {
+    // A tenant in "Brisbane" with a single HIDDEN artwork should not appear in
+    // the dropdown — selecting it would give the buyer an empty result grid.
+    const tenantId = await createTenant({ storefrontEnabled: true, location: "Brisbane" });
+    createdTenantIds.push(tenantId);
+
+    const artworkId = await createArtwork({ tenantId, status: "HIDDEN" });
+    createdArtworkIds.push(artworkId);
+
+    const rows = await runLocationDropdownQuery();
+    const matched = rows.filter((r) => r.tenantId === tenantId);
+
+    expect(matched).toHaveLength(0);
+  });
+
+  it("excludes a tenant whose only artwork has showInGallery=false", async () => {
+    const tenantId = await createTenant({ storefrontEnabled: true, location: "Adelaide" });
+    createdTenantIds.push(tenantId);
+
+    const artworkId = await createArtwork({ tenantId, showInGallery: false, status: "AVAILABLE" });
+    createdArtworkIds.push(artworkId);
+
+    const rows = await runLocationDropdownQuery();
+    const matched = rows.filter((r) => r.tenantId === tenantId);
+
+    expect(matched).toHaveLength(0);
+  });
+
+  it("includes a tenant that has at least one visible artwork", async () => {
+    // A tenant in "Perth" with one AVAILABLE artwork must appear in the dropdown.
+    const tenantId = await createTenant({ storefrontEnabled: true, location: "Perth" });
+    createdTenantIds.push(tenantId);
+
+    const artworkId = await createArtwork({ tenantId, status: "AVAILABLE" });
+    createdArtworkIds.push(artworkId);
+
+    const rows = await runLocationDropdownQuery();
+    const matched = rows.filter((r) => r.tenantId === tenantId);
+
+    expect(matched).toHaveLength(1);
+    expect(matched[0].location).toBe("Perth");
+  });
+
+  it("includes a tenant with a mix of hidden and visible artworks", async () => {
+    // At least one visible artwork is enough — the hidden one should not prevent inclusion.
+    const tenantId = await createTenant({ storefrontEnabled: true, location: "Hobart" });
+    createdTenantIds.push(tenantId);
+
+    const hiddenId = await createArtwork({ tenantId, status: "HIDDEN" });
+    const visibleId = await createArtwork({ tenantId, status: "AVAILABLE" });
+    createdArtworkIds.push(hiddenId, visibleId);
+
+    const rows = await runLocationDropdownQuery();
+    const matched = rows.filter((r) => r.tenantId === tenantId);
+
+    expect(matched).toHaveLength(1);
+  });
+
+  it("excludes a tenant with a null location even if it has visible artworks", async () => {
+    const tenantId = await createTenant({ storefrontEnabled: true, location: undefined });
+    createdTenantIds.push(tenantId);
+
+    const artworkId = await createArtwork({ tenantId, status: "AVAILABLE" });
+    createdArtworkIds.push(artworkId);
+
+    const rows = await runLocationDropdownQuery();
+    const matched = rows.filter((r) => r.tenantId === tenantId);
+
+    expect(matched).toHaveLength(0);
   });
 });
