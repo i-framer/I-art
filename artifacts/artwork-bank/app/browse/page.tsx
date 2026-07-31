@@ -5,33 +5,23 @@ import {
   artworksTable,
   artworkImagesTable,
   artworkCategoriesTable,
-  artworkCategoryOnArtworkTable,
   tenantsTable,
   representedArtistsTable,
 } from "@workspace/db";
 import {
   and,
-  or,
   eq,
-  inArray,
   desc,
   count,
-  ilike,
-  exists,
   isNotNull,
-  sql,
 } from "drizzle-orm";
 import { formatPrice } from "@/lib/format";
 import { getServeUrl } from "@/lib/object-storage";
+import { buildBrowseWhere } from "@/lib/browse-where";
 
 export const dynamic = "force-dynamic";
 
 const PAGE_SIZE = 24;
-const VISIBLE_STATUSES = ["AVAILABLE", "SOLD", "RESERVED"] as (
-  | "AVAILABLE"
-  | "SOLD"
-  | "RESERVED"
-)[];
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   SOLD: { label: "Sold", cls: "bg-stone-900 text-white" },
@@ -70,78 +60,8 @@ export default async function BrowsePage({
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const offset = (page - 1) * PAGE_SIZE;
 
-  // ── Base visibility conditions ─────────────────────────────────────────────
-  const conditions = [
-    eq(tenantsTable.storefrontEnabled, true),
-    eq(artworksTable.showInGallery, true),
-    inArray(artworksTable.status, VISIBLE_STATUSES),
-  ];
-
-  // Keyword: title, represented artist name, or seller name
-  if (sp.q?.trim()) {
-    const pattern = `%${sp.q.trim()}%`;
-    conditions.push(
-      or(
-        ilike(artworksTable.title, pattern),
-        ilike(representedArtistsTable.name, pattern),
-        ilike(tenantsTable.businessName, pattern),
-      )!,
-    );
-  }
-
-  // Seller type
-  if (sp.sellerType === "ARTIST" || sp.sellerType === "FRAMER") {
-    conditions.push(eq(tenantsTable.type, sp.sellerType));
-  }
-
-  // Specific seller (by slug)
-  if (sp.seller) {
-    conditions.push(eq(tenantsTable.slug, sp.seller));
-  }
-
-  // Artist: represented artist name, or the tenant itself when it's an artist
-  if (sp.artist) {
-    conditions.push(
-      or(
-        eq(representedArtistsTable.name, sp.artist),
-        and(
-          eq(tenantsTable.type, "ARTIST"),
-          eq(tenantsTable.businessName, sp.artist),
-        ),
-      )!,
-    );
-  }
-
-  // Category (matched by name across tenants)
-  if (sp.category) {
-    conditions.push(
-      exists(
-        db
-          .select({ one: sql`1` })
-          .from(artworkCategoryOnArtworkTable)
-          .innerJoin(
-            artworkCategoriesTable,
-            eq(
-              artworkCategoriesTable.id,
-              artworkCategoryOnArtworkTable.categoryId,
-            ),
-          )
-          .where(
-            and(
-              eq(artworkCategoryOnArtworkTable.artworkId, artworksTable.id),
-              eq(artworkCategoriesTable.name, sp.category),
-            ),
-          ),
-      ),
-    );
-  }
-
-  // Location (tenant-level; artworks of tenants without a location never match)
-  if (sp.location) {
-    conditions.push(eq(tenantsTable.location, sp.location));
-  }
-
-  const whereClause = and(...conditions);
+  // ── Visibility WHERE clause (see lib/browse-where.ts for full logic) ─────────
+  const whereClause = buildBrowseWhere(sp);
 
   const baseQuery = () =>
     db
