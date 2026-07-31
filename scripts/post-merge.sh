@@ -55,6 +55,18 @@ if [ -n "$PROD_DATABASE_URL" ]; then
 
   echo "Production schema push complete."
 else
-  echo "PROD_DATABASE_URL is not set — skipping production schema push."
-  echo "See DEPLOY.md §8 to configure automatic production sync."
+  # PROD_DATABASE_URL is absent — this is an operator configuration gap.
+  # Emit a prominent stderr banner so it is visible in CI logs, then attempt
+  # a Slack alert so the operator is notified even if they are not watching logs.
+  {
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "OPERATOR ACTION REQUIRED: PROD_DATABASE_URL is not set."
+    echo "Production schema push and drift check were SKIPPED after this merge."
+    echo "The live database may fall out of sync with the current schema."
+    echo "See DEPLOY.md §8 to configure automatic production sync."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  } >&2
+
+  SCHEMA_PUSH_ERROR="PROD_DATABASE_URL is not configured in the Replit workspace secrets.\n\nProduction schema push and drift check were SKIPPED for this merge.\nThe live database may fall out of sync with the deployed schema.\n\nTo fix: add PROD_DATABASE_URL to the workspace secrets.\nSee DEPLOY.md §8 for full instructions." \
+    pnpm --filter @workspace/artwork-bank exec tsx scripts/notify-schema-push-failure.ts || true
 fi
