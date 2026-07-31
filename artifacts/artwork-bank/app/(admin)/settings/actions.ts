@@ -15,6 +15,7 @@ const settingsSchema = z.object({
   businessName: z.string().min(2),
   themeColor: z.string().optional(),
   aboutText: z.string().optional(),
+  location: z.string().max(120).optional(),
   contactEmail: z
     .string()
     .email()
@@ -30,6 +31,7 @@ export async function updateTenantSettings(formData: FormData) {
     businessName: formData.get("businessName"),
     themeColor: formData.get("themeColor"),
     aboutText: formData.get("aboutText"),
+    location: formData.get("location") ?? undefined,
     contactEmail: formData.get("contactEmail"),
   });
   if (!parsed.success) redirect("/settings?error=invalid");
@@ -40,6 +42,7 @@ export async function updateTenantSettings(formData: FormData) {
       businessName: parsed.data.businessName,
       themeColor: parsed.data.themeColor ?? null,
       aboutText: parsed.data.aboutText ?? null,
+      location: parsed.data.location?.trim() || null,
       contactEmail: parsed.data.contactEmail || null,
     })
     .where(eq(tenantsTable.id, session.tenantId));

@@ -51,6 +51,9 @@ export default async function AboutPage({ params }: Props) {
             Custom Framing &amp; Gallery
           </span>
         )}
+        {tenant.location && (
+          <span className="mt-2 text-sm text-stone-500">{tenant.location}</span>
+        )}
       </div>
 
       {/* About text */}

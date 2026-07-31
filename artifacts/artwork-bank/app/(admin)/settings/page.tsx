@@ -188,6 +188,23 @@ export default async function SettingsPage({
             </div>
           </div>
           <div>
+            <label htmlFor="location" className="block text-sm font-medium text-stone-700 mb-1.5">
+              Location <span className="font-normal text-stone-400">(optional)</span>
+            </label>
+            <input
+              id="location"
+              name="location"
+              type="text"
+              maxLength={120}
+              defaultValue={tenant.location ?? ""}
+              placeholder="e.g. Fitzroy, VIC"
+              className="w-full rounded-lg border border-stone-300 bg-white px-3.5 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-900/10 transition-colors"
+            />
+            <p className="mt-1 text-xs text-stone-400">
+              Shown on your public storefront and used in artwork discovery filters.
+            </p>
+          </div>
+          <div>
             <label htmlFor="contactEmail" className="block text-sm font-medium text-stone-700 mb-1.5">
               Contact email
             </label>

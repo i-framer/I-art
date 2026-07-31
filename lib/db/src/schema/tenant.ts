@@ -27,6 +27,8 @@ export const tenantsTable = pgTable("tenant", {
   logoUrl: text("logo_url"),
   themeColor: text("theme_color"),
   aboutText: text("about_text"),
+  /** Optional public location (e.g. suburb / state) shown on the storefront and used for discovery filters. */
+  location: text("location"),
   stripeAccountId: text("stripe_account_id"),
   iframerAccountId: text("iframer_account_id"),
   // ── Platform subscription billing (charged by the platform account, not Connect) ──
