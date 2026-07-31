@@ -377,6 +377,82 @@ describeIntegration("browse artist filter — no-op when artist is absent", () =
   });
 });
 
+describeIntegration("browse artist + keyword filter — both must be satisfied (AND)", () => {
+  it("returns only the artwork that matches both artist= and q=", async () => {
+    const tenantId = await createTenant({ type: "FRAMER" });
+    createdTenantIds.push(tenantId);
+
+    const artistId = await createRepresentedArtist({
+      tenantId,
+      name: "Lena Hoffmann",
+    });
+    createdArtistIds.push(artistId);
+
+    // Artwork A — matches artist= AND q= (title contains the keyword)
+    const matchingArtworkId = await createArtwork({
+      tenantId,
+      title: "Winter Solstice",
+      representedArtistId: artistId,
+    });
+    createdArtworkIds.push(matchingArtworkId);
+
+    // Artwork B — matches artist= but NOT q= (different title, no keyword)
+    const artistOnlyArtworkId = await createArtwork({
+      tenantId,
+      title: "Summer Fields",
+      representedArtistId: artistId,
+    });
+    createdArtworkIds.push(artistOnlyArtworkId);
+
+    // Query with both filters; keyword matches only Artwork A's title.
+    const rows = await runBrowseQuery({ artist: "Lena Hoffmann", q: "Winter" });
+    const matchedIds = rows.map((r) => r.artworkId);
+
+    // Only the artwork satisfying both filters should be present.
+    expect(matchedIds).toContain(matchingArtworkId);
+    // Artwork B matches the artist filter but not the keyword — must be excluded.
+    expect(matchedIds).not.toContain(artistOnlyArtworkId);
+  });
+
+  it("excludes an artwork that matches q= but whose artist does not match artist=", async () => {
+    const tenantId = await createTenant({ type: "FRAMER" });
+    createdTenantIds.push(tenantId);
+
+    const targetArtistId = await createRepresentedArtist({
+      tenantId,
+      name: "Lena Hoffmann",
+    });
+    const otherArtistId = await createRepresentedArtist({
+      tenantId,
+      name: "Ryo Matsuda",
+    });
+    createdArtistIds.push(targetArtistId, otherArtistId);
+
+    // Artwork A — matches artist= AND q=
+    const matchingArtworkId = await createArtwork({
+      tenantId,
+      title: "Winter Solstice",
+      representedArtistId: targetArtistId,
+    });
+    createdArtworkIds.push(matchingArtworkId);
+
+    // Artwork C — matches q= (same keyword in title) but belongs to a different artist
+    const keywordOnlyArtworkId = await createArtwork({
+      tenantId,
+      title: "Winter Sunrise",
+      representedArtistId: otherArtistId,
+    });
+    createdArtworkIds.push(keywordOnlyArtworkId);
+
+    const rows = await runBrowseQuery({ artist: "Lena Hoffmann", q: "Winter" });
+    const matchedIds = rows.map((r) => r.artworkId);
+
+    expect(matchedIds).toContain(matchingArtworkId);
+    // Artwork C satisfies q= but not artist= — must be excluded.
+    expect(matchedIds).not.toContain(keywordOnlyArtworkId);
+  });
+});
+
 describeIntegration(
   "browse artist filter — base conditions interact correctly with artist OR clause",
   () => {
