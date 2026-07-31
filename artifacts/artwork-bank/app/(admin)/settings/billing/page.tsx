@@ -95,6 +95,18 @@ export default async function BillingPage({
           Billing is temporarily unavailable. Please try again later.
         </div>
       )}
+      {billing === "stripe_error" && (
+        <div className="mb-6 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          Stripe rejected the request, so the billing action couldn&apos;t complete.
+          Please try again in a moment — the details have been logged.
+        </div>
+      )}
+      {billing === "customer_reset" && (
+        <div className="mb-6 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700">
+          Your saved Stripe billing profile no longer exists, so it has been
+          reset. Please start a new subscription below.
+        </div>
+      )}
 
       <div className="rounded-xl border border-stone-200 bg-white p-6">
         <div className="flex items-start justify-between mb-4">

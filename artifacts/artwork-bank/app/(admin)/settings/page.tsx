@@ -113,6 +113,18 @@ export default async function SettingsPage({
           Stripe is not connected. Add the Stripe integration in the Integrations tab first.
         </div>
       )}
+      {stripe === "connect_not_enabled" && (
+        <div className="mb-6 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          Stripe rejected the request: Connect isn&apos;t enabled on the platform&apos;s
+          Stripe account yet. Enable Connect in the Stripe dashboard, then try again.
+        </div>
+      )}
+      {stripe === "rejected" && (
+        <div className="mb-6 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          Stripe rejected the request, so onboarding couldn&apos;t start. Please try
+          again — if it keeps failing, check the Stripe dashboard for account issues.
+        </div>
+      )}
       {domain_status === "saved" && (
         <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
           Domain saved. Add the CNAME record below, then click &ldquo;Verify&rdquo;.

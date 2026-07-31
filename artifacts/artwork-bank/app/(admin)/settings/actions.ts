@@ -223,6 +223,33 @@ export async function verifyCustomDomain(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Stripe Connect onboarding
 // ---------------------------------------------------------------------------
+
+/**
+ * True when a Stripe error means a saved account/customer ID no longer exists
+ * under the current API key (e.g. the key was switched between live and test
+ * mode, or between Stripe accounts). Recoverable by clearing the stale ID.
+ */
+function isStripeResourceMissing(err: unknown): boolean {
+  const e = err as {
+    code?: string;
+    raw?: { code?: string };
+    message?: string;
+  } | null;
+  const code = e?.code ?? e?.raw?.code;
+  if (code === "resource_missing" || code === "account_invalid") return true;
+  return /no such (account|customer)/i.test(String(e?.message ?? ""));
+}
+
+/**
+ * True when Stripe rejected account creation because Connect is not enabled
+ * on the platform account. Not recoverable in-app — the operator must enable
+ * Connect in the Stripe dashboard.
+ */
+function isStripeConnectNotEnabled(err: unknown): boolean {
+  const msg = String((err as { message?: string } | null)?.message ?? "");
+  return /connect/i.test(msg) && /(signed up|not.*enabled|platform)/i.test(msg);
+}
+
 export async function startStripeOnboarding() {
   const session = await getSession();
   if (!session.userId) redirect("/login");
@@ -244,8 +271,15 @@ export async function startStripeOnboarding() {
   // stripe is always defined here (redirect() above never returns)
   const stripeClient = stripe!;
 
-  let accountId = tenant.stripeAccountId;
-  if (!accountId) {
+  const baseUrl = getBillingBaseUrl();
+  const linkParams = (account: string) => ({
+    account,
+    refresh_url: `${baseUrl}/settings?stripe=refresh`,
+    return_url: `${baseUrl}/settings?stripe=connected`,
+    type: "account_onboarding" as const,
+  });
+
+  const createFreshAccount = async (): Promise<string> => {
     const account = await stripeClient.accounts.create({
       type: "express",
       capabilities: {
@@ -254,23 +288,60 @@ export async function startStripeOnboarding() {
       },
       country: "AU",
     });
-    accountId = account.id;
     await db
       .update(tenantsTable)
-      .set({ stripeAccountId: accountId })
+      .set({ stripeAccountId: account.id })
       .where(eq(tenantsTable.id, tenant.id));
+    return account.id;
+  };
+
+  // Collected outside the try/catch so we never swallow NEXT_REDIRECT.
+  let onboardingUrl: string | null = null;
+  let errorState: string | null = null;
+
+  try {
+    let accountId = tenant.stripeAccountId;
+    if (!accountId) {
+      accountId = await createFreshAccount();
+    }
+
+    try {
+      const accountLink = await stripeClient.accountLinks.create(
+        linkParams(accountId),
+      );
+      onboardingUrl = accountLink.url;
+    } catch (linkErr) {
+      // Saved account ID may be stale (created under a different Stripe
+      // mode/account). Clear it, create a fresh account, and retry once.
+      if (tenant.stripeAccountId && isStripeResourceMissing(linkErr)) {
+        console.warn(
+          `[stripe-onboarding] Stale Stripe account ${tenant.stripeAccountId} for tenant ${tenant.id} — clearing and recreating.`,
+        );
+        await db
+          .update(tenantsTable)
+          .set({ stripeAccountId: null })
+          .where(eq(tenantsTable.id, tenant.id));
+        const freshId = await createFreshAccount();
+        const accountLink = await stripeClient.accountLinks.create(
+          linkParams(freshId),
+        );
+        onboardingUrl = accountLink.url;
+      } else {
+        throw linkErr;
+      }
+    }
+  } catch (err) {
+    console.error(
+      `[stripe-onboarding] Stripe error for tenant ${tenant.id}:`,
+      err,
+    );
+    errorState = isStripeConnectNotEnabled(err)
+      ? "connect_not_enabled"
+      : "rejected";
   }
 
-  const baseUrl = getBillingBaseUrl();
-
-  const accountLink = await stripeClient.accountLinks.create({
-    account: accountId,
-    refresh_url: `${baseUrl}/settings?stripe=refresh`,
-    return_url: `${baseUrl}/settings?stripe=connected`,
-    type: "account_onboarding",
-  });
-
-  redirect(accountLink.url);
+  if (errorState) redirect(`/settings?stripe=${errorState}`);
+  redirect(onboardingUrl!);
 }
 
 // ── Platform subscription billing ─────────────────────────────────────────────
@@ -304,35 +375,72 @@ export async function startSubscriptionCheckout() {
   }
   const stripeClient = stripe!;
 
-  // Reuse (or create) the tenant's platform Stripe customer
-  let customerId = tenant.stripeCustomerId;
-  if (!customerId) {
+  const createFreshCustomer = async (): Promise<string> => {
     const customer = await stripeClient.customers.create({
       name: tenant.businessName,
       ...(tenant.contactEmail ? { email: tenant.contactEmail } : {}),
       metadata: { tenantId: tenant.id },
     });
-    customerId = customer.id;
     await db
       .update(tenantsTable)
-      .set({ stripeCustomerId: customerId })
+      .set({ stripeCustomerId: customer.id })
       .where(eq(tenantsTable.id, tenant.id));
+    return customer.id;
+  };
+
+  // Collected outside the try/catch so we never swallow NEXT_REDIRECT.
+  let checkoutUrl: string | null = null;
+  let errorState: string | null = null;
+
+  try {
+    // Reuse (or create) the tenant's platform Stripe customer
+    let customerId = tenant.stripeCustomerId ?? (await createFreshCustomer());
+
+    const priceId = await getSubscriptionPriceId(stripeClient);
+    const baseUrl = getBillingBaseUrl();
+
+    const checkoutParams = (customer: string) => ({
+      mode: "subscription" as const,
+      customer,
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: `${baseUrl}/settings/billing?billing=subscribed`,
+      cancel_url: `${baseUrl}/settings/billing?billing=cancelled`,
+      metadata: { billingTenantId: tenant.id },
+      subscription_data: { metadata: { billingTenantId: tenant.id } },
+    });
+
+    try {
+      const checkout = await stripeClient.checkout.sessions.create(
+        checkoutParams(customerId),
+      );
+      checkoutUrl = checkout.url!;
+    } catch (checkoutErr) {
+      // Saved customer ID may be stale (created under a different Stripe
+      // mode/account). Clear it, create a fresh customer, and retry once.
+      if (tenant.stripeCustomerId && isStripeResourceMissing(checkoutErr)) {
+        console.warn(
+          `[billing] Stale Stripe customer ${tenant.stripeCustomerId} for tenant ${tenant.id} — clearing and recreating.`,
+        );
+        await db
+          .update(tenantsTable)
+          .set({ stripeCustomerId: null })
+          .where(eq(tenantsTable.id, tenant.id));
+        customerId = await createFreshCustomer();
+        const checkout = await stripeClient.checkout.sessions.create(
+          checkoutParams(customerId),
+        );
+        checkoutUrl = checkout.url!;
+      } else {
+        throw checkoutErr;
+      }
+    }
+  } catch (err) {
+    console.error(`[billing] Stripe checkout error for tenant ${tenant.id}:`, err);
+    errorState = "stripe_error";
   }
 
-  const priceId = await getSubscriptionPriceId(stripeClient);
-  const baseUrl = getBillingBaseUrl();
-
-  const checkout = await stripeClient.checkout.sessions.create({
-    mode: "subscription",
-    customer: customerId,
-    line_items: [{ price: priceId, quantity: 1 }],
-    success_url: `${baseUrl}/settings/billing?billing=subscribed`,
-    cancel_url: `${baseUrl}/settings/billing?billing=cancelled`,
-    metadata: { billingTenantId: tenant.id },
-    subscription_data: { metadata: { billingTenantId: tenant.id } },
-  });
-
-  redirect(checkout.url!);
+  if (errorState) redirect(`/settings/billing?billing=${errorState}`);
+  redirect(checkoutUrl!);
 }
 
 export async function openBillingPortal() {
@@ -353,12 +461,36 @@ export async function openBillingPortal() {
     redirect("/settings/billing?billing=not_configured");
   }
 
-  const portal = await stripe!.billingPortal.sessions.create({
-    customer: tenant.stripeCustomerId,
-    return_url: `${getBillingBaseUrl()}/settings/billing`,
-  });
+  // Collected outside the try/catch so we never swallow NEXT_REDIRECT.
+  let portalUrl: string | null = null;
+  let errorState: string | null = null;
 
-  redirect(portal.url);
+  try {
+    const portal = await stripe!.billingPortal.sessions.create({
+      customer: tenant.stripeCustomerId,
+      return_url: `${getBillingBaseUrl()}/settings/billing`,
+    });
+    portalUrl = portal.url;
+  } catch (err) {
+    if (isStripeResourceMissing(err)) {
+      // The saved customer no longer exists under the current Stripe key
+      // (mode/account switch). Clear it so the tenant can subscribe afresh.
+      console.warn(
+        `[billing] Stale Stripe customer ${tenant.stripeCustomerId} for tenant ${tenant.id} — clearing.`,
+      );
+      await db
+        .update(tenantsTable)
+        .set({ stripeCustomerId: null })
+        .where(eq(tenantsTable.id, tenant.id));
+      errorState = "customer_reset";
+    } else {
+      console.error(`[billing] Stripe portal error for tenant ${tenant.id}:`, err);
+      errorState = "stripe_error";
+    }
+  }
+
+  if (errorState) redirect(`/settings/billing?billing=${errorState}`);
+  redirect(portalUrl!);
 }
 
 export async function removeTeamMember(userId: string) {
