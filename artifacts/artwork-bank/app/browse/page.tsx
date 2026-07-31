@@ -13,11 +13,17 @@ import {
   eq,
   desc,
   count,
-  isNotNull,
 } from "drizzle-orm";
 import { formatPrice } from "@/lib/format";
 import { getServeUrl } from "@/lib/object-storage";
 import { buildBrowseWhere } from "@/lib/browse-where";
+import {
+  sellerFilterWhere,
+  locationFilterWhere,
+  representedArtistFilterWhere,
+  artistTenantFilterWhere,
+  categoryFilterWhere,
+} from "@/lib/browse-filter-options";
 
 export const dynamic = "force-dynamic";
 
@@ -100,9 +106,7 @@ export default async function BrowsePage({
     )
     .where(whereClause);
 
-  // ── Filter options (across enabled storefronts only) ───────────────────────
-  const enabledTenants = eq(tenantsTable.storefrontEnabled, true);
-
+  // ── Filter options (across enabled storefronts with visible artworks only) ──
   const [rows, [countRow], sellers, artistRows, artistTenants, categoryRows, locationRows] =
     await Promise.all([
       baseQuery()
@@ -118,7 +122,7 @@ export default async function BrowsePage({
           type: tenantsTable.type,
         })
         .from(tenantsTable)
-        .where(enabledTenants)
+        .where(sellerFilterWhere())
         .orderBy(tenantsTable.businessName),
       db
         .selectDistinct({ name: representedArtistsTable.name })
@@ -127,11 +131,11 @@ export default async function BrowsePage({
           tenantsTable,
           eq(tenantsTable.id, representedArtistsTable.tenantId),
         )
-        .where(enabledTenants),
+        .where(representedArtistFilterWhere()),
       db
         .select({ name: tenantsTable.businessName })
         .from(tenantsTable)
-        .where(and(enabledTenants, eq(tenantsTable.type, "ARTIST"))),
+        .where(artistTenantFilterWhere()),
       db
         .selectDistinct({ name: artworkCategoriesTable.name })
         .from(artworkCategoriesTable)
@@ -139,11 +143,11 @@ export default async function BrowsePage({
           tenantsTable,
           eq(tenantsTable.id, artworkCategoriesTable.tenantId),
         )
-        .where(enabledTenants),
+        .where(categoryFilterWhere()),
       db
         .selectDistinct({ location: tenantsTable.location })
         .from(tenantsTable)
-        .where(and(enabledTenants, isNotNull(tenantsTable.location))),
+        .where(locationFilterWhere()),
     ]);
 
   const total = countRow?.count ?? 0;

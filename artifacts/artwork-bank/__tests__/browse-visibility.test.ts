@@ -94,7 +94,15 @@ vi.mock("@workspace/db", () => {
 // ── Import the function under test (after mocks) ──────────────────────────────
 
 import { buildBrowseWhere } from "@/lib/browse-where";
-import { and, eq, inArray, or, ilike } from "drizzle-orm";
+import {
+  sellerFilterWhere,
+  locationFilterWhere,
+  representedArtistFilterWhere,
+  artistTenantFilterWhere,
+  categoryFilterWhere,
+  ENABLED_STOREFRONT,
+} from "@/lib/browse-filter-options";
+import { and, eq, inArray, or, ilike, isNotNull } from "drizzle-orm";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -252,6 +260,167 @@ describe("buildBrowseWhere — location filter", () => {
   it("does not add a location condition when location is absent", () => {
     const w = buildBrowseWhere({});
     expect(j(w)).not.toContain('"tenants.location"');
+  });
+});
+
+// ── Filter-option condition builder tests ─────────────────────────────────────
+//
+// These verify the WHERE conditions used by the /browse dropdown queries so
+// that the seller, artist, category, and location options are always scoped to
+// storefrontEnabled tenants AND (for artist/category) only tenants that have
+// at least one visible artwork.
+
+describe("filter-option — seller (sellerFilterWhere)", () => {
+  it("requires storefrontEnabled = true", () => {
+    const w = sellerFilterWhere();
+    expect(j(w)).toContain(j(ENABLED_STOREFRONT));
+  });
+
+  it("the condition is exactly ENABLED_STOREFRONT (no extra clauses)", () => {
+    const w = sellerFilterWhere();
+    expect(j(w)).toBe(j(ENABLED_STOREFRONT));
+  });
+});
+
+describe("filter-option — location (locationFilterWhere)", () => {
+  it("requires storefrontEnabled = true", () => {
+    const w = locationFilterWhere();
+    expect(j(w)).toContain(j(ENABLED_STOREFRONT));
+  });
+
+  it("also requires location IS NOT NULL", () => {
+    const w = locationFilterWhere();
+    expect(j(w)).toContain(j(isNotNull(t.tenantsTable.location as any)));
+  });
+
+  it("does not include artwork-visibility conditions (location is tenant-level)", () => {
+    const w = locationFilterWhere();
+    const s = j(w);
+    expect(s).not.toContain('"artworks.showInGallery"');
+  });
+});
+
+describe("filter-option — represented artist (representedArtistFilterWhere)", () => {
+  it("requires storefrontEnabled = true", () => {
+    const w = representedArtistFilterWhere();
+    expect(j(w)).toContain(j(ENABLED_STOREFRONT));
+  });
+
+  it("requires showInGallery = true via an EXISTS subquery", () => {
+    const w = representedArtistFilterWhere();
+    expect(j(w)).toContain('"artworks.showInGallery"');
+    expect(j(w)).toContain("true");
+  });
+
+  it("excludes HIDDEN via status allowlist in the EXISTS subquery", () => {
+    const w = representedArtistFilterWhere();
+    const s = j(w);
+    expect(s).toContain("AVAILABLE");
+    expect(s).toContain("SOLD");
+    expect(s).toContain("RESERVED");
+    expect(s).not.toContain("HIDDEN");
+  });
+
+  it("links the subquery to the represented artist row (artworks.representedArtistId)", () => {
+    const w = representedArtistFilterWhere();
+    expect(j(w)).toContain('"artworks.representedArtistId"');
+    expect(j(w)).toContain('"artists.id"');
+  });
+});
+
+describe("filter-option — artist tenant (artistTenantFilterWhere)", () => {
+  it("requires storefrontEnabled = true", () => {
+    const w = artistTenantFilterWhere();
+    expect(j(w)).toContain(j(ENABLED_STOREFRONT));
+  });
+
+  it("restricts to ARTIST-type tenants", () => {
+    const w = artistTenantFilterWhere();
+    expect(j(w)).toContain(j(eq(t.tenantsTable.type as any, "ARTIST")));
+  });
+
+  it("requires showInGallery = true via an EXISTS subquery", () => {
+    const w = artistTenantFilterWhere();
+    expect(j(w)).toContain('"artworks.showInGallery"');
+  });
+
+  it("excludes HIDDEN via status allowlist in the EXISTS subquery", () => {
+    const w = artistTenantFilterWhere();
+    const s = j(w);
+    expect(s).toContain("AVAILABLE");
+    expect(s).not.toContain("HIDDEN");
+  });
+
+  it("links the subquery to the tenant row (artworks.tenantId)", () => {
+    const w = artistTenantFilterWhere();
+    expect(j(w)).toContain('"artworks.tenantId"');
+    expect(j(w)).toContain('"tenants.id"');
+  });
+});
+
+describe("filter-option — category (categoryFilterWhere)", () => {
+  it("requires storefrontEnabled = true", () => {
+    const w = categoryFilterWhere();
+    expect(j(w)).toContain(j(ENABLED_STOREFRONT));
+  });
+
+  it("requires showInGallery = true via an EXISTS subquery", () => {
+    const w = categoryFilterWhere();
+    expect(j(w)).toContain('"artworks.showInGallery"');
+    expect(j(w)).toContain("true");
+  });
+
+  it("excludes HIDDEN via status allowlist in the EXISTS subquery", () => {
+    const w = categoryFilterWhere();
+    const s = j(w);
+    expect(s).toContain("AVAILABLE");
+    expect(s).toContain("SOLD");
+    expect(s).toContain("RESERVED");
+    expect(s).not.toContain("HIDDEN");
+  });
+
+  it("links the EXISTS subquery through acoa to the category row", () => {
+    // acoa.artworkId is in the JOIN condition (not WHERE), so it is not
+    // captured by the mock's toJSON hook.  The WHERE contains the category
+    // link (acoa.categoryId = categories.id) and the artwork-visibility
+    // guards — that is sufficient to confirm the subquery is wired correctly.
+    const w = categoryFilterWhere();
+    const s = j(w);
+    expect(s).toContain('"acoa.categoryId"');
+    expect(s).toContain('"categories.id"');
+  });
+
+  it("categories from tenants with all-hidden artworks are excluded — EXISTS requires a visible artwork", () => {
+    // The WHERE must include BOTH storefrontEnabled AND the visibility EXISTS.
+    // A tenant with storefrontEnabled=true but showInGallery=false on all artworks
+    // would match storefrontEnabled alone but not the EXISTS — so it is excluded.
+    const w = categoryFilterWhere();
+    const s = j(w);
+    expect(s).toContain(j(ENABLED_STOREFRONT));
+    expect(s).toContain('"artworks.showInGallery"');
+    // Confirm the allowed-status list is also embedded (rules out HIDDEN status)
+    expect(s).toContain(j(inArray(t.artworksTable.status as any, ["AVAILABLE", "SOLD", "RESERVED"])));
+  });
+});
+
+describe("filter-option — artists from all-hidden-artwork tenants are excluded", () => {
+  it("representedArtistFilterWhere requires a visible artwork link", () => {
+    // A represented artist whose only artworks are hidden (showInGallery=false
+    // or status=HIDDEN) would not satisfy the EXISTS subquery and therefore
+    // would not appear in the dropdown.
+    const w = representedArtistFilterWhere();
+    const s = j(w);
+    expect(s).toContain(j(ENABLED_STOREFRONT));
+    expect(s).toContain('"artworks.showInGallery"');
+    expect(s).toContain(j(inArray(t.artworksTable.status as any, ["AVAILABLE", "SOLD", "RESERVED"])));
+  });
+
+  it("artistTenantFilterWhere requires a visible artwork in that tenant", () => {
+    const w = artistTenantFilterWhere();
+    const s = j(w);
+    expect(s).toContain(j(ENABLED_STOREFRONT));
+    expect(s).toContain('"artworks.showInGallery"');
+    expect(s).toContain(j(inArray(t.artworksTable.status as any, ["AVAILABLE", "SOLD", "RESERVED"])));
   });
 });
 
