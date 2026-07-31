@@ -47,3 +47,15 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Sensitive uploaded assets — screenshots of credentials must never be committed.
+# Filenames matching these patterns are ignored; see scripts/check-sensitive-assets.sh
+# for the pre-push scan that backs this up.
+attached_assets/*[Tt]oken*
+attached_assets/*[Ss]ecret*
+attached_assets/*[Cc]redential*
+attached_assets/*[Pp]assword*
+attached_assets/*[Aa]pi[-_]key*
+attached_assets/*[Aa]ccess[-_][Kk]ey*
+attached_assets/*.env*
+attached_assets/*.pem
