@@ -285,6 +285,44 @@ describeIntegration("categoryFilterWhere — categories with no visible artworks
     expect(matched).toHaveLength(1);
   });
 
+  it("includes a category whose only artwork has status=SOLD", async () => {
+    const tenantId = await createTenant();
+    createdTenantIds.push(tenantId);
+
+    const categoryId = await createCategory(tenantId);
+    createdCategoryIds.push(categoryId);
+
+    const artworkId = await createArtwork({ tenantId, showInGallery: true, status: "SOLD" });
+    createdArtworkIds.push(artworkId);
+
+    await linkArtworkToCategory(artworkId, categoryId);
+
+    const matched = await runCategoryQuery([categoryId]);
+
+    // SOLD is a visible status — the category must appear in the dropdown.
+    expect(matched).toHaveLength(1);
+    expect(matched[0]).toBe(categoryId);
+  });
+
+  it("includes a category whose only artwork has status=RESERVED", async () => {
+    const tenantId = await createTenant();
+    createdTenantIds.push(tenantId);
+
+    const categoryId = await createCategory(tenantId);
+    createdCategoryIds.push(categoryId);
+
+    const artworkId = await createArtwork({ tenantId, showInGallery: true, status: "RESERVED" });
+    createdArtworkIds.push(artworkId);
+
+    await linkArtworkToCategory(artworkId, categoryId);
+
+    const matched = await runCategoryQuery([categoryId]);
+
+    // RESERVED is a visible status — the category must appear in the dropdown.
+    expect(matched).toHaveLength(1);
+    expect(matched[0]).toBe(categoryId);
+  });
+
   it("returns only the category with a visible artwork when compared side-by-side with a hidden-only category", async () => {
     const tenantId = await createTenant();
     createdTenantIds.push(tenantId);
