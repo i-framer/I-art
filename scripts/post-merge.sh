@@ -35,6 +35,24 @@ if [ -n "$PROD_DATABASE_URL" ]; then
   fi
 
   rm -f "$PUSH_OUTPUT_FILE"
+
+  # Verify the push actually took effect — catches cases where push-force
+  # succeeded but the live database is still behind (e.g. a partial push or a
+  # connection to the wrong database).
+  echo "Verifying production schema after push..."
+  set +e
+  DATABASE_URL="$PROD_DATABASE_URL" pnpm --filter @workspace/db run check-drift
+  DRIFT_EXIT=$?
+  set -e
+
+  if [ "$DRIFT_EXIT" -ne 0 ]; then
+    echo "ERROR: Production schema drift check failed after push (exit code $DRIFT_EXIT)." >&2
+    echo "       The push appeared to succeed but the live schema still does not match." >&2
+    echo "       Check the output above, verify PROD_DATABASE_URL points to the correct" >&2
+    echo "       database, and redeploy." >&2
+    exit "$DRIFT_EXIT"
+  fi
+
   echo "Production schema push complete."
 else
   echo "PROD_DATABASE_URL is not set — skipping production schema push."
