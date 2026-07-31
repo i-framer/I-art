@@ -283,7 +283,17 @@ export default async function SettingsPage({
                 <span className="font-mono text-stone-800">CNAME</span>
                 <span className="text-stone-500 font-medium">Name / Host</span>
                 <span className="font-mono text-stone-800">
-                  {tenant.customDomain.startsWith("www.") ? "www" : "@"}
+                  {(() => {
+                    const d = tenant.customDomain;
+                    if (d.startsWith("www.")) return "www";
+                    // Strip trailing TLD segments to find the subdomain prefix.
+                    // e.g. "gallery.janeart.com" → "gallery"
+                    //      "janeart.com"         → "@"  (apex domain)
+                    //      "gallery.janeart.com.au" → "gallery"
+                    const withoutTld = d.replace(/\.[a-z]{2,}(\.[a-z]{2})?$/i, "");
+                    const dot = withoutTld.lastIndexOf(".");
+                    return dot === -1 ? "@" : withoutTld.slice(dot + 1);
+                  })()}
                 </span>
                 <span className="text-stone-500 font-medium">Value / Target</span>
                 <div className="flex items-center gap-2">
@@ -347,8 +357,8 @@ export default async function SettingsPage({
             {/* TLS note */}
             <p className="text-xs text-stone-400 leading-relaxed">
               <strong className="text-stone-500">TLS / HTTPS:</strong> When deployed to Vercel,
-              SSL certificates are provisioned automatically for verified custom domains.
-              Add the domain in your Vercel project settings after verifying here.
+              SSL certificates are provisioned automatically once your domain is verified.
+              No manual steps needed.
             </p>
           </>
         )}
