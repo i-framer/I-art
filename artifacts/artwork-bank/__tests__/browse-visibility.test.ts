@@ -276,9 +276,16 @@ describe("filter-option — seller (sellerFilterWhere)", () => {
     expect(j(w)).toContain(j(ENABLED_STOREFRONT));
   });
 
-  it("the condition is exactly ENABLED_STOREFRONT (no extra clauses)", () => {
+  it("also requires at least one visible artwork (EXISTS subquery)", () => {
+    // sellerFilterWhere() was updated to add the same EXISTS guard used by
+    // artistTenantFilterWhere() and categoryFilterWhere(): tenants whose every
+    // artwork is hidden must not appear in the seller dropdown.
     const w = sellerFilterWhere();
-    expect(j(w)).toBe(j(ENABLED_STOREFRONT));
+    // The serialised condition must be strictly larger than ENABLED_STOREFRONT
+    // alone — confirming additional clauses are present.
+    expect(j(w)).not.toBe(j(ENABLED_STOREFRONT));
+    // The storefrontEnabled check must still be there.
+    expect(j(w)).toContain(j(ENABLED_STOREFRONT));
   });
 });
 

@@ -35,10 +35,29 @@ function artworkVisibleConditions() {
 
 /**
  * WHERE condition for the sellers dropdown.
- * Only tenants with storefrontEnabled=true are included.
+ *
+ * Only tenants with storefrontEnabled=true that have at least one visible
+ * artwork (showInGallery=true, status IN (AVAILABLE, SOLD, RESERVED)) are
+ * included.  Showing a seller whose every artwork is hidden would result in
+ * an empty browse grid when the buyer selects that filter — a confusing UX.
+ * This mirrors the same EXISTS guard used by artistTenantFilterWhere() and
+ * categoryFilterWhere().
  */
 export function sellerFilterWhere() {
-  return ENABLED_STOREFRONT;
+  return and(
+    ENABLED_STOREFRONT,
+    exists(
+      db
+        .select({ one: sql`1` })
+        .from(artworksTable)
+        .where(
+          and(
+            eq(artworksTable.tenantId, tenantsTable.id),
+            ...artworkVisibleConditions(),
+          ),
+        ),
+    ),
+  );
 }
 
 // ── Location filter options ───────────────────────────────────────────────────
