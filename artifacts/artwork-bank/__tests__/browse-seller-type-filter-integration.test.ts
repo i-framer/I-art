@@ -18,6 +18,8 @@ import {
   artworksTable,
   representedArtistsTable,
   artworkImagesTable,
+  artworkCategoriesTable,
+  artworkCategoryOnArtworkTable,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { buildBrowseWhere } from "@/lib/browse-where";
@@ -87,19 +89,47 @@ async function runBrowseQuery(searchParams: Record<string, string> = {}) {
     .where(whereClause);
 }
 
+/** Create a category owned by a tenant. */
+async function createCategory(tenantId: string, name: string) {
+  const id = uid();
+  await db.insert(artworkCategoriesTable).values({
+    id,
+    tenantId,
+    name,
+  } as any);
+  return id;
+}
+
+/** Assign a category to an artwork. */
+async function assignCategory(artworkId: string, categoryId: string) {
+  await db.insert(artworkCategoryOnArtworkTable).values({
+    artworkId,
+    categoryId,
+  } as any);
+}
+
 // Track created row IDs for cleanup.
 const createdTenantIds: string[] = [];
 const createdArtworkIds: string[] = [];
+const createdCategoryIds: string[] = [];
 
 beforeEach(() => {
   createdTenantIds.length = 0;
   createdArtworkIds.length = 0;
+  createdCategoryIds.length = 0;
 });
 
 afterEach(async () => {
-  // FK: artworks reference tenants, so delete artworks first.
+  // FK chain: artwork_category_on_artwork rows cascade-delete when artworks
+  // or categories are removed.  Delete artworks first, then categories, then tenants.
   for (const id of createdArtworkIds) {
     await db.delete(artworksTable).where(eq(artworksTable.id, id)).catch(() => {});
+  }
+  for (const id of createdCategoryIds) {
+    await db
+      .delete(artworkCategoriesTable)
+      .where(eq(artworkCategoriesTable.id, id))
+      .catch(() => {});
   }
   for (const id of createdTenantIds) {
     await db.delete(tenantsTable).where(eq(tenantsTable.id, id)).catch(() => {});
@@ -446,5 +476,146 @@ describeIntegration("browse query — seller (slug) filter", () => {
 
     // The other tenant's artwork must not appear.
     expect(rows.some((r) => r.artworkId === otherArtworkId)).toBe(false);
+  });
+});
+
+// ── Combined sellerType + category filter ─────────────────────────────────────
+
+describeIntegration("browse query — sellerType combined with category filter", () => {
+  it("returns only the ARTIST artwork when both sellerType=ARTIST and category are supplied", async () => {
+    // Seed an ARTIST tenant and a FRAMER tenant; both have an artwork in the
+    // same category name.  The combined filter must return only the ARTIST's.
+    const artistTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    const framerTenantId = await createTenant({ type: "FRAMER", storefrontEnabled: true });
+    createdTenantIds.push(artistTenantId, framerTenantId);
+
+    const artistArtworkId = await createArtwork({ tenantId: artistTenantId, status: "AVAILABLE" });
+    const framerArtworkId = await createArtwork({ tenantId: framerTenantId, status: "AVAILABLE" });
+    createdArtworkIds.push(artistArtworkId, framerArtworkId);
+
+    // Each tenant owns a category with the same name — this is the realistic
+    // scenario where the EXISTS subquery must not escape the tenant boundary.
+    const artistCategoryId = await createCategory(artistTenantId, "Painting");
+    const framerCategoryId = await createCategory(framerTenantId, "Painting");
+    createdCategoryIds.push(artistCategoryId, framerCategoryId);
+
+    await assignCategory(artistArtworkId, artistCategoryId);
+    await assignCategory(framerArtworkId, framerCategoryId);
+
+    const rows = await runBrowseQuery({ sellerType: "ARTIST", category: "Painting" });
+
+    const seededIds = new Set<string>([artistArtworkId, framerArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(artistArtworkId);
+  });
+
+  it("returns only the FRAMER artwork when both sellerType=FRAMER and category are supplied", async () => {
+    const artistTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    const framerTenantId = await createTenant({ type: "FRAMER", storefrontEnabled: true });
+    createdTenantIds.push(artistTenantId, framerTenantId);
+
+    const artistArtworkId = await createArtwork({ tenantId: artistTenantId, status: "AVAILABLE" });
+    const framerArtworkId = await createArtwork({ tenantId: framerTenantId, status: "AVAILABLE" });
+    createdArtworkIds.push(artistArtworkId, framerArtworkId);
+
+    const artistCategoryId = await createCategory(artistTenantId, "Sculpture");
+    const framerCategoryId = await createCategory(framerTenantId, "Sculpture");
+    createdCategoryIds.push(artistCategoryId, framerCategoryId);
+
+    await assignCategory(artistArtworkId, artistCategoryId);
+    await assignCategory(framerArtworkId, framerCategoryId);
+
+    const rows = await runBrowseQuery({ sellerType: "FRAMER", category: "Sculpture" });
+
+    const seededIds = new Set<string>([artistArtworkId, framerArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(framerArtworkId);
+  });
+
+  it("returns no artworks when the category exists but belongs to a different seller type", async () => {
+    // ARTIST has an artwork in "Photography"; FRAMER has no artwork in that
+    // category.  sellerType=FRAMER&category=Photography must return nothing.
+    const artistTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    const framerTenantId = await createTenant({ type: "FRAMER", storefrontEnabled: true });
+    createdTenantIds.push(artistTenantId, framerTenantId);
+
+    const artistArtworkId = await createArtwork({ tenantId: artistTenantId, status: "AVAILABLE" });
+    const framerArtworkId = await createArtwork({ tenantId: framerTenantId, status: "AVAILABLE" });
+    createdArtworkIds.push(artistArtworkId, framerArtworkId);
+
+    // Only the ARTIST tenant has a "Photography" category assignment.
+    const categoryId = await createCategory(artistTenantId, "Photography");
+    createdCategoryIds.push(categoryId);
+    await assignCategory(artistArtworkId, categoryId);
+
+    // FRAMER has no artwork in Photography — the combined filter must return nothing.
+    const rows = await runBrowseQuery({ sellerType: "FRAMER", category: "Photography" });
+
+    const seededIds = new Set<string>([artistArtworkId, framerArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    expect(matched).toHaveLength(0);
+  });
+
+  it("excludes HIDDEN artworks even when both sellerType and category match", async () => {
+    const artistTenantId = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    createdTenantIds.push(artistTenantId);
+
+    const hiddenId = await createArtwork({ tenantId: artistTenantId, status: "HIDDEN" });
+    const visibleId = await createArtwork({ tenantId: artistTenantId, status: "AVAILABLE" });
+    createdArtworkIds.push(hiddenId, visibleId);
+
+    const categoryId = await createCategory(artistTenantId, "Drawing");
+    createdCategoryIds.push(categoryId);
+    await assignCategory(hiddenId, categoryId);
+    await assignCategory(visibleId, categoryId);
+
+    const rows = await runBrowseQuery({ sellerType: "ARTIST", category: "Drawing" });
+
+    const seededIds = new Set<string>([hiddenId, visibleId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    // HIDDEN artwork must be excluded; only the AVAILABLE one appears.
+    expect(matched).toHaveLength(1);
+    expect(matched[0].artworkId).toBe(visibleId);
+  });
+
+  it("returns both ARTIST artworks in the category when sellerType=ARTIST but two artists exist", async () => {
+    // Two ARTIST tenants both have artworks in the same category.
+    // sellerType=ARTIST&category=Print must return both, not just one.
+    const artist1Id = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    const artist2Id = await createTenant({ type: "ARTIST", storefrontEnabled: true });
+    const framerTenantId = await createTenant({ type: "FRAMER", storefrontEnabled: true });
+    createdTenantIds.push(artist1Id, artist2Id, framerTenantId);
+
+    const artwork1Id = await createArtwork({ tenantId: artist1Id, status: "AVAILABLE" });
+    const artwork2Id = await createArtwork({ tenantId: artist2Id, status: "AVAILABLE" });
+    const framerArtworkId = await createArtwork({ tenantId: framerTenantId, status: "AVAILABLE" });
+    createdArtworkIds.push(artwork1Id, artwork2Id, framerArtworkId);
+
+    const cat1Id = await createCategory(artist1Id, "Print");
+    const cat2Id = await createCategory(artist2Id, "Print");
+    const catFramerId = await createCategory(framerTenantId, "Print");
+    createdCategoryIds.push(cat1Id, cat2Id, catFramerId);
+
+    await assignCategory(artwork1Id, cat1Id);
+    await assignCategory(artwork2Id, cat2Id);
+    await assignCategory(framerArtworkId, catFramerId);
+
+    const rows = await runBrowseQuery({ sellerType: "ARTIST", category: "Print" });
+
+    const seededIds = new Set<string>([artwork1Id, artwork2Id, framerArtworkId]);
+    const matched = rows.filter((r) => seededIds.has(r.artworkId));
+
+    // Both ARTIST artworks appear; the FRAMER one must not.
+    expect(matched).toHaveLength(2);
+    const matchedArtworkIds = new Set(matched.map((r) => r.artworkId));
+    expect(matchedArtworkIds.has(artwork1Id)).toBe(true);
+    expect(matchedArtworkIds.has(artwork2Id)).toBe(true);
+    expect(matchedArtworkIds.has(framerArtworkId)).toBe(false);
   });
 });
