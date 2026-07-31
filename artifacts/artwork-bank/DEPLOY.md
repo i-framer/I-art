@@ -185,6 +185,50 @@ file), then send a real test message for each email type:
 Both tests must succeed before go-live. If delivery fails, check Vercel logs for the
 `SMTP error:` prefix and compare against the settings in §6a above.
 
+## 8. Keeping the production database schema in sync
+
+Every code merge runs `scripts/post-merge.sh` automatically. That script already
+pushes the Drizzle schema to the **dev** database. To keep the **production** Neon
+database in sync with zero manual steps, add one more secret to the Replit workspace:
+
+| Secret name | Value |
+| --- | --- |
+| `PROD_DATABASE_URL` | The pooled Neon connection string for production (the same value you set in Vercel's `DATABASE_URL` environment variable) |
+
+Once set, every post-merge run will push the schema to production immediately after
+pushing to dev — no extra manual step, no risk of a missing column on the live site.
+
+### If PROD_DATABASE_URL is not set (manual path)
+
+When `PROD_DATABASE_URL` is absent the post-merge script prints a reminder and skips
+the production push. In that case you must run it manually from your local machine
+(or the Replit shell with the correct var set) before each deploy that adds columns
+or tables:
+
+```bash
+DATABASE_URL="<production-neon-url>" pnpm --filter @workspace/db run push-force
+```
+
+### Why `push-force`?
+
+`drizzle-kit push` prompts for confirmation in interactive terminals, which causes
+the post-merge script to fail immediately (stdin is closed). `push-force` suppresses
+the prompt and applies changes unconditionally — safe because Drizzle only ever adds
+columns and tables, never drops them.
+
+### Verifying the sync
+
+After a merge that adds schema, confirm the production database was updated:
+
+```bash
+# From Neon console or any Postgres client pointed at the production DATABASE_URL:
+SELECT column_name FROM information_schema.columns
+  WHERE table_name = '<changed_table>';
+```
+
+The new columns must appear. If they do not, run the manual command above and
+investigate why `PROD_DATABASE_URL` is not reaching the post-merge script.
+
 ## 7. Verify after deploy
 
 - `pnpm run build` succeeds locally from `artifacts/artwork-bank/` (same build Vercel runs).
