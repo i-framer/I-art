@@ -51,4 +51,25 @@ describeIntegration("checkRateLimit (Postgres-backed)", () => {
     );
     expect(results.filter(Boolean).length).toBe(5);
   });
+
+  it("allows requests again after the window expires", async () => {
+    // Use a very short window so we don't have to wait long in CI.
+    const windowMs = 300;
+
+    // Exhaust the limit.
+    for (let i = 0; i < 3; i++) {
+      await checkRateLimit(`${prefix}:ip6`, { limit: 3, windowMs });
+    }
+    expect(
+      await checkRateLimit(`${prefix}:ip6`, { limit: 3, windowMs }),
+    ).toBe(false);
+
+    // Wait for the window to roll over.
+    await new Promise((resolve) => setTimeout(resolve, windowMs + 50));
+
+    // The key should be admitted again now that the old events have expired.
+    expect(
+      await checkRateLimit(`${prefix}:ip6`, { limit: 3, windowMs }),
+    ).toBe(true);
+  }, 10_000);
 });
