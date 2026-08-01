@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "YtfrW8Wk4wKECI11SJE6E"
+uri = "file://attached_assets/i-art-icon-512.png"
+type = "image"
+title = "i-art icon (512×512, transparent)"
+description = "Square icon-only mark — upload this as the Icon in Stripe → Settings → Business → Branding. Also good for favicons and social avatars."
+
+[[outputs]]
+id = "J1q4yiN28g_TZeskMsEnr"
+uri = "file://attached_assets/i-art-logo-full.png"
+type = "image"
+title = "i-art full logo (transparent)"
+description = "Full lockup with text — use for the Logo slot in Stripe branding, website header, and emails."
