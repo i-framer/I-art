@@ -33,6 +33,20 @@ const CUSTOM_DOMAIN_PASSTHROUGH_PREFIXES = [
   "/sitemap.xml",
 ];
 
+/**
+ * Exact-match paths that render on every domain (platform legal pages).
+ * Matched exactly — "/terms-foo" or "/terms/x" are still rewritten normally.
+ */
+const CUSTOM_DOMAIN_PASSTHROUGH_EXACT = ["/terms", "/privacy"];
+
+/** True when a path must never be rewritten to /t/[slug]/... */
+function isPassthroughPath(pathname: string): boolean {
+  return (
+    CUSTOM_DOMAIN_PASSTHROUGH_EXACT.includes(pathname) ||
+    CUSTOM_DOMAIN_PASSTHROUGH_PREFIXES.some((p) => pathname.startsWith(p))
+  );
+}
+
 /** Host of the configured site URL (if any) — treated as a platform domain. */
 function getConfiguredPlatformHost(): string | null {
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
@@ -92,10 +106,7 @@ export async function middleware(request: NextRequest) {
   // ── 0. Tenant subdomain rewrite (wildcard *.platform-domain) ───────────────
   // e.g. jane.i-art.com.au/about → /t/jane/about
   const tenantSub = getTenantSubdomain(host);
-  if (
-    tenantSub &&
-    !CUSTOM_DOMAIN_PASSTHROUGH_PREFIXES.some((p) => pathname.startsWith(p))
-  ) {
+  if (tenantSub && !isPassthroughPath(pathname)) {
     const rewriteUrl = request.nextUrl.clone();
     rewriteUrl.pathname =
       pathname === "/" ? `/t/${tenantSub}` : `/t/${tenantSub}${pathname}`;
@@ -104,10 +115,7 @@ export async function middleware(request: NextRequest) {
 
   // ── 1. Custom domain resolution ────────────────────────────────────────────
   // Only attempt for non-platform hosts and non-passthrough paths.
-  if (
-    !isPlatformDomain(host) &&
-    !CUSTOM_DOMAIN_PASSTHROUGH_PREFIXES.some((p) => pathname.startsWith(p))
-  ) {
+  if (!isPlatformDomain(host) && !isPassthroughPath(pathname)) {
     try {
       const baseUrl = getInternalBaseUrl();
       const lookupUrl = `${baseUrl}/api/tenant/by-domain?domain=${encodeURIComponent(host)}`;

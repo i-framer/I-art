@@ -78,7 +78,15 @@ export default async function StorefrontLayout({ children, params }: Props) {
       <footer className="mt-16 border-t border-stone-100 py-8 text-sm text-stone-400">
         <div className="mx-auto max-w-7xl px-6 flex items-center justify-between">
           <span className="font-medium text-stone-500">{tenant.businessName}</span>
-          <span className="text-xs">Powered by Artwork Bank</span>
+          <span className="flex items-center gap-4 text-xs">
+            <Link href="/terms" className="hover:text-stone-600 transition-colors">
+              Terms
+            </Link>
+            <Link href="/privacy" className="hover:text-stone-600 transition-colors">
+              Privacy
+            </Link>
+            <span>Powered by Artwork Bank</span>
+          </span>
         </div>
       </footer>
     </div>
