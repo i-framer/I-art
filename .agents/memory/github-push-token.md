@@ -9,3 +9,5 @@ Replit's built-in GitHub connection (`gitPush`) returns NO_CREDENTIALS in this w
 **Why:** user's Git pane showed no "Connect to GitHub" option; token flow was the working fallback (July 2026).
 
 **Before every push:** run `bash scripts/check-sensitive-assets.sh origin/main` (also installed as a pre-push hook via `bash scripts/install-git-hooks.sh`). A credential screenshot was once auto-committed into `attached_assets/` — if the scan blocks, rewrite local history to drop the blob before pushing.
+
+**Update (Aug 1 2026):** token now has Workflows RW scope — pushes including .github/workflows files succeed. A PAT-screenshot commit was scrubbed via filter-branch before push; always scan history (not just tip) for sensitive attached_assets before pushing.
