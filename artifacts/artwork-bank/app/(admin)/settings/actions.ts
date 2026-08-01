@@ -406,7 +406,11 @@ export async function startSubscriptionCheckout() {
       success_url: `${baseUrl}/settings/billing?billing=subscribed`,
       cancel_url: `${baseUrl}/settings/billing?billing=cancelled`,
       metadata: { billingTenantId: tenant.id },
-      subscription_data: { metadata: { billingTenantId: tenant.id } },
+      subscription_data: {
+        metadata: { billingTenantId: tenant.id },
+        // 30-day free trial for all new subscriptions — no charge until day 31.
+        trial_period_days: 30,
+      },
     });
 
     try {

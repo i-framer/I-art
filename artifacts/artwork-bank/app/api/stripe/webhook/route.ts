@@ -157,19 +157,32 @@ async function handleSubscriptionCheckoutCompleted(
   const tenantId = tenant.id;
 
   // Order-safety: customer.subscription.* events are the source of truth for
-  // status. Only mark active here when this checkout introduces a NEW
+  // status. Only set status here when this checkout introduces a NEW
   // subscription — if a subscription event for the same subscription already
   // wrote a status (e.g. an out-of-order `deleted` → canceled), keep it.
+  // Fetch the real subscription status (may be "trialing", not "active").
   const isNewSubscription =
     !tenant.subscriptionStatus ||
     (subscriptionId != null && tenant.stripeSubscriptionId !== subscriptionId);
+
+  let newStatus: string | null = null;
+  if (isNewSubscription && subscriptionId) {
+    try {
+      const stripeClient = await getStripeClient();
+      const sub = await stripeClient.subscriptions.retrieve(subscriptionId);
+      newStatus = sub.status;
+    } catch {
+      // Fall back to "active" if the retrieve fails (e.g. test-mode key mismatch).
+      newStatus = "active";
+    }
+  }
 
   await db
     .update(tenantsTable)
     .set({
       ...(customerId ? { stripeCustomerId: customerId } : {}),
       ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
-      ...(isNewSubscription ? { subscriptionStatus: "active" } : {}),
+      ...(newStatus ? { subscriptionStatus: newStatus } : {}),
     })
     .where(eq(tenantsTable.id, tenantId));
 }
