@@ -84,11 +84,17 @@ export async function deleteRepresentedArtist(
   if (!session.userId) return { error: "Not authenticated." };
   await requireActiveBillingAccess(session.tenantId);
 
-  // Check if artworks are linked to this artist
+  // Check if artworks within THIS tenant are linked to this artist.
+  // Must scope by tenantId so a different tenant's artworks don't block deletion.
   const [usage] = await db
     .select({ count: count() })
     .from(artworksTable)
-    .where(eq(artworksTable.representedArtistId, id));
+    .where(
+      and(
+        eq(artworksTable.representedArtistId, id),
+        eq(artworksTable.tenantId, session.tenantId),
+      ),
+    );
 
   if ((usage?.count ?? 0) > 0) {
     return {
