@@ -59,10 +59,12 @@ import {
   sendOrderStatusUpdate,
   sendPartialRefundNotification,
   sendConfirmationFailureNotice,
+  sendArtworkInquiry,
+  sendInquiryReply,
 } from "@/lib/email";
 
 // ── Helper: capture rendered HTML from nodemailer ──────────────────────────────
-async function captureHtmlFrom(fn: () => Promise<void>): Promise<string | null> {
+async function captureHtmlFrom(fn: () => Promise<unknown>): Promise<string | null> {
   const nodemailer = await import("nodemailer");
   const mockTransport = {
     sendMail: vi.fn().mockResolvedValue({ messageId: "test" }),
@@ -349,5 +351,172 @@ describe("sendConfirmationFailureNotice — HTML injection prevention", () => {
     // The email address appears in the body text, so & must be escaped there too
     expect(html).toContain("&amp;");
     expect(html).not.toMatch(/buyer\+tag&trick/);
+  });
+});
+
+// ── sendArtworkInquiry ─────────────────────────────────────────────────────────
+
+const INQUIRY_BASE = {
+  galleryEmail: "gallery@example.com",
+  buyerName: "Alice",
+  buyerEmail: "buyer@example.com",
+  message: "I would like to know more about this piece.",
+  artworkTitle: "Sunset",
+  artworkSku: "SKU-001",
+  artworkUrl: "https://gallery.example.com/artworks/sunset",
+  tenantName: "Good Gallery",
+};
+
+describe("sendArtworkInquiry — HTML injection prevention", () => {
+  it("escapes < > in artworkTitle", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendArtworkInquiry({ ...INQUIRY_BASE, artworkTitle: "<script>alert(1)</script>" }),
+    );
+    if (!html) return;
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("escapes < > in buyerName", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendArtworkInquiry({ ...INQUIRY_BASE, buyerName: "<img src=x onerror=alert(1)>" }),
+    );
+    if (!html) return;
+    expect(html).not.toContain("<img src=x");
+    expect(html).toContain("&lt;img");
+  });
+
+  it("escapes < > in tenantName", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendArtworkInquiry({ ...INQUIRY_BASE, tenantName: "</p><b>injected</b>" }),
+    );
+    if (!html) return;
+    expect(html).not.toContain("</p><b>");
+    expect(html).toContain("&lt;/p&gt;");
+  });
+
+  it("escapes HTML in message body", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendArtworkInquiry({
+        ...INQUIRY_BASE,
+        message: "<a href='javascript:alert(1)'>click me</a>",
+      }),
+    );
+    if (!html) return;
+    expect(html).not.toContain("<a href='javascript:");
+    expect(html).toContain("&lt;a href=");
+  });
+
+  it("escapes & in artworkSku", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendArtworkInquiry({ ...INQUIRY_BASE, artworkSku: "SKU-001&foo=bar" }),
+    );
+    if (!html) return;
+    expect(html).toContain("SKU-001&amp;foo=bar");
+    expect(html).not.toContain("SKU-001&foo");
+  });
+
+  it("escapes double-quote in artworkUrl to prevent attribute breakout", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendArtworkInquiry({
+        ...INQUIRY_BASE,
+        artworkUrl: 'https://gallery.com/art?id=1" onmouseover="alert(1)',
+      }),
+    );
+    if (!html) return;
+    expect(html).not.toContain('href="https://gallery.com/art?id=1" onmouseover');
+    expect(html).toContain("&quot;");
+  });
+
+  it("escapes single-quote in artworkTitle to prevent attribute breakout", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendArtworkInquiry({ ...INQUIRY_BASE, artworkTitle: "It's a <trap>" }),
+    );
+    if (!html) return;
+    expect(html).toContain("It&#39;s");
+    expect(html).toContain("&lt;trap&gt;");
+  });
+});
+
+// ── sendInquiryReply ───────────────────────────────────────────────────────────
+
+const REPLY_BASE = {
+  buyerEmail: "buyer@example.com",
+  buyerName: "Alice",
+  replyMessage: "Thank you for your interest!",
+  originalMessage: "I would like to know more about this piece.",
+  artworkTitle: "Sunset",
+  tenantName: "Good Gallery",
+  galleryEmail: "gallery@example.com",
+};
+
+describe("sendInquiryReply — HTML injection prevention", () => {
+  it("escapes < > in artworkTitle", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendInquiryReply({ ...REPLY_BASE, artworkTitle: "<script>alert(1)</script>" }),
+    );
+    if (!html) return;
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("escapes < > in buyerName", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendInquiryReply({ ...REPLY_BASE, buyerName: "<img src=x onerror=alert(1)>" }),
+    );
+    if (!html) return;
+    expect(html).not.toContain("<img src=x");
+    expect(html).toContain("&lt;img");
+  });
+
+  it("escapes < > in tenantName", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendInquiryReply({ ...REPLY_BASE, tenantName: "</p><b>injected</b>" }),
+    );
+    if (!html) return;
+    expect(html).not.toContain("</p><b>");
+    expect(html).toContain("&lt;/p&gt;");
+  });
+
+  it("escapes HTML in replyMessage", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendInquiryReply({
+        ...REPLY_BASE,
+        replyMessage: "<a href='javascript:alert(1)'>click me</a>",
+      }),
+    );
+    if (!html) return;
+    expect(html).not.toContain("<a href=");
+    expect(html).toContain("&lt;a href=");
+  });
+
+  it("escapes HTML in originalMessage", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendInquiryReply({
+        ...REPLY_BASE,
+        originalMessage: "<script>steal(document.cookie)</script>",
+      }),
+    );
+    if (!html) return;
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("escapes single-quote in artworkTitle to prevent attribute breakout", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendInquiryReply({ ...REPLY_BASE, artworkTitle: "It's a <trap>" }),
+    );
+    if (!html) return;
+    expect(html).toContain("It&#39;s");
+    expect(html).toContain("&lt;trap&gt;");
+  });
+
+  it("escapes & in tenantName", async () => {
+    const html = await captureHtmlFrom(() =>
+      sendInquiryReply({ ...REPLY_BASE, tenantName: "Art & Soul Gallery" }),
+    );
+    if (!html) return;
+    expect(html).toContain("Art &amp; Soul Gallery");
+    expect(html).not.toMatch(/Art & Soul/);
   });
 });
