@@ -119,7 +119,11 @@ export default async function BillingPage({
               your catalog, storefront, orders and inquiries.
             </p>
           </div>
-          {tenant.billingExempt ? (
+          {tenant.billingExempt && tenant.iframerAccountId ? (
+            <span className="flex items-center gap-1 rounded-full bg-indigo-100 text-indigo-700 px-3 py-1 text-sm font-semibold">
+              <Sparkles className="h-3.5 w-3.5" /> i-Framer Premium
+            </span>
+          ) : tenant.billingExempt ? (
             <span className="flex items-center gap-1 rounded-full bg-violet-100 text-violet-700 px-3 py-1 text-sm font-semibold">
               <Sparkles className="h-3.5 w-3.5" /> Complimentary
             </span>
@@ -134,7 +138,16 @@ export default async function BillingPage({
           )}
         </div>
 
-        {tenant.billingExempt ? (
+        {tenant.billingExempt && tenant.iframerAccountId ? (
+          <div className="flex items-start gap-3 text-sm text-stone-600">
+            <CheckCircle2 className="h-5 w-5 text-indigo-500 shrink-0 mt-0.5" />
+            <p>
+              Your Artwork Bank access is included with your{" "}
+              <span className="font-medium text-stone-900">i-Framer Premium</span>{" "}
+              account — no separate subscription needed.
+            </p>
+          </div>
+        ) : tenant.billingExempt ? (
           <div className="flex items-start gap-3 text-sm text-stone-600">
             <CheckCircle2 className="h-5 w-5 text-violet-500 shrink-0 mt-0.5" />
             <p>
