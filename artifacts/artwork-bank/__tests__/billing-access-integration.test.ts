@@ -13,7 +13,7 @@
  * These tests write real rows to the Postgres DB and clean up after themselves.
  * They are skipped automatically when DATABASE_URL is absent.
  */
-import { afterAll, beforeAll, describe, it, expect } from "vitest";
+import { afterAll, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, tenantsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";

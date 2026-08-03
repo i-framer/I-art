@@ -12,7 +12,7 @@
  * These tests INSERT real rows, call the live action functions, and verify the
  * outcome directly in Postgres, then clean up.
  */
-import { afterAll, beforeAll, describe, it, expect } from "vitest";
+import { afterAll, beforeAll, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, tenantsTable, inquiriesTable, artworksTable } from "@workspace/db";
 import { eq } from "drizzle-orm";

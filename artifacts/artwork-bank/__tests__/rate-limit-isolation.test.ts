@@ -10,7 +10,7 @@
  *         cleanup strategy used in inquiry-rate-limit.test.ts is correct and
  *         that a fresh environment (empty table) always starts at zero.
  */
-import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import { it, expect, beforeEach, afterAll } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { checkRateLimit, resetRateLimiter } from "../lib/rate-limit";
 import { pool } from "@workspace/db";

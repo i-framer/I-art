@@ -61,7 +61,6 @@ vi.mock("@/lib/email", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { replyToInquiry } from "@/app/(admin)/(gated)/inquiries/actions";
-import { and, eq } from "drizzle-orm";
 
 const BASE_INQUIRY = {
   id: "inq-1",

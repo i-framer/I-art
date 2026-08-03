@@ -14,7 +14,7 @@
  *  - An empty slug from slugify() falls back to "tenant"
  *  - A colliding slug gets a 4-char random suffix appended
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
 // ── Auth module — keep real slugify but mock session/hashing ──────────────────
 import { slugify } from "@/lib/auth";

@@ -40,7 +40,7 @@ vi.mock("@/lib/base-url", () => ({
 }));
 
 // ── Helper: build a successful Slack response ─────────────────────────────────
-function slackOk() {
+function _slackOk() {
   return Promise.resolve({
     ok: true,
     status: 200,
@@ -189,7 +189,7 @@ describe("schema-push Slack alert — post-reconnect (Tasks #277, #280)", () => 
 describe("sendSchemaPushFailureEmail — email content (Tasks #277, #280)", () => {
   it("returns true when transport is configured and delivery succeeds", async () => {
     sendSchemaPushFailureEmail.mockResolvedValue(true);
-    const result = await emailFn({ errorText: "push failed" });
+    const _result = await emailFn({ errorText: "push failed" });
     // result comes from the vi.mock, so it's whatever mock returns
     expect(sendSchemaPushFailureEmail).toHaveBeenCalledWith(
       expect.objectContaining({ errorText: "push failed" }),

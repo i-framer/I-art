@@ -12,7 +12,7 @@
  *
  * Uses describeIntegration() so suites are skipped when DATABASE_URL is absent.
  */
-import { afterAll, beforeAll, describe, it, expect } from "vitest";
+import { afterAll, beforeAll, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, artworksTable, tenantsTable, ordersTable, orderItemsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";

@@ -12,7 +12,7 @@
  *    in the tenantUsers table (no duplicate membership row).
  *  - An invalid/unknown token returns a safe error without leaking details.
  */
-import { afterAll, beforeAll, describe, it, expect } from "vitest";
+import { afterAll, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import {
   db,

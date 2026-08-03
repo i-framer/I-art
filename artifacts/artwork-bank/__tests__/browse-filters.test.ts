@@ -53,7 +53,7 @@ import {
 
 // ── Helper: extract the raw SQL string from a Drizzle condition ───────────────
 
-function toSql(condition: any): string {
+function _toSql(condition: any): string {
   try {
     // Drizzle conditions expose their SQL via getSQL() or toString()
     if (typeof condition?.getSQL === "function") {

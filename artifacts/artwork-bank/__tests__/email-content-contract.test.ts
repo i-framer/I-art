@@ -18,7 +18,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── Transport mock (intercept deliverEmail) ────────────────────────────────────
-const deliverEmail = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const _deliverEmail = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock("nodemailer", () => ({
   default: {
