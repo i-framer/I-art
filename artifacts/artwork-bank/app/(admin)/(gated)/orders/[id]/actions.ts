@@ -212,36 +212,117 @@ export async function refundOrder(formData: FormData): Promise<void> {
     refundCents = maxRefundable;
   }
 
-  let stripeRefundId: string;
+  // Non-terminal Stripe refund states — money has left (or will leave) the account.
+  // Treat these identically to prevent creating a duplicate charge on retry.
+  const STRIPE_NON_TERMINAL = new Set(["pending", "succeeded", "requires_action"]);
+
+  // Use a deterministic idempotency key so concurrent or retried form submissions
+  // do not create a second Stripe refund for the same operation. The key encodes
+  // the order, its current refunded balance, and the new amount so it remains
+  // unique across genuinely different refund operations on the same order.
+  const idempotencyKey = `refund-${orderId}-${alreadyRefunded}-${refundCents}`;
+
+  // Using a discriminated union avoids calling redirect() inside a try-catch
+  // (which would prevent Next.js redirect signals from propagating correctly).
+  type StripeOutcome =
+    | { kind: "ok"; refundId: string }
+    | { kind: "stripe_error"; message: string }
+    | { kind: "manual_review" };
+
+  let stripeOutcome: StripeOutcome;
   try {
     const stripe = await getStripeClient();
-    const refund = await stripe.refunds.create({
+
+    // Reconciliation: before creating a new refund, check whether Stripe already
+    // holds a non-terminal refund that our DB hasn't recorded yet (can happen
+    // when the previous DB write failed after Stripe already accepted the refund).
+    const existingStripeRefunds = await stripe.refunds.list({
       payment_intent: order.stripePaymentIntentId,
-      amount: refundCents,
+      limit: 100,
     });
-    stripeRefundId = refund.id;
+
+    const nonTerminalRefunds = existingStripeRefunds.data.filter((r) =>
+      r.status != null && STRIPE_NON_TERMINAL.has(r.status),
+    );
+    const stripeNonTerminalTotal = nonTerminalRefunds.reduce(
+      (sum, r) => sum + r.amount,
+      0,
+    );
+    const unrecordedCents = stripeNonTerminalTotal - alreadyRefunded;
+
+    if (unrecordedCents > 0) {
+      // Stripe shows more refunded (or in-flight) than our DB. If the gap
+      // exactly matches what we're about to refund, reuse that refund rather
+      // than creating a new charge. Any other discrepancy requires manual review.
+      const match =
+        unrecordedCents === refundCents
+          ? nonTerminalRefunds.find((r) => r.amount === refundCents)
+          : undefined;
+
+      stripeOutcome = match
+        ? { kind: "ok", refundId: match.id }
+        : { kind: "manual_review" };
+    } else {
+      const refund = await stripe.refunds.create(
+        {
+          payment_intent: order.stripePaymentIntentId,
+          amount: refundCents,
+        },
+        { idempotencyKey },
+      );
+      stripeOutcome = { kind: "ok", refundId: refund.id };
+    }
   } catch (err) {
     const message =
       err instanceof StripeNotConfiguredError
         ? "Payments are unavailable right now — Stripe is not configured."
         : ((err as any)?.message ?? String(err));
+    stripeOutcome = { kind: "stripe_error", message };
+  }
+
+  if (stripeOutcome.kind === "stripe_error") {
     redirect(
-      `/orders/${orderId}?refund_error=${encodeURIComponent(message)}`,
+      `/orders/${orderId}?refund_error=${encodeURIComponent(stripeOutcome.message)}`,
     );
   }
+
+  if (stripeOutcome.kind === "manual_review") {
+    redirect(
+      `/orders/${orderId}?refund_error=${encodeURIComponent(
+        "Stripe shows an unrecorded refund on this order. Review the payment in Stripe before proceeding to avoid a double refund.",
+      )}`,
+    );
+  }
+
+  const stripeRefundId = stripeOutcome.refundId;
 
   const newTotalRefunded = alreadyRefunded + refundCents;
   const isFullRefund = newTotalRefunded >= order.totalCents;
 
-  await db
-    .update(ordersTable)
-    .set({
-      refundedAmountCents: newTotalRefunded,
-      refundedAt: new Date(),
-      stripeRefundId,
-      ...(isFullRefund ? { status: "CANCELLED" } : {}),
-    })
-    .where(eq(ordersTable.id, orderId));
+  try {
+    await db
+      .update(ordersTable)
+      .set({
+        refundedAmountCents: newTotalRefunded,
+        refundedAt: new Date(),
+        stripeRefundId,
+        ...(isFullRefund ? { status: "CANCELLED" } : {}),
+      })
+      .where(eq(ordersTable.id, orderId));
+  } catch (dbErr) {
+    // Stripe accepted the refund but we couldn't persist it. Surface the Stripe
+    // refund id so the operator can verify the refund and avoid a double-refund.
+    const safeId = stripeRefundId!;
+    console.error(
+      `[refundOrder] DB update failed after Stripe refund ${safeId} was created:`,
+      dbErr,
+    );
+    redirect(
+      `/orders/${orderId}?refund_error=${encodeURIComponent(
+        `Stripe refund ${safeId} was accepted but the order record could not be updated. Do NOT retry — check Stripe for refund ${safeId} before proceeding.`,
+      )}`,
+    );
+  }
 
   if (isFullRefund) {
     await notifyBuyerOfUpdate(orderId);

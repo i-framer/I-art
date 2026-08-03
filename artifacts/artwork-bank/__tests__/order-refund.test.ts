@@ -17,6 +17,7 @@ vi.mock("@/lib/billing", () => ({
 const state = vi.hoisted(() => ({
   updates: [] as { vals: any }[],
   order: null as any,
+  dbUpdateShouldFail: false,
 }));
 
 const tables = vi.hoisted(() => ({
@@ -43,7 +44,12 @@ vi.mock("@workspace/db", () => ({
     update: vi.fn(() => ({
       set: (vals: any) => {
         state.updates.push({ vals });
-        return { where: () => Promise.resolve() };
+        return {
+          where: () =>
+            state.dbUpdateShouldFail
+              ? Promise.reject(new Error("DB connection lost"))
+              : Promise.resolve(),
+        };
       },
     })),
   },
@@ -67,9 +73,12 @@ const redirectSpy = vi.hoisted(() => vi.fn((url: string) => { throw new Error(`R
 vi.mock("next/navigation", () => ({ redirect: (url: string) => redirectSpy(url) }));
 
 const stripeRefundCreate = vi.hoisted(() => vi.fn());
+const stripeRefundList = vi.hoisted(() =>
+  vi.fn(async () => ({ data: [] as any[] })),
+);
 const getStripeClient = vi.hoisted(() =>
   vi.fn(async () => ({
-    refunds: { create: stripeRefundCreate },
+    refunds: { create: stripeRefundCreate, list: stripeRefundList },
   })),
 );
 const StripeNotConfiguredError = vi.hoisted(
@@ -108,10 +117,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.updates.length = 0;
   state.order = baseOrder();
+  state.dbUpdateShouldFail = false;
   orderFindFirst.mockImplementation(async () => state.order);
   itemFindFirst.mockResolvedValue({ artworkTitle: "Sunset" });
   tenantFindFirst.mockResolvedValue({ id: "t1", businessName: "Gallery" });
   stripeRefundCreate.mockResolvedValue({ id: "re_test" });
+  stripeRefundList.mockResolvedValue({ data: [] });
 });
 
 describe("partial refund", () => {
@@ -133,10 +144,10 @@ describe("partial refund", () => {
       refundOrder(formData({ orderId: "order-1", refundAmountDollars: "45.50" })),
     ).rejects.toThrow("REDIRECT:");
 
-    expect(stripeRefundCreate).toHaveBeenCalledWith({
-      payment_intent: "pi_test",
-      amount: 4_550,
-    });
+    expect(stripeRefundCreate).toHaveBeenCalledWith(
+      { payment_intent: "pi_test", amount: 4_550 },
+      expect.objectContaining({ idempotencyKey: expect.stringContaining("order-1") }),
+    );
   });
 
   it("accumulates correctly on a second partial refund", async () => {
@@ -234,10 +245,10 @@ describe("full refund", () => {
       refundOrder(formData({ orderId: "order-1" })),
     ).rejects.toThrow("REDIRECT:/orders/order-1?refunded=full");
 
-    expect(stripeRefundCreate).toHaveBeenCalledWith({
-      payment_intent: "pi_test",
-      amount: 10_000,
-    });
+    expect(stripeRefundCreate).toHaveBeenCalledWith(
+      { payment_intent: "pi_test", amount: 10_000 },
+      expect.objectContaining({ idempotencyKey: expect.stringContaining("order-1") }),
+    );
     const update = state.updates.find((u) => "refundedAmountCents" in u.vals);
     expect(update?.vals.status).toBe("CANCELLED");
   });
@@ -327,5 +338,121 @@ describe("validation", () => {
     ).rejects.toThrow("REDIRECT:/orders/order-1?refund_error=");
 
     expect(stripeRefundCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("DB failure after successful Stripe refund", () => {
+  it("redirects with the Stripe refund id in the error when the DB update throws", async () => {
+    state.dbUpdateShouldFail = true;
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "30.00" })),
+    ).rejects.toThrow(
+      `REDIRECT:/orders/order-1?refund_error=${encodeURIComponent(
+        "Stripe refund re_test was accepted but the order record could not be updated. Do NOT retry — check Stripe for refund re_test before proceeding.",
+      )}`,
+    );
+
+    // Stripe was called — money left the account.
+    expect(stripeRefundCreate).toHaveBeenCalledOnce();
+  });
+
+  it("reuses the existing Stripe refund when an admin retries after a DB failure", async () => {
+    // First attempt: Stripe creates re_test, then the DB write fails.
+    state.dbUpdateShouldFail = true;
+    await expect(
+      refundOrder(formData({ orderId: "order-1" })),
+    ).rejects.toThrow("REDIRECT:/orders/order-1?refund_error=");
+    expect(stripeRefundCreate).toHaveBeenCalledOnce();
+
+    // Admin retries: DB works now. Stripe's list returns the refund it already
+    // accepted on the first attempt — the action must reuse it, not create a new one.
+    state.dbUpdateShouldFail = false;
+    vi.clearAllMocks();
+    stripeRefundList.mockResolvedValueOnce({
+      data: [{ id: "re_test", amount: 10_000, status: "succeeded" }],
+    });
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1" })),
+    ).rejects.toThrow("REDIRECT:/orders/order-1?refunded=full");
+
+    expect(stripeRefundCreate).not.toHaveBeenCalled();
+
+    const update = state.updates.find((u) => "refundedAmountCents" in u.vals);
+    expect(update?.vals.stripeRefundId).toBe("re_test");
+  });
+});
+
+describe("reconciliation — reuse existing Stripe refund", () => {
+  it("does not call stripe.refunds.create when an unrecorded succeeded refund already exists", async () => {
+    // Stripe has re_existing for $30 but our DB shows $0 refunded.
+    stripeRefundList.mockResolvedValueOnce({
+      data: [{ id: "re_existing", amount: 3_000, status: "succeeded" }],
+    });
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "30.00" })),
+    ).rejects.toThrow("REDIRECT:/orders/order-1?refunded=partial");
+
+    expect(stripeRefundCreate).not.toHaveBeenCalled();
+
+    const refundUpdate = state.updates.find((u) => "refundedAmountCents" in u.vals);
+    expect(refundUpdate?.vals).toMatchObject({
+      refundedAmountCents: 3_000,
+      stripeRefundId: "re_existing",
+    });
+  });
+
+  it("treats a pending Stripe refund as an existing unrecorded refund", async () => {
+    // Stripe has re_pending in 'pending' state — money is in-flight. Must not create a duplicate.
+    stripeRefundList.mockResolvedValueOnce({
+      data: [{ id: "re_pending", amount: 3_000, status: "pending" }],
+    });
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "30.00" })),
+    ).rejects.toThrow("REDIRECT:/orders/order-1?refunded=partial");
+
+    expect(stripeRefundCreate).not.toHaveBeenCalled();
+
+    const refundUpdate = state.updates.find((u) => "refundedAmountCents" in u.vals);
+    expect(refundUpdate?.vals.stripeRefundId).toBe("re_pending");
+  });
+
+  it("requires manual review and blocks create when Stripe shows an unmatched discrepancy", async () => {
+    // Stripe shows $50 unrecorded, but we're only trying to refund $30 — mismatch.
+    stripeRefundList.mockResolvedValueOnce({
+      data: [{ id: "re_other", amount: 5_000, status: "succeeded" }],
+    });
+    // DB shows $0 refunded, so unrecordedCents = 5000 ≠ 3000 requested.
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "30.00" })),
+    ).rejects.toThrow(
+      `REDIRECT:/orders/order-1?refund_error=${encodeURIComponent(
+        "Stripe shows an unrecorded refund on this order. Review the payment in Stripe before proceeding to avoid a double refund.",
+      )}`,
+    );
+
+    expect(stripeRefundCreate).not.toHaveBeenCalled();
+    expect(state.updates).toHaveLength(0);
+  });
+
+  it("creates a new Stripe refund with an idempotency key when Stripe and DB agree", async () => {
+    // Stripe has re_other for $50 and our DB also shows $50 — no unrecorded gap.
+    state.order = baseOrder({ refundedAmountCents: 5_000 });
+    stripeRefundList.mockResolvedValueOnce({
+      data: [{ id: "re_other", amount: 5_000, status: "succeeded" }],
+    });
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "30.00" })),
+    ).rejects.toThrow("REDIRECT:/orders/order-1?refunded=partial");
+
+    expect(stripeRefundCreate).toHaveBeenCalledOnce();
+    // Verify the idempotency key was passed: key encodes orderId-alreadyRefunded-refundCents.
+    const [, opts] = stripeRefundCreate.mock.calls[0] as [any, any];
+    expect(opts?.idempotencyKey).toBe("refund-order-1-5000-3000");
   });
 });

@@ -76,6 +76,7 @@ vi.mock("next/navigation", () => ({ redirect: (url: string) => redirectSpy(url) 
 
 const getStripeClient = vi.hoisted(() => vi.fn());
 const stripeRefundCreate = vi.hoisted(() => vi.fn());
+const stripeRefundList = vi.hoisted(() => vi.fn(async () => ({ data: [] as any[] })));
 const FakeStripeNotConfiguredError = vi.hoisted(
   () =>
     class extends Error {
@@ -119,9 +120,10 @@ beforeEach(() => {
   tenantFindFirst.mockResolvedValue({ id: "t1", businessName: "Gallery" });
   // Default: stripe client works normally
   getStripeClient.mockResolvedValue({
-    refunds: { create: stripeRefundCreate },
+    refunds: { create: stripeRefundCreate, list: stripeRefundList },
   });
   stripeRefundCreate.mockResolvedValue({ id: "re_test" });
+  stripeRefundList.mockResolvedValue({ data: [] });
 });
 
 function getRedirectUrl(): string {
