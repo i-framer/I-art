@@ -306,11 +306,18 @@ export default async function InquiriesPage({
                       >
                         <p className="text-xs text-stone-500">
                           {formatDate(reply.sentAt)}
-                          {reply.senderEmail && (
+                          {reply.senderEmail ? (
                             <>
                               {" · "}
                               <span className="font-medium text-stone-600">
                                 {reply.senderEmail}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              {" · "}
+                              <span className="italic text-stone-400">
+                                staff (sender not recorded)
                               </span>
                             </>
                           )}

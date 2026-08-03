@@ -77,6 +77,14 @@ export default async function OrderDetailPage({
     Boolean(order.stripePaymentIntentId) &&
     maxRefundable > 0;
   const isPartiallyRefunded = alreadyRefunded > 0 && order.status !== "CANCELLED";
+  // Detect a failed partial-refund buyer notification: set by notifyBuyerOfPartialRefund
+  // on failure — distinguishable from sweep-retried status emails because the refund
+  // path does not touch statusEmailQueuedAt or statusEmailAttempts.
+  const refundNotifFailed =
+    isPartiallyRefunded &&
+    !!order.statusEmailError &&
+    order.statusEmailAttempts === 0 &&
+    !order.statusEmailQueuedAt;
   const maxRefundDollars = (maxRefundable / 100).toFixed(2);
 
   const isFramingJob = order.fulfillmentType === "FRAMING_JOB";
@@ -153,6 +161,27 @@ export default async function OrderDetailPage({
               <p className="text-xs text-red-700 mt-1 leading-relaxed break-words">
                 {refundError}
               </p>
+            </div>
+          </div>
+        )}
+        {refundNotifFailed && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-amber-800">
+                Partial refund email not delivered
+              </p>
+              <p className="text-xs text-amber-700 mt-1 leading-relaxed">
+                The partial refund was issued in Stripe, but the buyer
+                notification email failed to send. The buyer has not been
+                notified of this refund — consider contacting them directly at{" "}
+                <span className="font-medium">{order.buyerEmail}</span>.
+              </p>
+              {order.statusEmailError && (
+                <p className="text-xs text-amber-600/80 mt-1.5 break-words">
+                  Error: {order.statusEmailError}
+                </p>
+              )}
             </div>
           </div>
         )}
