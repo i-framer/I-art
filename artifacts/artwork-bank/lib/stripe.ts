@@ -223,10 +223,25 @@ export async function getStripeEnvironmentDiagnostic(): Promise<StripeEnvironmen
   };
 }
 
+/**
+ * Parse and validate PLATFORM_FEE_PERCENT at module load time.
+ * Throws immediately on bad configuration so operators see the problem in
+ * startup logs rather than discovering a wrong (e.g. NaN → $0) fee mid-sale.
+ */
+function parsePlatformFeePercent(): number {
+  const raw = process.env.PLATFORM_FEE_PERCENT ?? "5";
+  const parsed = parseFloat(raw);
+  if (!isFinite(parsed) || parsed < 0 || parsed > 100) {
+    throw new Error(
+      `Invalid PLATFORM_FEE_PERCENT "${raw}": must be a finite number between 0 and 100 ` +
+        `(default 5). Platform fees will not be collected until this is corrected.`,
+    );
+  }
+  return parsed;
+}
+
 /** Platform application fee as a percentage (default 5%). */
-export const PLATFORM_FEE_PERCENT = parseFloat(
-  process.env.PLATFORM_FEE_PERCENT ?? "5",
-);
+export const PLATFORM_FEE_PERCENT = parsePlatformFeePercent();
 
 /** Calculate the platform application fee in cents. */
 export function calcApplicationFee(subtotalCents: number): number {
