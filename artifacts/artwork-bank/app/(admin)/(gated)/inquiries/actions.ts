@@ -197,12 +197,29 @@ export async function replyToInquiry(
     return { status: "error", message };
   }
 
-  await db.insert(inquiryRepliesTable).values({
-    tenantId: session.tenantId,
-    inquiryId,
-    sentByUserId: session.userId,
-    message: replyMessage,
-  });
+  // Email was sent — now persist the reply record.  If the DB write fails the
+  // buyer already received the reply, so we log the error and return a warning
+  // rather than pretending success or hiding the problem.
+  try {
+    await db.insert(inquiryRepliesTable).values({
+      tenantId: session.tenantId,
+      inquiryId,
+      sentByUserId: session.userId,
+      message: replyMessage,
+    });
+  } catch (err) {
+    console.error(
+      "[inquiry reply] Email sent but DB record failed — tenantId=%s inquiryId=%s error=%s",
+      session.tenantId,
+      inquiryId,
+      (err as any)?.message ?? String(err),
+    );
+    return {
+      status: "sent_not_saved",
+      message:
+        "Reply was sent to the buyer but could not be saved to the conversation history. Please note this reply manually.",
+    };
+  }
 
   await db
     .update(inquiriesTable)
