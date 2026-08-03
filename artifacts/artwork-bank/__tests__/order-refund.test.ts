@@ -67,11 +67,17 @@ const redirectSpy = vi.hoisted(() => vi.fn((url: string) => { throw new Error(`R
 vi.mock("next/navigation", () => ({ redirect: (url: string) => redirectSpy(url) }));
 
 const stripeRefundCreate = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/stripe", () => ({
-  getStripeClient: vi.fn(async () => ({
+const getStripeClient = vi.hoisted(() =>
+  vi.fn(async () => ({
     refunds: { create: stripeRefundCreate },
   })),
-  StripeNotConfiguredError: class StripeNotConfiguredError extends Error {},
+);
+const StripeNotConfiguredError = vi.hoisted(
+  () => class StripeNotConfiguredError extends Error {},
+);
+vi.mock("@/lib/stripe", () => ({
+  getStripeClient,
+  StripeNotConfiguredError,
 }));
 
 import { refundOrder } from "@/app/(admin)/(gated)/orders/[id]/actions";
@@ -177,6 +183,39 @@ describe("partial refund", () => {
   });
 });
 
+describe("Stripe failures", () => {
+  it("redirects with a friendly message when Stripe is not configured, without persisting or emailing", async () => {
+    getStripeClient.mockRejectedValueOnce(
+      new StripeNotConfiguredError("no key"),
+    );
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "30.00" })),
+    ).rejects.toThrow(
+      `REDIRECT:/orders/order-1?refund_error=${encodeURIComponent("Payments are unavailable right now — Stripe is not configured.")}`,
+    );
+
+    expect(stripeRefundCreate).not.toHaveBeenCalled();
+    expect(state.updates).toHaveLength(0);
+    expect(sendPartialRefundNotification).not.toHaveBeenCalled();
+  });
+
+  it("redirects with the Stripe error message when refunds.create fails, without persisting", async () => {
+    stripeRefundCreate.mockRejectedValueOnce(
+      new Error("The payment intent has already been fully refunded."),
+    );
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "30.00" })),
+    ).rejects.toThrow(
+      `REDIRECT:/orders/order-1?refund_error=${encodeURIComponent("The payment intent has already been fully refunded.")}`,
+    );
+
+    expect(state.updates).toHaveLength(0);
+    expect(sendPartialRefundNotification).not.toHaveBeenCalled();
+  });
+});
+
 describe("full refund", () => {
   it("sets status CANCELLED and notifies the buyer when the full amount is entered", async () => {
     await expect(
@@ -250,6 +289,34 @@ describe("validation", () => {
       refundOrder(formData({ orderId: "order-other-tenant" })),
     ).rejects.toThrow("Order not found.");
     expect(stripeRefundCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a PENDING order before any Stripe call", async () => {
+    state.order = baseOrder({ status: "PENDING" });
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1" })),
+    ).rejects.toThrow(
+      `REDIRECT:/orders/order-1?refund_error=${encodeURIComponent("Only paid or fulfilled orders can be refunded.")}`,
+    );
+
+    expect(getStripeClient).not.toHaveBeenCalled();
+    expect(stripeRefundCreate).not.toHaveBeenCalled();
+    expect(state.updates).toHaveLength(0);
+  });
+
+  it("rejects a CANCELLED order before any Stripe call", async () => {
+    state.order = baseOrder({ status: "CANCELLED" });
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1" })),
+    ).rejects.toThrow(
+      `REDIRECT:/orders/order-1?refund_error=${encodeURIComponent("Only paid or fulfilled orders can be refunded.")}`,
+    );
+
+    expect(getStripeClient).not.toHaveBeenCalled();
+    expect(stripeRefundCreate).not.toHaveBeenCalled();
+    expect(state.updates).toHaveLength(0);
   });
 
   it("rejects orders without a Stripe payment intent", async () => {
