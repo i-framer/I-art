@@ -11,6 +11,22 @@
  * - SMTP_SECURE ("true"/"false"; default: true when port is 465)
  */
 
+/**
+ * Escape characters that have special meaning in HTML so that user-supplied
+ * strings (artwork titles, buyer names, tenant names, …) cannot inject tags
+ * or break attribute values in outgoing email templates.
+ *
+ * Covers the five dangerous characters:  & < > " '
+ */
+export function htmlEscape(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 /** Thrown when a confirmation email cannot be sent; callers should persist the failure so it can be retried. */
 export class EmailSendError extends Error {
   constructor(message: string) {
@@ -170,13 +186,6 @@ export async function sendArtworkInquiry({
     return false;
   }
 
-  const escapeHtml = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-
   try {
     await deliverEmail({
         from: getInquiriesFrom(),
@@ -186,12 +195,12 @@ export async function sendArtworkInquiry({
         html: `
           <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
             <h2 style="color:#1c1917;">New artwork inquiry</h2>
-            <p>A buyer has asked about <strong>${escapeHtml(artworkTitle)}</strong> (SKU ${escapeHtml(artworkSku)}) on your ${escapeHtml(tenantName)} storefront.</p>
+            <p>A buyer has asked about <strong>${htmlEscape(artworkTitle)}</strong> (SKU ${htmlEscape(artworkSku)}) on your ${htmlEscape(tenantName)} storefront.</p>
             <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
-              <p style="margin:0 0 8px;"><strong>From:</strong> ${escapeHtml(buyerName)} &lt;${escapeHtml(buyerEmail)}&gt;</p>
-              <p style="margin:0;white-space:pre-line;">${escapeHtml(message)}</p>
+              <p style="margin:0 0 8px;"><strong>From:</strong> ${htmlEscape(buyerName)} &lt;${htmlEscape(buyerEmail)}&gt;</p>
+              <p style="margin:0;white-space:pre-line;">${htmlEscape(message)}</p>
             </div>
-            <p><a href="${escapeHtml(artworkUrl)}" style="color:#1c1917;">View the artwork</a></p>
+            <p><a href="${htmlEscape(artworkUrl)}" style="color:#1c1917;">View the artwork</a></p>
             <p style="color:#78716c;font-size:14px;margin-top:24px;">
               Reply to this email to respond to the buyer directly.
             </p>
@@ -231,13 +240,6 @@ export async function sendInquiryReply({
     throw new EmailSendError(`${NO_TRANSPORT_MSG} Reply not sent.`);
   }
 
-  const escapeHtml = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-
   try {
     await deliverEmail({
         from: getInquiriesFrom(),
@@ -246,15 +248,15 @@ export async function sendInquiryReply({
         subject: `Re: Inquiry about "${artworkTitle}" — ${tenantName}`,
         html: `
           <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
-            <p>Hi ${escapeHtml(buyerName)},</p>
-            <p><strong>${escapeHtml(tenantName)}</strong> has replied to your inquiry about <strong>${escapeHtml(artworkTitle)}</strong>:</p>
+            <p>Hi ${htmlEscape(buyerName)},</p>
+            <p><strong>${htmlEscape(tenantName)}</strong> has replied to your inquiry about <strong>${htmlEscape(artworkTitle)}</strong>:</p>
             <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
-              <p style="margin:0;white-space:pre-line;">${escapeHtml(replyMessage)}</p>
+              <p style="margin:0;white-space:pre-line;">${htmlEscape(replyMessage)}</p>
             </div>
             <p style="color:#78716c;font-size:13px;">Your original message:</p>
-            <blockquote style="margin:0 0 24px;padding:12px 16px;border-left:3px solid #e7e5e4;color:#78716c;font-size:13px;white-space:pre-line;">${escapeHtml(originalMessage)}</blockquote>
+            <blockquote style="margin:0 0 24px;padding:12px 16px;border-left:3px solid #e7e5e4;color:#78716c;font-size:13px;white-space:pre-line;">${htmlEscape(originalMessage)}</blockquote>
             <p style="color:#78716c;font-size:14px;">
-              Reply to this email to continue the conversation with ${escapeHtml(tenantName)}.
+              Reply to this email to continue the conversation with ${htmlEscape(tenantName)}.
             </p>
           </div>
         `,
@@ -295,18 +297,11 @@ export async function sendOrderStatusUpdate({
     throw new EmailSendError(`${NO_TRANSPORT_MSG} Status update email not sent.`);
   }
 
-  const escapeHtml = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-
   const isFulfilled = status === "FULFILLED";
   const heading = isFulfilled ? "Your order is on its way" : "Order update";
   const statusLine = isFulfilled
-    ? `Good news — your order for <strong>${escapeHtml(artworkTitle)}</strong> from <strong>${escapeHtml(tenantName)}</strong> has been marked as fulfilled.`
-    : `There's an update on your order for <strong>${escapeHtml(artworkTitle)}</strong> from <strong>${escapeHtml(tenantName)}</strong>.`;
+    ? `Good news — your order for <strong>${htmlEscape(artworkTitle)}</strong> from <strong>${htmlEscape(tenantName)}</strong> has been marked as fulfilled.`
+    : `There's an update on your order for <strong>${htmlEscape(artworkTitle)}</strong> from <strong>${htmlEscape(tenantName)}</strong>.`;
 
   try {
     await deliverEmail({
@@ -316,26 +311,26 @@ export async function sendOrderStatusUpdate({
         html: `
           <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
             <h2 style="color:#1c1917;">${heading}</h2>
-            <p>Hi ${escapeHtml(buyerName ?? "there")},</p>
+            <p>Hi ${htmlEscape(buyerName ?? "there")},</p>
             <p>${statusLine}</p>
             ${
               trackingNote
                 ? `<div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
                      <p style="margin:0 0 8px;"><strong>Tracking / delivery note</strong></p>
-                     <p style="margin:0;white-space:pre-line;">${escapeHtml(trackingNote)}</p>
+                     <p style="margin:0;white-space:pre-line;">${htmlEscape(trackingNote)}</p>
                    </div>`
                 : ""
             }
             <p style="margin-top:24px;padding:16px;background:#f5f5f4;border-radius:8px;">
-              Order reference: <code style="font-family:monospace;">${escapeHtml(orderRef)}</code>
+              Order reference: <code style="font-family:monospace;">${htmlEscape(orderRef)}</code>
             </p>
             ${
               orderLookupUrl
-                ? `<p>You can check your order status any time — no account needed: <a href="${escapeHtml(orderLookupUrl)}" style="color:#1c1917;">Check order status</a> (use this email address and your order reference).</p>`
+                ? `<p>You can check your order status any time — no account needed: <a href="${htmlEscape(orderLookupUrl)}" style="color:#1c1917;">Check order status</a> (use this email address and your order reference).</p>`
                 : ""
             }
             <p style="color:#78716c;font-size:14px;margin-top:24px;">
-              Thank you for supporting ${escapeHtml(tenantName)}.
+              Thank you for supporting ${htmlEscape(tenantName)}.
             </p>
           </div>
         `,
@@ -375,12 +370,6 @@ export async function sendConfirmationFailureNotice({
     throw new EmailSendError(`${NO_TRANSPORT_MSG} Failure notice not sent.`);
   }
 
-  const escapeHtml = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
 
   try {
     await deliverEmail({
@@ -390,13 +379,13 @@ export async function sendConfirmationFailureNotice({
         html: `
           <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
             <h2 style="color:#1c1917;">Buyer confirmation email could not be delivered</h2>
-            <p>We tried several times to send the order confirmation for <strong>${escapeHtml(artworkTitle)}</strong> on your ${escapeHtml(tenantName)} storefront, but every attempt failed. Automatic retries have stopped.</p>
+            <p>We tried several times to send the order confirmation for <strong>${htmlEscape(artworkTitle)}</strong> on your ${htmlEscape(tenantName)} storefront, but every attempt failed. Automatic retries have stopped.</p>
             <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
-              <p style="margin:0 0 8px;"><strong>Order reference:</strong> <code style="font-family:monospace;">${escapeHtml(orderRef)}</code></p>
-              <p style="margin:0 0 8px;"><strong>Buyer:</strong> ${escapeHtml(buyerName ?? "Unknown")} &lt;${escapeHtml(buyerEmail)}&gt;</p>
+              <p style="margin:0 0 8px;"><strong>Order reference:</strong> <code style="font-family:monospace;">${htmlEscape(orderRef)}</code></p>
+              <p style="margin:0 0 8px;"><strong>Buyer:</strong> ${htmlEscape(buyerName ?? "Unknown")} &lt;${htmlEscape(buyerEmail)}&gt;</p>
               ${
                 lastError
-                  ? `<p style="margin:0;color:#78716c;font-size:13px;"><strong>Last error:</strong> ${escapeHtml(lastError.slice(0, 300))}</p>`
+                  ? `<p style="margin:0;color:#78716c;font-size:13px;"><strong>Last error:</strong> ${htmlEscape(lastError.slice(0, 300))}</p>`
                   : ""
               }
             </div>
@@ -441,18 +430,12 @@ export async function sendOrphanSweepErrorNotification({
     return;
   }
 
-  const escapeHtml = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
 
   const pathListHtml =
     failedPaths.length > 0
       ? `<ul style="margin:8px 0;padding-left:20px;">${failedPaths
           .slice(0, 50)
-          .map((p) => `<li><code style="font-family:monospace;">${escapeHtml(p)}</code></li>`)
+          .map((p) => `<li><code style="font-family:monospace;">${htmlEscape(p)}</code></li>`)
           .join("")}${
           failedPaths.length > 50
             ? `<li>… and ${failedPaths.length - 50} more</li>`
@@ -479,7 +462,7 @@ export async function sendOrphanSweepErrorNotification({
               ? `<div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
               <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">⚠️ Slack notification also failed</p>
               <p style="margin:0;color:#7f1d1d;font-size:13px;">The Slack alert could not be delivered. Your Slack connector may need to be reconnected.</p>
-              <p style="margin:8px 0 0;color:#7f1d1d;font-size:12px;font-family:monospace;">${escapeHtml(slackFailure.slice(0, 300))}</p>
+              <p style="margin:8px 0 0;color:#7f1d1d;font-size:12px;font-family:monospace;">${htmlEscape(slackFailure.slice(0, 300))}</p>
             </div>`
               : ""
           }
@@ -541,12 +524,6 @@ export async function sendBillingAlertNotification({
 
   const stripeDashboardUrl = `https://dashboard.stripe.com/events/${stripeEventId}`;
 
-  const escapeHtml = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
 
   try {
     await deliverEmail({
@@ -558,30 +535,30 @@ export async function sendBillingAlertNotification({
             <h2 style="color:#1c1917;">Unmatched Stripe billing event</h2>
             <p>A Stripe webhook event could not be matched to any tenant and has been saved as a billing alert.</p>
             <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
-              <p style="margin:0 0 8px;"><strong>Event ID:</strong> <code style="font-family:monospace;">${escapeHtml(stripeEventId)}</code></p>
-              <p style="margin:0 0 8px;"><strong>Event type:</strong> ${escapeHtml(eventType)}</p>
-              ${customerId ? `<p style="margin:0 0 8px;"><strong>Customer ID:</strong> <code style="font-family:monospace;">${escapeHtml(customerId)}</code></p>` : ""}
-              ${subscriptionId ? `<p style="margin:0 0 8px;"><strong>Subscription ID:</strong> <code style="font-family:monospace;">${escapeHtml(subscriptionId)}</code></p>` : ""}
-              <p style="margin:0;"><strong>Reason:</strong> ${escapeHtml(reason)}</p>
+              <p style="margin:0 0 8px;"><strong>Event ID:</strong> <code style="font-family:monospace;">${htmlEscape(stripeEventId)}</code></p>
+              <p style="margin:0 0 8px;"><strong>Event type:</strong> ${htmlEscape(eventType)}</p>
+              ${customerId ? `<p style="margin:0 0 8px;"><strong>Customer ID:</strong> <code style="font-family:monospace;">${htmlEscape(customerId)}</code></p>` : ""}
+              ${subscriptionId ? `<p style="margin:0 0 8px;"><strong>Subscription ID:</strong> <code style="font-family:monospace;">${htmlEscape(subscriptionId)}</code></p>` : ""}
+              <p style="margin:0;"><strong>Reason:</strong> ${htmlEscape(reason)}</p>
             </div>
             ${
               slackFailure
                 ? `<div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
                 <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">⚠️ Slack notification failed</p>
                 <p style="margin:0;color:#7f1d1d;font-size:13px;">The Slack billing-alert message could not be delivered. Your Slack connector may need to be reconnected.</p>
-                <p style="margin:8px 0 0;color:#7f1d1d;font-size:12px;font-family:monospace;">${escapeHtml(slackFailure.slice(0, 300))}</p>
+                <p style="margin:8px 0 0;color:#7f1d1d;font-size:12px;font-family:monospace;">${htmlEscape(slackFailure.slice(0, 300))}</p>
               </div>`
                 : ""
             }
             <p>
-              <a href="${escapeHtml(stripeDashboardUrl)}" style="color:#1c1917;">
+              <a href="${htmlEscape(stripeDashboardUrl)}" style="color:#1c1917;">
                 View event in Stripe Dashboard →
               </a>
             </p>
             ${
               billingAlertsUrl
                 ? `<p>
-                <a href="${escapeHtml(billingAlertsUrl)}" style="color:#1c1917;">
+                <a href="${htmlEscape(billingAlertsUrl)}" style="color:#1c1917;">
                   Go to Billing Alerts panel →
                 </a>
               </p>`
@@ -629,12 +606,6 @@ export async function sendPartialRefundNotification({
     );
   }
 
-  const escapeHtml = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
 
   const refundedDollars = (refundedAmountCents / 100).toFixed(2);
 
@@ -646,19 +617,19 @@ export async function sendPartialRefundNotification({
         html: `
           <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
             <h2 style="color:#1c1917;">Partial refund issued</h2>
-            <p>Hi ${escapeHtml(buyerName ?? "there")},</p>
-            <p>A partial refund of <strong>$${escapeHtml(refundedDollars)}</strong> has been issued on your order for <strong>${escapeHtml(artworkTitle)}</strong> from <strong>${escapeHtml(tenantName)}</strong>.</p>
+            <p>Hi ${htmlEscape(buyerName ?? "there")},</p>
+            <p>A partial refund of <strong>$${htmlEscape(refundedDollars)}</strong> has been issued on your order for <strong>${htmlEscape(artworkTitle)}</strong> from <strong>${htmlEscape(tenantName)}</strong>.</p>
             <p>Your order remains active — no further action is needed on your part. The refund will appear on your original payment method within a few business days.</p>
             <p style="margin-top:24px;padding:16px;background:#f5f5f4;border-radius:8px;">
-              Order reference: <code style="font-family:monospace;">${escapeHtml(orderRef)}</code>
+              Order reference: <code style="font-family:monospace;">${htmlEscape(orderRef)}</code>
             </p>
             ${
               orderLookupUrl
-                ? `<p>You can check your order status any time — no account needed: <a href="${escapeHtml(orderLookupUrl)}" style="color:#1c1917;">Check order status</a> (use this email address and your order reference).</p>`
+                ? `<p>You can check your order status any time — no account needed: <a href="${htmlEscape(orderLookupUrl)}" style="color:#1c1917;">Check order status</a> (use this email address and your order reference).</p>`
                 : ""
             }
             <p style="color:#78716c;font-size:14px;margin-top:24px;">
-              Thank you for supporting ${escapeHtml(tenantName)}.
+              Thank you for supporting ${htmlEscape(tenantName)}.
             </p>
           </div>
         `,
@@ -701,12 +672,6 @@ export async function sendSchemaPushFailureEmail({
     return false;
   }
 
-  const escapeHtml = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
 
   // Truncate very long output so the email stays readable.
   const MAX_CHARS = 4000;
@@ -731,14 +696,14 @@ export async function sendSchemaPushFailureEmail({
           </div>
           <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
             <p style="margin:0 0 8px;font-weight:bold;">Error output:</p>
-            <pre style="margin:0;white-space:pre-wrap;font-size:12px;font-family:monospace;overflow-x:auto;">${escapeHtml(truncatedError)}</pre>
+            <pre style="margin:0;white-space:pre-wrap;font-size:12px;font-family:monospace;overflow-x:auto;">${htmlEscape(truncatedError)}</pre>
           </div>
           ${
             slackFailure
               ? `<div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
               <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">⚠️ Slack notification also failed</p>
               <p style="margin:0;color:#7f1d1d;font-size:13px;">The Slack alert could not be delivered. Your Slack connector may need to be reconnected.</p>
-              <p style="margin:8px 0 0;color:#7f1d1d;font-size:12px;font-family:monospace;">${escapeHtml(slackFailure.slice(0, 300))}</p>
+              <p style="margin:8px 0 0;color:#7f1d1d;font-size:12px;font-family:monospace;">${htmlEscape(slackFailure.slice(0, 300))}</p>
             </div>`
               : ""
           }
@@ -777,12 +742,6 @@ export async function sendDriftFailureEmail({
     return false;
   }
 
-  const escapeHtml = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
 
   // Truncate very long output so the email stays readable.
   const MAX_CHARS = 4000;
@@ -815,14 +774,14 @@ export async function sendDriftFailureEmail({
           </div>
           <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
             <p style="margin:0 0 8px;font-weight:bold;">Drift output:</p>
-            <pre style="margin:0;white-space:pre-wrap;font-size:12px;font-family:monospace;overflow-x:auto;">${escapeHtml(truncatedError)}</pre>
+            <pre style="margin:0;white-space:pre-wrap;font-size:12px;font-family:monospace;overflow-x:auto;">${htmlEscape(truncatedError)}</pre>
           </div>
           ${
             slackFailure
               ? `<div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
               <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">⚠️ Slack notification also failed</p>
               <p style="margin:0;color:#7f1d1d;font-size:13px;">The Slack alert could not be delivered. Your Slack connector may need to be reconnected.</p>
-              <p style="margin:8px 0 0;color:#7f1d1d;font-size:12px;font-family:monospace;">${escapeHtml(slackFailure.slice(0, 300))}</p>
+              <p style="margin:8px 0 0;color:#7f1d1d;font-size:12px;font-family:monospace;">${htmlEscape(slackFailure.slice(0, 300))}</p>
             </div>`
               : ""
           }
@@ -867,9 +826,6 @@ export async function sendOrderConfirmation({
   const fulfillmentText =
     FULFILLMENT_TEXT[fulfillmentType] ?? "The gallery will be in touch with next steps.";
 
-  const escapeHtml = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
   try {
     await deliverEmail({
@@ -879,19 +835,19 @@ export async function sendOrderConfirmation({
         html: `
           <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
             <h2 style="color:#1c1917;">Order Confirmed ✓</h2>
-            <p>Hi ${escapeHtml(buyerName ?? "there")},</p>
-            <p>Your order for <strong>${escapeHtml(artworkTitle)}</strong> from <strong>${escapeHtml(tenantName)}</strong> has been confirmed.</p>
+            <p>Hi ${htmlEscape(buyerName ?? "there")},</p>
+            <p>Your order for <strong>${htmlEscape(artworkTitle)}</strong> from <strong>${htmlEscape(tenantName)}</strong> has been confirmed.</p>
             <p>${fulfillmentText}</p>
             <p style="margin-top:24px;padding:16px;background:#f5f5f4;border-radius:8px;">
-              Order reference: <code style="font-family:monospace;">${escapeHtml(orderRef)}</code>
+              Order reference: <code style="font-family:monospace;">${htmlEscape(orderRef)}</code>
             </p>
             ${
               orderLookupUrl
-                ? `<p>You can check your order status any time — no account needed: <a href="${escapeHtml(orderLookupUrl)}" style="color:#1c1917;">Check order status</a> (use this email address and your order reference).</p>`
+                ? `<p>You can check your order status any time — no account needed: <a href="${htmlEscape(orderLookupUrl)}" style="color:#1c1917;">Check order status</a> (use this email address and your order reference).</p>`
                 : ""
             }
             <p style="color:#78716c;font-size:14px;margin-top:24px;">
-              Thank you for supporting ${escapeHtml(tenantName)}.
+              Thank you for supporting ${htmlEscape(tenantName)}.
             </p>
           </div>
         `,
