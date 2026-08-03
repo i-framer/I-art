@@ -30,6 +30,17 @@ export const tenantsTable = pgTable("tenant", {
   /** Optional public location (e.g. suburb / state) shown on the storefront and used for discovery filters. */
   location: text("location"),
   stripeAccountId: text("stripe_account_id"),
+  /**
+   * Cached from Stripe account.updated webhook — true once the Connect account
+   * can accept charges (onboarding complete, not restricted).  null means we
+   * have never received an account.updated event for this account yet.
+   */
+  stripeChargesEnabled: boolean("stripe_charges_enabled"),
+  /**
+   * Cached from Stripe account.updated webhook — true once Stripe can send
+   * payouts to the gallery's bank account.  null = not yet received.
+   */
+  stripePayoutsEnabled: boolean("stripe_payouts_enabled"),
   iframerAccountId: text("iframer_account_id"),
   // ── Platform subscription billing (charged by the platform account, not Connect) ──
   stripeCustomerId: text("stripe_customer_id").unique(),

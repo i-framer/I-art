@@ -76,6 +76,21 @@ export async function POST(request: Request) {
       );
     }
 
+    // Fast-path: if we have cached account readiness from the account.updated
+    // webhook and it says charges are not enabled, reject early without making a
+    // live Stripe API call.  stripeChargesEnabled is null when we have never
+    // received an account.updated event for this account (e.g. brand-new
+    // onboarding), so we only block when the value is explicitly false.
+    if (tenant.stripeChargesEnabled === false) {
+      return NextResponse.json(
+        {
+          error:
+            "This gallery is not yet ready to accept payments. They may still be completing account setup. Please contact the gallery directly.",
+        },
+        { status: 503 },
+      );
+    }
+
     // FRAMING_JOB only for FRAMER tenants
     if (fulfillmentType === "FRAMING_JOB" && tenant.type !== "FRAMER") {
       return NextResponse.json(

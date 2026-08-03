@@ -101,6 +101,8 @@ export async function POST(request: Request) {
         event.data.object as Stripe.Invoice,
         event.id,
       );
+    } else if (event.type === "account.updated") {
+      await handleAccountUpdated(event.data.object as Stripe.Account);
     }
   } catch (err: any) {
     console.error("Webhook handler error:", err);
@@ -625,6 +627,44 @@ async function createIFramerJobForOrder({
       .set({ iframerJobError: message })
       .where(eq(ordersTable.id, orderId));
   }
+}
+
+/**
+ * Cache Stripe Connect account readiness onto the tenant row.
+ *
+ * Stripe fires account.updated whenever the account's charges_enabled,
+ * payouts_enabled, or details_submitted fields change.  We persist those
+ * values so the checkout route can gate on DB state instead of making a live
+ * Stripe round-trip on every buyer checkout attempt.
+ *
+ * The event arrives on the platform account (not the connected account), so
+ * we match by stripeAccountId.
+ */
+async function handleAccountUpdated(account: Stripe.Account) {
+  const updated = await db
+    .update(tenantsTable)
+    .set({
+      stripeChargesEnabled: account.charges_enabled ?? false,
+      stripePayoutsEnabled: account.payouts_enabled ?? false,
+    })
+    .where(eq(tenantsTable.stripeAccountId, account.id))
+    .returning({ id: tenantsTable.id });
+
+  if (updated.length === 0) {
+    // No tenant owns this account ID — could be a test account or an account
+    // that was disconnected.  Log but do not error (returning 200 is correct
+    // so Stripe does not keep retrying).
+    console.warn(
+      `[webhook] account.updated — no tenant matched stripeAccountId=${account.id}. ` +
+        `charges_enabled=${account.charges_enabled} payouts_enabled=${account.payouts_enabled}`,
+    );
+    return;
+  }
+
+  console.log(
+    `[webhook] account.updated — cached readiness for tenant ${updated[0]!.id}: ` +
+      `charges_enabled=${account.charges_enabled} payouts_enabled=${account.payouts_enabled}`,
+  );
 }
 
 async function handleCheckoutExpired(session: Stripe.Checkout.Session) {

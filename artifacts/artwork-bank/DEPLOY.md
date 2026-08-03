@@ -123,10 +123,17 @@ Vercel's default for a domain it doesn't recognise as primary is to redirect
      `https://<your-project>.vercel.app/api/stripe/webhook`
    - **After DNS points to Vercel** update (or add a second endpoint) for:
      `https://i-art.com.au/api/stripe/webhook`
-2. Events to subscribe to — select all six:
+2. Events to subscribe to — select all seven:
    `checkout.session.completed`, `checkout.session.expired`,
    `customer.subscription.created`, `customer.subscription.updated`,
-   `customer.subscription.deleted`, `invoice.payment_failed`.
+   `customer.subscription.deleted`, `invoice.payment_failed`,
+   `account.updated`.
+   > **Why `account.updated`?** This event fires whenever a Connect account's
+   > `charges_enabled` or `payouts_enabled` flags change (onboarding complete,
+   > account restricted/reinstated). The app caches those flags on the tenant row
+   > so the checkout route can gate on DB state without a live Stripe round-trip
+   > per buyer. Without this event the cached columns stay `null` and the fast
+   > early-reject path never triggers.
 3. Copy the endpoint's **Signing secret** into `STRIPE_WEBHOOK_SECRET`
    (Vercel → Project → Settings → Environment Variables).
 4. Ensure `STRIPE_WEBHOOK_DEV_BYPASS` is **not** set in production.
