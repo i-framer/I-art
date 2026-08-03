@@ -42,6 +42,20 @@ export function getSubscriptionBadge(
   return SUBSCRIPTION_STATUS_BADGES[status] ?? null;
 }
 
+/**
+ * Whole days remaining in a trial, rounded up (0 = ends today).
+ * Returns null unless the status is "trialing" and a trialEnd date is set.
+ */
+export function getTrialDaysRemaining(
+  status: string | null | undefined,
+  trialEnd: Date | null | undefined,
+  now: number = Date.now(),
+): number | null {
+  if (status !== "trialing" || !trialEnd) return null;
+  const msLeft = trialEnd.getTime() - now;
+  return msLeft > 0 ? Math.ceil(msLeft / (24 * 60 * 60 * 1000)) : 0;
+}
+
 type BillingFields = Pick<Tenant, "billingExempt" | "subscriptionStatus">;
 
 /** Whether the tenant currently has access to the admin app. */

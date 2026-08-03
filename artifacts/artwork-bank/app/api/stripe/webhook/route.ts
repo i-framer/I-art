@@ -168,11 +168,13 @@ async function handleSubscriptionCheckoutCompleted(
     (subscriptionId != null && tenant.stripeSubscriptionId !== subscriptionId);
 
   let newStatus: string | null = null;
+  let newTrialEnd: Date | null | undefined; // undefined = don't touch the column
   if (isNewSubscription && subscriptionId) {
     try {
       const stripeClient = await getStripeClient();
       const sub = await stripeClient.subscriptions.retrieve(subscriptionId);
       newStatus = sub.status;
+      newTrialEnd = sub.trial_end ? new Date(sub.trial_end * 1000) : null;
     } catch {
       // Fall back to "active" if the retrieve fails (e.g. test-mode key mismatch).
       newStatus = "active";
@@ -185,6 +187,7 @@ async function handleSubscriptionCheckoutCompleted(
       ...(customerId ? { stripeCustomerId: customerId } : {}),
       ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
       ...(newStatus ? { subscriptionStatus: newStatus } : {}),
+      ...(newTrialEnd !== undefined ? { trialEnd: newTrialEnd } : {}),
     })
     .where(eq(tenantsTable.id, tenantId));
 }
@@ -226,6 +229,9 @@ async function handleSubscriptionEvent(
     .set({
       subscriptionStatus: status,
       stripeSubscriptionId: subscription.id,
+      trialEnd: subscription.trial_end
+        ? new Date(subscription.trial_end * 1000)
+        : null,
       ...(customerId ? { stripeCustomerId: customerId } : {}),
     })
     .where(and(where, cancelGuard))

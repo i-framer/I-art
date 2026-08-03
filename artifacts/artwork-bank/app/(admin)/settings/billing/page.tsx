@@ -6,7 +6,12 @@ import { db } from "@workspace/db";
 import { tenantsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { startSubscriptionCheckout, openBillingPortal } from "../actions";
-import { hasActiveAccess, getSubscriptionBadge, SUBSCRIPTION_PRICE_CENTS } from "@/lib/billing";
+import {
+  hasActiveAccess,
+  getSubscriptionBadge,
+  getTrialDaysRemaining,
+  SUBSCRIPTION_PRICE_CENTS,
+} from "@/lib/billing";
 import { formatPrice } from "@/lib/format";
 import {
   Users,
@@ -35,6 +40,9 @@ export default async function BillingPage({
   const active = hasActiveAccess(tenant);
   const status = tenant.subscriptionStatus;
   const badge = getSubscriptionBadge(status);
+
+  // Days remaining in the Stripe trial (null unless trialing with an end date).
+  const trialDaysRemaining = getTrialDaysRemaining(status, tenant.trialEnd);
 
   return (
     <div className="px-8 py-8 max-w-2xl">
@@ -119,9 +127,22 @@ export default async function BillingPage({
               <Sparkles className="h-3.5 w-3.5" /> Complimentary
             </span>
           ) : badge ? (
-            <span className={`rounded-full px-3 py-1 text-sm font-semibold ${badge.cls}`}>
-              {badge.label}
-            </span>
+            <div className="flex flex-col items-end gap-1.5">
+              <span className={`rounded-full px-3 py-1 text-sm font-semibold ${badge.cls}`}>
+                {badge.label}
+              </span>
+              {trialDaysRemaining !== null && (
+                <span
+                  className={`text-xs font-medium ${
+                    trialDaysRemaining <= 3 ? "text-amber-600" : "text-stone-500"
+                  }`}
+                >
+                  {trialDaysRemaining === 0
+                    ? "Your trial ends today"
+                    : `${trialDaysRemaining} day${trialDaysRemaining === 1 ? "" : "s"} remaining in your trial`}
+                </span>
+              )}
+            </div>
           ) : (
             <span className="rounded-full bg-stone-100 text-stone-500 px-3 py-1 text-sm font-semibold">
               Not subscribed

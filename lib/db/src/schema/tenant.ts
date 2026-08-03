@@ -47,6 +47,8 @@ export const tenantsTable = pgTable("tenant", {
   stripeSubscriptionId: text("stripe_subscription_id").unique(),
   /** Mirrors Stripe subscription status: active, trialing, past_due, canceled, ... */
   subscriptionStatus: text("subscription_status"),
+  /** When the Stripe trial ends (from customer.subscription.* webhooks); null when not trialing. */
+  trialEnd: timestamp("trial_end", { withTimezone: true }),
   /** Manual comp flag — bypasses the paywall (future i-Framer premium bundle hook). */
   billingExempt: boolean("billing_exempt").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
