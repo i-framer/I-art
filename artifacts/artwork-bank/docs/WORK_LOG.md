@@ -5,7 +5,7 @@ why, and any decisions worth preserving.
 
 ---
 
-## 2026-08-03 (continued — second engineering session)
+## 2026-08-03 (continued — second engineering session, blocks G–K)
 
 ### Block G — Test coverage: Task #49 gallery-alert two-pass retry
 - Added `__tests__/gallery-alert-retry.test.ts` — explicitly exercises the

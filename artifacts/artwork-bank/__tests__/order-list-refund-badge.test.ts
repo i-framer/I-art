@@ -205,3 +205,79 @@ describe("existing badge conditions unchanged (regression)", () => {
     expect(badges.statusEmailRetrying).toBe(true);
   });
 });
+
+describe("statusEmailFailed badge condition (Task #46)", () => {
+  // statusEmailFailed = statusEmailError set AND attempts >= MAX_EMAIL_ATTEMPTS
+  // This shows the "Update email failed" badge when a status/shipping update
+  // email has exhausted all automatic retries.
+
+  it("is true when statusEmailError is set and attempts equals MAX_EMAIL_ATTEMPTS", () => {
+    const badges = deriveBadges({
+      ...baseOrder,
+      statusEmailError: "smtp timeout",
+      statusEmailAttempts: MAX_EMAIL_ATTEMPTS,
+    });
+    expect(badges.statusEmailFailed).toBe(true);
+  });
+
+  it("is true when attempts exceeds MAX_EMAIL_ATTEMPTS", () => {
+    const badges = deriveBadges({
+      ...baseOrder,
+      statusEmailError: "smtp timeout",
+      statusEmailAttempts: MAX_EMAIL_ATTEMPTS + 1,
+    });
+    expect(badges.statusEmailFailed).toBe(true);
+  });
+
+  it("is false when statusEmailError is not set", () => {
+    const badges = deriveBadges({
+      ...baseOrder,
+      statusEmailError: null,
+      statusEmailAttempts: MAX_EMAIL_ATTEMPTS,
+    });
+    expect(badges.statusEmailFailed).toBe(false);
+  });
+
+  it("is false when attempts is below MAX_EMAIL_ATTEMPTS (still retrying)", () => {
+    const badges = deriveBadges({
+      ...baseOrder,
+      statusEmailError: "smtp timeout",
+      statusEmailAttempts: MAX_EMAIL_ATTEMPTS - 1,
+    });
+    expect(badges.statusEmailFailed).toBe(false);
+  });
+
+  it("is false for a clean order with no errors", () => {
+    const badges = deriveBadges(baseOrder);
+    expect(badges.statusEmailFailed).toBe(false);
+  });
+
+  it("is mutually exclusive with statusEmailRetrying (same error, attempts at MAX vs below MAX)", () => {
+    const exhausted = deriveBadges({
+      ...baseOrder,
+      statusEmailError: "err",
+      statusEmailAttempts: MAX_EMAIL_ATTEMPTS,
+    });
+    expect(exhausted.statusEmailFailed).toBe(true);
+    expect(exhausted.statusEmailRetrying).toBe(false);
+
+    const retrying = deriveBadges({
+      ...baseOrder,
+      statusEmailError: "err",
+      statusEmailAttempts: 2,
+    });
+    expect(retrying.statusEmailFailed).toBe(false);
+    expect(retrying.statusEmailRetrying).toBe(true);
+  });
+
+  it("does not overlap with refundNotifFailed (attempts=0 triggers refundNotifFailed, not statusEmailFailed)", () => {
+    const badges = deriveBadges({
+      ...baseOrder,
+      statusEmailError: "err",
+      statusEmailAttempts: 0,
+      statusEmailQueuedAt: null,
+    });
+    expect(badges.statusEmailFailed).toBe(false);
+    expect(badges.refundNotifFailed).toBe(true);
+  });
+});
