@@ -213,43 +213,75 @@ export async function POST(request: Request) {
         throw err;
       }
 
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
-        // Expire abandoned checkouts after 30 minutes (Stripe's minimum)
-        // instead of the 24h default, so the checkout.session.expired webhook
-        // releases the RESERVED artwork back to AVAILABLE much sooner.
-        expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
-        line_items: [
-          {
-            price_data: {
-              currency: "aud",
-              product_data: {
-                name: artwork.title,
-                ...(artwork.medium ? { description: artwork.medium } : {}),
-                ...(imageUrl ? { images: [imageUrl] } : {}),
-                metadata: { artworkId, sku: artwork.sku ?? "" },
+      let session;
+      try {
+        session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          // Expire abandoned checkouts after 30 minutes (Stripe's minimum)
+          // instead of the 24h default, so the checkout.session.expired webhook
+          // releases the RESERVED artwork back to AVAILABLE much sooner.
+          expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
+          line_items: [
+            {
+              price_data: {
+                currency: "aud",
+                product_data: {
+                  name: artwork.title,
+                  ...(artwork.medium ? { description: artwork.medium } : {}),
+                  ...(imageUrl ? { images: [imageUrl] } : {}),
+                  metadata: { artworkId, sku: artwork.sku ?? "" },
+                },
+                unit_amount: artwork.price,
               },
-              unit_amount: artwork.price,
+              quantity: 1,
             },
-            quantity: 1,
+          ],
+          mode: "payment",
+          success_url: `${baseUrl}/t/${slug}/order/success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${baseUrl}/t/${slug}/${artworkId}?cancelled=1`,
+          payment_intent_data: {
+            application_fee_amount: feeAmount,
+            transfer_data: {
+              destination: tenant.stripeAccountId,
+            },
           },
-        ],
-        mode: "payment",
-        success_url: `${baseUrl}/t/${slug}/order/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${baseUrl}/t/${slug}/${artworkId}?cancelled=1`,
-        payment_intent_data: {
-          application_fee_amount: feeAmount,
-          transfer_data: {
-            destination: tenant.stripeAccountId,
+          metadata: {
+            artworkId,
+            tenantId: tenant.id,
+            slug,
+            fulfillmentType,
           },
-        },
-        metadata: {
-          artworkId,
-          tenantId: tenant.id,
-          slug,
-          fulfillmentType,
-        },
-      });
+        });
+      } catch (err: any) {
+        // Stripe rejects session creation when a connected account is not yet
+        // enabled for charges (onboarding incomplete, account restricted, or
+        // country/compliance requirements outstanding).  Surface a clear 503
+        // rather than the raw Stripe error, so buyers and galleries get an
+        // actionable message.
+        const isAccountNotReady =
+          err?.code === "account_invalid" ||
+          err?.code === "account_closed" ||
+          err?.code === "account_not_found" ||
+          (err?.type === "StripeInvalidRequestError" &&
+            (err?.message ?? "").toLowerCase().includes("charges")) ||
+          (err?.type === "StripeInvalidRequestError" &&
+            (err?.message ?? "").toLowerCase().includes("connected account"));
+        if (isAccountNotReady) {
+          await releaseReservation();
+          console.error(
+            `[checkout] Connect account ${tenant.stripeAccountId} not ready for charges:`,
+            err?.message ?? err,
+          );
+          return NextResponse.json(
+            {
+              error:
+                "This gallery is not yet ready to accept payments. They may still be completing account setup. Please contact the gallery directly.",
+            },
+            { status: 503 },
+          );
+        }
+        throw err;
+      }
 
       return NextResponse.json({ url: session.url });
     } catch (err) {
