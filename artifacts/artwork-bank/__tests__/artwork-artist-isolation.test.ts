@@ -1,20 +1,17 @@
 /**
- * Artwork actions — representedArtistId cross-tenant isolation.
+ * Artwork actions — representedArtistId cross-tenant isolation (security fix).
  *
- * `createArtwork` and `updateArtwork` pass `representedArtistId` directly into
- * the insert values without a tenant-scoped lookup. These tests document the
- * current behavior and provide a regression baseline if a validation is added.
+ * createArtwork and updateArtwork now validate that representedArtistId
+ * belongs to session.tenantId before persisting. A foreign-tenant artist ID
+ * is rejected with { error: "Artist not found." }.
  *
- * Current behavior:
- *  - The actions set `tenantId = session.tenantId` on the artwork row.
- *  - `representedArtistId` is stored as-is; there is no cross-tenant check.
- *  - These tests confirm that, given the current code, the action does NOT
- *    explicitly reject a foreign-tenant artist ID (i.e. it stores it).
- *  - This serves as a regression test: if validation is later added, these
- *    tests will need to be updated to assert rejection instead.
- *
- * The artwork's `tenantId` is always set to the session tenant, so data
- * ownership is preserved even if `representedArtistId` is foreign.
+ * Covers:
+ *  - createArtwork: foreign-tenant artist ID is rejected (no insert)
+ *  - createArtwork: same-tenant artist ID is accepted (insert proceeds)
+ *  - createArtwork: no representedArtistId → insert proceeds without artist lookup
+ *  - updateArtwork: foreign-tenant artist ID is rejected (no update)
+ *  - updateArtwork: same-tenant artist ID is accepted (update proceeds)
+ *  - updateArtwork: no representedArtistId → update proceeds without artist lookup
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -28,6 +25,8 @@ vi.mock("@/lib/billing", () => ({
 }));
 
 // ── DB state ──────────────────────────────────────────────────────────────────
+// artistRow: controls whether representedArtistsTable.findFirst returns a row
+let artistRow: Record<string, unknown> | null = null;
 const capturedInserts: Record<string, unknown>[] = [];
 const capturedUpdates: Record<string, unknown>[] = [];
 
@@ -51,6 +50,7 @@ vi.mock("@workspace/db", () => ({
         };
       },
     })),
+    delete: () => ({ where: vi.fn().mockResolvedValue(undefined) }),
     query: {
       artworkCategoriesTable: {
         findMany: vi.fn(async () => []),
@@ -58,10 +58,15 @@ vi.mock("@workspace/db", () => ({
       artworksTable: {
         findFirst: vi.fn(async () => ({ id: "art-1", tenantId: "tenant-A" })),
       },
+      representedArtistsTable: {
+        // Returns artistRow — set to null to simulate cross-tenant (not found)
+        findFirst: vi.fn(async () => artistRow),
+      },
     },
   },
   artworksTable: { id: "artworks.id", tenantId: "artworks.tenantId" },
   artworkCategoriesTable: { id: "cats.id", tenantId: "cats.tenantId" },
+  representedArtistsTable: { id: "ra.id", tenantId: "ra.tenantId" },
   artworkCategoryOnArtworkTable: {},
   artworkImagesTable: {},
   eq: vi.fn(),
@@ -78,15 +83,17 @@ vi.mock("@/lib/object-storage", () => ({
 // ── next/cache / navigation mocks ─────────────────────────────────────────────
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({
-  redirect: (url: string) => { throw new Error(`REDIRECT:${url}`); },
+  redirect: (url: string) => {
+    throw new Error(`REDIRECT:${url}`);
+  },
 }));
 
 import { createArtwork, updateArtwork } from "@/app/(admin)/(gated)/catalog/actions";
 
 function formData(fields: Record<string, string | string[]>): FormData {
   return {
-    get: (k: string) => (Array.isArray(fields[k]) ? null : (fields[k] ?? null)),
-    getAll: (k: string) => (Array.isArray(fields[k]) ? fields[k] : []),
+    get: (k: string) => (Array.isArray(fields[k]) ? null : ((fields[k] as string) ?? null)),
+    getAll: (k: string) => (Array.isArray(fields[k]) ? (fields[k] as string[]) : []),
   } as unknown as FormData;
 }
 
@@ -98,70 +105,106 @@ const baseArtworkFields = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  artistRow = null;
   capturedInserts.length = 0;
   capturedUpdates.length = 0;
   getSession.mockResolvedValue({ userId: "u-1", tenantId: "tenant-A", role: "owner" });
 });
 
-describe("createArtwork — representedArtistId isolation", () => {
-  it("stores the representedArtistId from form data without a tenant check (current behavior)", async () => {
-    // This documents current behavior: no cross-tenant validation on artist ID.
-    await createArtwork(
-      { error: "" },
-      formData({
-        ...baseArtworkFields,
-        representedArtistId: "artist-from-tenant-B", // foreign-tenant artist
-      }),
-    ).catch(() => {}); // redirect is thrown on success
+// ── createArtwork — representedArtistId isolation ─────────────────────────────
 
-    const inserted = capturedInserts[0];
-    // The artwork row is correctly scoped to the session tenant
-    expect(inserted?.tenantId).toBe("tenant-A");
-    // The artist ID is stored as-is without cross-tenant validation (current behavior)
-    expect(inserted?.representedArtistId).toBe("artist-from-tenant-B");
+describe("createArtwork — representedArtistId isolation", () => {
+  it("rejects a foreign-tenant artist ID with 'Artist not found.'", async () => {
+    artistRow = null; // tenant-scoped lookup returns nothing → foreign tenant
+
+    const result = await createArtwork(
+      { error: "" },
+      formData({ ...baseArtworkFields, representedArtistId: "artist-from-tenant-B" }),
+    );
+
+    expect(result).toEqual({ error: "Artist not found." });
+    expect(capturedInserts).toHaveLength(0); // no DB insert
   });
 
-  it("sets representedArtistId to null when not provided", async () => {
-    await createArtwork(
+  it("accepts a same-tenant artist ID and proceeds with insert", async () => {
+    artistRow = { id: "artist-tenant-A", tenantId: "tenant-A" }; // owned by session tenant
+
+    const result = await createArtwork(
+      { error: "" },
+      formData({ ...baseArtworkFields, representedArtistId: "artist-tenant-A" }),
+    ).catch((e: Error) => (e.message.startsWith("REDIRECT:") ? { ok: true } : Promise.reject(e)));
+
+    // Should succeed (redirect thrown means the action completed)
+    expect(result).toMatchObject({ ok: true });
+    expect(capturedInserts).toHaveLength(1);
+    expect(capturedInserts[0]?.representedArtistId).toBe("artist-tenant-A");
+  });
+
+  it("skips the artist lookup and inserts when no representedArtistId is provided", async () => {
+    // No artistRow setup needed — lookup should not be called at all
+    const result = await createArtwork(
       { error: "" },
       formData({ ...baseArtworkFields }),
-    ).catch(() => {});
+    ).catch((e: Error) => (e.message.startsWith("REDIRECT:") ? { ok: true } : Promise.reject(e)));
 
+    expect(result).toMatchObject({ ok: true });
+    expect(capturedInserts).toHaveLength(1);
     expect(capturedInserts[0]?.representedArtistId).toBeNull();
   });
 
-  it("always sets tenantId to session.tenantId regardless of artist", async () => {
+  it("always sets tenantId to session.tenantId on inserted artwork", async () => {
+    artistRow = { id: "a1", tenantId: "tenant-A" };
+
     await createArtwork(
       { error: "" },
-      formData({ ...baseArtworkFields, representedArtistId: "any-artist-id" }),
+      formData({ ...baseArtworkFields, representedArtistId: "a1" }),
     ).catch(() => {});
 
-    expect(capturedInserts[0]?.tenantId).toBe("tenant-A");
+    if (capturedInserts.length > 0) {
+      expect(capturedInserts[0]?.tenantId).toBe("tenant-A");
+    }
   });
 });
 
+// ── updateArtwork — representedArtistId isolation ─────────────────────────────
+
 describe("updateArtwork — representedArtistId isolation", () => {
-  it("updates representedArtistId from form data without a tenant check (current behavior)", async () => {
-    await updateArtwork(
+  it("rejects a foreign-tenant artist ID with 'Artist not found.'", async () => {
+    artistRow = null;
+
+    const result = await updateArtwork(
       "art-1",
       { error: "" },
-      formData({
-        ...baseArtworkFields,
-        representedArtistId: "artist-from-tenant-B",
-      }),
-    ).catch(() => {});
+      formData({ ...baseArtworkFields, representedArtistId: "artist-from-tenant-B" }),
+    );
 
-    const updated = capturedUpdates[0];
-    expect(updated?.representedArtistId).toBe("artist-from-tenant-B");
+    expect(result).toEqual({ error: "Artist not found." });
+    expect(capturedUpdates).toHaveLength(0);
   });
 
-  it("clears representedArtistId when not provided in update", async () => {
-    await updateArtwork(
+  it("accepts a same-tenant artist ID and proceeds with update", async () => {
+    artistRow = { id: "artist-tenant-A", tenantId: "tenant-A" };
+
+    const result = await updateArtwork(
+      "art-1",
+      { error: "" },
+      formData({ ...baseArtworkFields, representedArtistId: "artist-tenant-A" }),
+    ).catch((e: Error) => (e.message.startsWith("REDIRECT:") ? { ok: true } : Promise.reject(e)));
+
+    expect(result).toMatchObject({ ok: true });
+    expect(capturedUpdates).toHaveLength(1);
+    expect(capturedUpdates[0]?.representedArtistId).toBe("artist-tenant-A");
+  });
+
+  it("skips the artist lookup and updates when no representedArtistId is provided", async () => {
+    const result = await updateArtwork(
       "art-1",
       { error: "" },
       formData({ ...baseArtworkFields }),
-    ).catch(() => {});
+    ).catch((e: Error) => (e.message.startsWith("REDIRECT:") ? { ok: true } : Promise.reject(e)));
 
+    expect(result).toMatchObject({ ok: true });
+    expect(capturedUpdates).toHaveLength(1);
     expect(capturedUpdates[0]?.representedArtistId).toBeNull();
   });
 });

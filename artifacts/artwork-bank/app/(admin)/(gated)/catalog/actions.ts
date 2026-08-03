@@ -8,6 +8,7 @@ import {
   artworkCategoryOnArtworkTable,
   artworkImagesTable,
   artworkCategoriesTable,
+  representedArtistsTable,
 } from "@workspace/db";
 import { eq, and, inArray, asc } from "drizzle-orm";
 import { z } from "zod";
@@ -104,6 +105,17 @@ export async function createArtwork(
     return { error: parsed.error.errors[0]?.message ?? "Invalid input." };
   }
 
+  // Validate representedArtistId belongs to this tenant before inserting.
+  if (parsed.data.representedArtistId) {
+    const artist = await db.query.representedArtistsTable.findFirst({
+      where: and(
+        eq(representedArtistsTable.id, parsed.data.representedArtistId),
+        eq(representedArtistsTable.tenantId, session.tenantId),
+      ),
+    });
+    if (!artist) return { error: "Artist not found." };
+  }
+
   const values = toInsertValues(parsed.data, session.tenantId);
   const [artwork] = await db.insert(artworksTable).values(values).returning();
   if (!artwork) return { error: "Failed to create artwork." };
@@ -147,6 +159,17 @@ export async function updateArtwork(
   const parsed = parseArtworkFormData(formData);
   if (!parsed.success) {
     return { error: parsed.error.errors[0]?.message ?? "Invalid input." };
+  }
+
+  // Validate representedArtistId belongs to this tenant before updating.
+  if (parsed.data.representedArtistId) {
+    const artist = await db.query.representedArtistsTable.findFirst({
+      where: and(
+        eq(representedArtistsTable.id, parsed.data.representedArtistId),
+        eq(representedArtistsTable.tenantId, session.tenantId),
+      ),
+    });
+    if (!artist) return { error: "Artist not found." };
   }
 
   const values = toInsertValues(parsed.data, session.tenantId);
