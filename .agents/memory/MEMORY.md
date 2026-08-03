@@ -3,4 +3,5 @@
 - [Stripe testing in task env](stripe-testing-in-task-env.md) — connector creds are withheld in isolated task envs; verify routing + webhook via dev bypass, leave live payment to main workspace
 - [GitHub push via token](github-push-token.md) — built-in GitHub connection unavailable here; push to i-framer/I-art with GITHUB_PUSH_TOKEN via GIT_ASKPASS
 - [Vercel go-live checks](vercel-golive-checks.md) — how to audit i-art.com.au prod from a task env without Vercel access (probe endpoints; error messages reveal missing env vars)
+- [Next.js instrumentation Edge bundling](nextjs-instrumentation-edge.md) — Node-only imports must live in a split file behind a literal NEXT_RUNTIME check; only `next build` catches it
 - [Credential screenshot safeguard](github-push-token.md) — attached_assets auto-commits uploads; run scripts/check-sensitive-assets.sh before any GitHub push, .gitignore blocks token/secret filenames
