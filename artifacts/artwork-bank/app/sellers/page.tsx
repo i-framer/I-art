@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { db } from "@workspace/db";
 import { artworksTable, tenantsTable } from "@workspace/db";
-import { eq, count } from "drizzle-orm";
+import { and, eq, count } from "drizzle-orm";
 import { Store, Palette, Frame, MapPin, ImageIcon } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +40,11 @@ export default async function SellersPage() {
     .from(tenantsTable)
     .leftJoin(
       artworksTable,
-      eq(artworksTable.tenantId, tenantsTable.id),
+      and(
+        eq(artworksTable.tenantId, tenantsTable.id),
+        eq(artworksTable.showInGallery, true),
+        eq(artworksTable.status, "AVAILABLE"),
+      ),
     )
     .where(eq(tenantsTable.storefrontEnabled, true))
     .groupBy(tenantsTable.id)
@@ -178,9 +182,17 @@ export default async function SellersPage() {
       <footer className="mt-16 border-t border-stone-200 py-8 text-sm text-stone-400 bg-white">
         <div className="mx-auto max-w-7xl px-6 flex items-center justify-between">
           <span className="font-medium text-stone-500">Artwork Bank</span>
-          <Link href="/" className="hover:text-stone-600 transition-colors">
-            About the platform
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link href="/terms" className="hover:text-stone-600 transition-colors">
+              Terms
+            </Link>
+            <Link href="/privacy" className="hover:text-stone-600 transition-colors">
+              Privacy
+            </Link>
+            <Link href="/" className="hover:text-stone-600 transition-colors">
+              About the platform
+            </Link>
+          </div>
         </div>
       </footer>
     </div>

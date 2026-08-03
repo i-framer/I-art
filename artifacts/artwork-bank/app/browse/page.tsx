@@ -349,9 +349,17 @@ export default async function BrowsePage({
       <footer className="mt-16 border-t border-stone-200 py-8 text-sm text-stone-400 bg-white">
         <div className="mx-auto max-w-7xl px-6 flex items-center justify-between">
           <span className="font-medium text-stone-500">Artwork Bank</span>
-          <Link href="/" className="hover:text-stone-600 transition-colors">
-            About the platform
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link href="/terms" className="hover:text-stone-600 transition-colors">
+              Terms
+            </Link>
+            <Link href="/privacy" className="hover:text-stone-600 transition-colors">
+              Privacy
+            </Link>
+            <Link href="/" className="hover:text-stone-600 transition-colors">
+              About the platform
+            </Link>
+          </div>
         </div>
       </footer>
     </div>
