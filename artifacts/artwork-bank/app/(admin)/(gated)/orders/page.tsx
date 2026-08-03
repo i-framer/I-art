@@ -138,6 +138,14 @@ export default async function OrdersPage({
                   !!order.statusEmailError &&
                   order.statusEmailAttempts > 0 &&
                   order.statusEmailAttempts < MAX_EMAIL_ATTEMPTS;
+                // Partial-refund notification failure: notifyBuyerOfPartialRefund
+                // writes statusEmailError but never touches statusEmailAttempts or
+                // statusEmailQueuedAt, so these three conditions together identify it
+                // reliably without conflating it with the status-email sweep path.
+                const refundNotifFailed =
+                  !!order.statusEmailError &&
+                  order.statusEmailAttempts === 0 &&
+                  !order.statusEmailQueuedAt;
                 return (
                   <tr
                     key={order.id}
@@ -209,6 +217,15 @@ export default async function OrdersPage({
                           >
                             <AlertTriangle className="h-3 w-3" />
                             Update email failed
+                          </span>
+                        )}
+                        {refundNotifFailed && (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700"
+                            title="Partial refund was issued but the buyer notification email failed — see order details"
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            Refund email failed
                           </span>
                         )}
                       </div>
