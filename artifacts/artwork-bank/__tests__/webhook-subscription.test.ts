@@ -72,6 +72,7 @@ vi.mock("next/headers", () => ({ headers: () => mockHeaders() }));
 
 import { POST as webhookPOST } from "@/app/api/stripe/webhook/route";
 import { getSubscriptionBadge } from "@/lib/billing";
+import { getStripeClient } from "@/lib/stripe";
 
 function post(event: any) {
   return webhookPOST(
@@ -308,6 +309,65 @@ describe("subscription webhook events", () => {
       expect.stringContaining("cus_unknown"),
     );
     errorSpy.mockRestore();
+  });
+
+  it("checkout stores 'trialing' from subscriptions.retrieve — not hardcoded 'active'", async () => {
+    const mockRetrieve = vi.fn().mockResolvedValue({
+      status: "trialing",
+      trial_end: 9999999999,
+    });
+    vi.mocked(getStripeClient).mockResolvedValue({
+      subscriptions: { retrieve: mockRetrieve },
+    } as any);
+
+    const res = await post({
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_sub_trialing",
+          mode: "subscription",
+          customer: "cus_1",
+          subscription: "sub_trialing",
+          metadata: { billingTenantId: "tenant-1" },
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+    // Prove the retrieve call was made — if it is removed, this fails.
+    expect(mockRetrieve).toHaveBeenCalledWith("sub_trialing");
+    // Status must mirror what Stripe returned, not be silently promoted to "active".
+    expect(state.updates[0].vals.subscriptionStatus).toBe("trialing");
+    expect(state.updates[0].vals.subscriptionStatus).not.toBe("active");
+  });
+
+  it("checkout stores 'active' from subscriptions.retrieve when Stripe says active", async () => {
+    const mockRetrieve = vi.fn().mockResolvedValue({
+      status: "active",
+      trial_end: null,
+    });
+    vi.mocked(getStripeClient).mockResolvedValue({
+      subscriptions: { retrieve: mockRetrieve },
+    } as any);
+
+    const res = await post({
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_sub_active2",
+          mode: "subscription",
+          customer: "cus_1",
+          subscription: "sub_active2",
+          metadata: { billingTenantId: "tenant-1" },
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+    // Prove the retrieve call was made.
+    expect(mockRetrieve).toHaveBeenCalledWith("sub_active2");
+    // Status must reflect what Stripe returned.
+    expect(state.updates[0].vals.subscriptionStatus).toBe("active");
   });
 
   it("trial-to-active: customer.subscription.updated transitions status from trialing to active", async () => {
