@@ -867,6 +867,10 @@ export async function sendOrderConfirmation({
   const fulfillmentText =
     FULFILLMENT_TEXT[fulfillmentType] ?? "The gallery will be in touch with next steps.";
 
+  const escapeHtml = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
   try {
     await deliverEmail({
         from: getOrdersFrom(),
@@ -875,19 +879,19 @@ export async function sendOrderConfirmation({
         html: `
           <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
             <h2 style="color:#1c1917;">Order Confirmed ✓</h2>
-            <p>Hi ${buyerName ?? "there"},</p>
-            <p>Your order for <strong>${artworkTitle}</strong> from <strong>${tenantName}</strong> has been confirmed.</p>
+            <p>Hi ${escapeHtml(buyerName ?? "there")},</p>
+            <p>Your order for <strong>${escapeHtml(artworkTitle)}</strong> from <strong>${escapeHtml(tenantName)}</strong> has been confirmed.</p>
             <p>${fulfillmentText}</p>
             <p style="margin-top:24px;padding:16px;background:#f5f5f4;border-radius:8px;">
-              Order reference: <code style="font-family:monospace;">${orderRef}</code>
+              Order reference: <code style="font-family:monospace;">${escapeHtml(orderRef)}</code>
             </p>
             ${
               orderLookupUrl
-                ? `<p>You can check your order status any time — no account needed: <a href="${orderLookupUrl}" style="color:#1c1917;">Check order status</a> (use this email address and your order reference).</p>`
+                ? `<p>You can check your order status any time — no account needed: <a href="${escapeHtml(orderLookupUrl)}" style="color:#1c1917;">Check order status</a> (use this email address and your order reference).</p>`
                 : ""
             }
             <p style="color:#78716c;font-size:14px;margin-top:24px;">
-              Thank you for supporting ${tenantName}.
+              Thank you for supporting ${escapeHtml(tenantName)}.
             </p>
           </div>
         `,

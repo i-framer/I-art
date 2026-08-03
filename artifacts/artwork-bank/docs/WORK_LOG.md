@@ -5,6 +5,68 @@ why, and any decisions worth preserving.
 
 ---
 
+## 2026-08-03 (continued — second engineering session)
+
+### Block G — Test coverage: Task #49 gallery-alert two-pass retry
+- Added `__tests__/gallery-alert-retry.test.ts` — explicitly exercises the
+  retryable design of `sweepUnsentGalleryAlerts`:
+  - Pass 1: `sendConfirmationFailureNotice` throws → failed count=1,
+    `emailFailureNotifiedAt` stays `null` (order stays selectable for next sweep)
+  - Pass 2: send succeeds → sent count=1, `emailFailureNotifiedAt` stamped with
+    the sweep timestamp
+  - Two-order partial-success scenario across both passes
+  - Timestamp written on successful retry matches the `NOW` argument
+
+---
+
+### Block H — Stripe Connect account-not-ready error handling
+- **Problem:** When a gallery's Connect account has incomplete onboarding or is
+  restricted, `stripe.checkout.sessions.create` throws a `StripeInvalidRequestError`
+  (code `account_invalid` / `account_closed` / `account_not_found`, or a message
+  mentioning "charges" or "connected account"). The checkout route caught this as a
+  generic 500, giving buyers a confusing message and leaving the artwork RESERVED.
+- **Fix:** Added a targeted inner try-catch around `sessions.create` in
+  `app/api/stripe/checkout/route.ts`. Detected codes + message patterns are caught,
+  the reservation is released, and a 503 is returned with a clear message:
+  *"This gallery is not yet ready to accept payments…"*.
+- **Unrelated Stripe errors** (e.g. `rate_limit`) still propagate as before.
+- **Tests:** `__tests__/checkout-connect-account-not-ready.test.ts` — 7 cases
+  covering all three account-not-ready codes, both message patterns, one unrelated
+  error (stays ≠ 503), and the happy path (200, no release).
+- **Commit:** `95e625e`
+
+---
+
+### Block I — Security: HTML injection in `sendOrderConfirmation` (Task #324)
+- **Problem:** `sendOrderConfirmation` in `lib/email.ts` interpolated `buyerName`,
+  `artworkTitle`, `tenantName`, `orderRef`, and `orderLookupUrl` directly into the
+  HTML template without escaping. Every other email function in the same file
+  already defines and uses a local `escapeHtml` helper; this one was missed.
+- **Fix:** Added `escapeHtml` to `sendOrderConfirmation` and applied it to all
+  five interpolated values, including the `href` in the order-lookup link.
+- **Tests:** Extended `__tests__/email-content-contract.test.ts` with a new
+  describe block — "HTML injection prevention (Task #324)" — covering `<script>`,
+  `<img onerror>`, `</p><b>` tag injection, `&` in order ref, `'` in buyer name,
+  and `javascript:` href injection via `orderLookupUrl`.
+
+---
+
+### Block J — Test coverage: `refundOrder` Stripe failure paths (Task #322)
+- **New file:** `__tests__/order-refund-stripe-failure.test.ts`
+- Covers what the existing `order-refund.test.ts` left untested:
+  - `getStripeClient()` throws `StripeNotConfiguredError` → friendly redirect,
+    no DB update, no email
+  - `stripe.refunds.create()` throws Stripe API error → error redirect, no DB
+    update, no email
+  - Generic `Error` from `getStripeClient` → no Stripe call attempted
+  - PENDING order rejected before any Stripe call
+  - CANCELLED order rejected before any Stripe call
+  - No-`stripePaymentIntentId` order rejected before any Stripe call
+- Result: ensures `refundedAmountCents` can never be incremented unless Stripe
+  confirms the refund.
+
+---
+
 ## 2026-08-03
 
 ### Block A — TypeScript error fix

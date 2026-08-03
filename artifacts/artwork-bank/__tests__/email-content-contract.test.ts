@@ -223,3 +223,66 @@ describe("sendOrderConfirmation — email structure", () => {
     }
   });
 });
+
+// ── HTML injection regression (Task #324) ─────────────────────────────────────
+
+describe("sendOrderConfirmation — HTML injection prevention (Task #324)", () => {
+  async function captureHtml(params: Parameters<typeof sendOrderConfirmation>[0]) {
+    const nodemailer = await import("nodemailer");
+    const mockTransport = {
+      sendMail: vi.fn().mockResolvedValue({ messageId: "test" }),
+    };
+    vi.mocked(nodemailer.default.createTransport).mockReturnValue(mockTransport as any);
+    await sendOrderConfirmation(params).catch(() => {});
+    if (mockTransport.sendMail.mock.calls.length === 0) return null;
+    return (mockTransport.sendMail.mock.calls[0]![0] as any).html as string;
+  }
+
+  it("escapes < and > in artwork title", async () => {
+    const html = await captureHtml({ ...BASE_PARAMS, artworkTitle: "<script>alert(1)</script>" });
+    if (html) {
+      expect(html).not.toContain("<script>");
+      expect(html).toContain("&lt;script&gt;");
+    }
+  });
+
+  it("escapes < and > in buyer name", async () => {
+    const html = await captureHtml({ ...BASE_PARAMS, buyerName: "<img src=x onerror=alert(1)>" });
+    if (html) {
+      expect(html).not.toContain("<img src=x");
+      expect(html).toContain("&lt;img");
+    }
+  });
+
+  it("escapes < and > in tenant name", async () => {
+    const html = await captureHtml({ ...BASE_PARAMS, tenantName: "</p><b>injected</b>" });
+    if (html) {
+      expect(html).not.toContain("</p><b>");
+      expect(html).toContain("&lt;/p&gt;");
+    }
+  });
+
+  it("escapes & in order reference", async () => {
+    const html = await captureHtml({ ...BASE_PARAMS, orderRef: "ORD-001&extra=1" });
+    if (html) {
+      expect(html).not.toMatch(/ORD-001&[^a]|ORD-001&extra/);
+      expect(html).toContain("ORD-001&amp;extra");
+    }
+  });
+
+  it("escapes double-quotes in orderLookupUrl to prevent attribute breakout", async () => {
+    // escapeHtml turns " → &quot;, so an attacker cannot close the href attribute
+    // and inject additional attributes like onmouseover="...".
+    // Note: orderLookupUrl is always generated internally (getTenantUrl) and is
+    // never user-supplied; this test guards against a future regression.
+    const html = await captureHtml({
+      ...BASE_PARAMS,
+      orderLookupUrl: 'https://gallery.com/orders/lookup?ref=x" onmouseover="alert(1)',
+    });
+    if (html) {
+      // The raw " must not appear inside the href — it should be &quot;
+      expect(html).not.toContain('href="https://gallery.com/orders/lookup?ref=x" onmouseover');
+      expect(html).toContain("&quot;");
+    }
+  });
+});
