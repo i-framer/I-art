@@ -6,7 +6,7 @@ import { db } from "@workspace/db";
 import { tenantsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { startSubscriptionCheckout, openBillingPortal } from "../actions";
-import { hasActiveAccess, SUBSCRIPTION_PRICE_CENTS } from "@/lib/billing";
+import { hasActiveAccess, getSubscriptionBadge, SUBSCRIPTION_PRICE_CENTS } from "@/lib/billing";
 import { formatPrice } from "@/lib/format";
 import {
   Users,
@@ -17,15 +17,6 @@ import {
 } from "lucide-react";
 
 export const metadata: Metadata = { title: "Billing" };
-
-const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
-  active: { label: "Active", cls: "bg-emerald-100 text-emerald-700" },
-  trialing: { label: "Trial", cls: "bg-blue-100 text-blue-700" },
-  past_due: { label: "Payment overdue", cls: "bg-amber-100 text-amber-700" },
-  canceled: { label: "Cancelled", cls: "bg-red-100 text-red-700" },
-  unpaid: { label: "Unpaid", cls: "bg-red-100 text-red-700" },
-  incomplete: { label: "Incomplete", cls: "bg-amber-100 text-amber-700" },
-};
 
 export default async function BillingPage({
   searchParams,
@@ -43,7 +34,7 @@ export default async function BillingPage({
   const { billing } = await searchParams;
   const active = hasActiveAccess(tenant);
   const status = tenant.subscriptionStatus;
-  const badge = status ? STATUS_LABELS[status] : null;
+  const badge = getSubscriptionBadge(status);
 
   return (
     <div className="px-8 py-8 max-w-2xl">

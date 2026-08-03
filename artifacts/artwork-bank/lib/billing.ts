@@ -18,6 +18,30 @@ const SUBSCRIPTION_PRICE_LOOKUP_KEY = "artwork_bank_monthly_v1";
  */
 const ACTIVE_STATUSES = new Set(["active", "trialing", "past_due"]);
 
+/**
+ * Display label and Tailwind classes for a given subscription status badge.
+ * Returns `null` when the status is unknown or absent (i.e. "Not subscribed").
+ */
+export const SUBSCRIPTION_STATUS_BADGES: Record<
+  string,
+  { label: string; cls: string }
+> = {
+  active: { label: "Active", cls: "bg-emerald-100 text-emerald-700" },
+  trialing: { label: "Trialing", cls: "bg-blue-100 text-blue-700" },
+  past_due: { label: "Payment overdue", cls: "bg-amber-100 text-amber-700" },
+  canceled: { label: "Cancelled", cls: "bg-red-100 text-red-700" },
+  unpaid: { label: "Unpaid", cls: "bg-red-100 text-red-700" },
+  incomplete: { label: "Incomplete", cls: "bg-amber-100 text-amber-700" },
+};
+
+/** Returns the badge descriptor for a given raw subscriptionStatus, or null. */
+export function getSubscriptionBadge(
+  status: string | null | undefined,
+): { label: string; cls: string } | null {
+  if (!status) return null;
+  return SUBSCRIPTION_STATUS_BADGES[status] ?? null;
+}
+
 type BillingFields = Pick<Tenant, "billingExempt" | "subscriptionStatus">;
 
 /** Whether the tenant currently has access to the admin app. */
