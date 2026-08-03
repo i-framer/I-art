@@ -58,13 +58,31 @@ function getConfiguredPlatformHost(): string | null {
   }
 }
 
+/**
+ * Strip a leading "www." to get the registrable apex domain.
+ * e.g. "www.i-art.com.au" → "i-art.com.au", "i-art.com.au" → "i-art.com.au".
+ * Wildcard tenant subdomains always live under the apex, regardless of whether
+ * NEXT_PUBLIC_SITE_URL was configured with or without the "www." prefix.
+ */
+function apexDomain(host: string): string {
+  return host.startsWith("www.") ? host.slice(4) : host;
+}
+
 function isPlatformDomain(host: string): boolean {
   const configuredHost = getConfiguredPlatformHost();
-  if (
-    configuredHost &&
-    (host === configuredHost || host.endsWith(`.${configuredHost}`))
-  ) {
-    return true;
+  if (configuredHost) {
+    const apex = apexDomain(configuredHost);
+    // Match the exact configured host (e.g. www.i-art.com.au), its subdomains,
+    // and the apex domain and its subdomains (covers *.i-art.com.au when
+    // NEXT_PUBLIC_SITE_URL is set to https://www.i-art.com.au).
+    if (
+      host === configuredHost ||
+      host.endsWith(`.${configuredHost}`) ||
+      host === apex ||
+      host.endsWith(`.${apex}`)
+    ) {
+      return true;
+    }
   }
   if (process.env.VERCEL_URL && host === process.env.VERCEL_URL.split(":")[0]) {
     return true;
@@ -88,13 +106,17 @@ function getInternalBaseUrl(): string {
 
 /**
  * Tenant subdomain of the configured platform host, e.g.
- * "jane.i-art.com.au" with NEXT_PUBLIC_SITE_URL=https://i-art.com.au → "jane".
- * Returns null for the apex host, "www", and multi-level subdomains.
+ * "jane.i-art.com.au" with NEXT_PUBLIC_SITE_URL=https://www.i-art.com.au → "jane".
+ * Matches against the apex domain so this works whether NEXT_PUBLIC_SITE_URL
+ * includes "www." or not. Returns null for the apex host, "www", and
+ * multi-level subdomains.
  */
 function getTenantSubdomain(host: string): string | null {
   const configuredHost = getConfiguredPlatformHost();
-  if (!configuredHost || !host.endsWith(`.${configuredHost}`)) return null;
-  const sub = host.slice(0, host.length - configuredHost.length - 1);
+  if (!configuredHost) return null;
+  const apex = apexDomain(configuredHost);
+  if (!host.endsWith(`.${apex}`)) return null;
+  const sub = host.slice(0, host.length - apex.length - 1);
   if (!sub || sub === "www" || sub.includes(".")) return null;
   return sub;
 }
