@@ -892,3 +892,135 @@ describeIntegration("no-match error path against real DB", () => {
     errorSpy.mockRestore();
   });
 });
+
+// ── checkout.session.completed — subscriptions.retrieve failure alert ─────────
+
+describeIntegration("checkout.session.completed — subscriptions.retrieve failure", () => {
+  it("persists a billing alert and notifies when subscriptions.retrieve throws", async () => {
+    // A new tenant completes checkout but the retrieve call throws (e.g. key
+    // mismatch). The handler must fall back to "active", log an error, AND
+    // create a billing alert so the operator is notified via the panel, Slack,
+    // and email — not just via log tailing.
+    const tenantId = await createTenant();
+    createdTenantIds.push(tenantId);
+
+    const subId = `sub_retrieve_fail_${uid()}`;
+    const cusId = `cus_retrieve_fail_${uid()}`;
+    const eventId = `evt_retrieve_fail_${uid()}`;
+    createdAlertEventIds.push(eventId);
+
+    // Make subscriptions.retrieve throw so the fallback path is exercised.
+    vi.mocked(getStripeClient).mockResolvedValueOnce({
+      subscriptions: {
+        retrieve: vi.fn().mockRejectedValue(new Error("No such subscription: test-mode key mismatch")),
+      },
+    } as any);
+
+    vi.mocked(sendBillingAlertNotification).mockClear();
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await post({
+      id: eventId,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_retrieve_fail_${uid()}`,
+          mode: "subscription",
+          customer: cusId,
+          subscription: subId,
+          metadata: { billingTenantId: tenantId },
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+
+    // Tenant falls back to "active".
+    const row = await getTenantBillingFields(tenantId);
+    expect(row?.subscriptionStatus).toBe("active");
+
+    // An error was logged with the subscription ID and failure reason.
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(subId),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("test-mode key mismatch"),
+    );
+
+    // A billing alert row was persisted using the checkout event ID.
+    const alert = await db.query.stripeAlertsTable.findFirst({
+      where: eq(stripeAlertsTable.stripeEventId, eventId),
+    });
+    expect(alert).toBeDefined();
+    expect(alert?.eventType).toBe("checkout.session.completed");
+    expect(alert?.subscriptionId).toBe(subId);
+    expect(alert?.reason).toMatch(/retrieve.*failed|falling back/i);
+
+    // Email notification was sent.
+    expect(sendBillingAlertNotification).toHaveBeenCalledOnce();
+    expect(sendBillingAlertNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stripeEventId: eventId,
+        subscriptionId: subId,
+        reason: expect.stringContaining(subId),
+      }),
+    );
+
+    errorSpy.mockRestore();
+  });
+
+  it("is idempotent: Stripe re-delivering the same event creates exactly one alert row and notifies only once", async () => {
+    const tenantId = await createTenant();
+    createdTenantIds.push(tenantId);
+
+    const subId = `sub_retrieve_idem_${uid()}`;
+    const cusId = `cus_retrieve_idem_${uid()}`;
+    const eventId = `evt_retrieve_idem_${uid()}`;
+    createdAlertEventIds.push(eventId);
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(sendBillingAlertNotification).mockClear();
+
+    const event = {
+      id: eventId,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_retrieve_idem_${uid()}`,
+          mode: "subscription",
+          customer: cusId,
+          subscription: subId,
+          metadata: { billingTenantId: tenantId },
+        },
+      },
+    };
+
+    // Both deliveries should fail the retrieve — supply two mock rejections.
+    vi.mocked(getStripeClient)
+      .mockResolvedValueOnce({
+        subscriptions: { retrieve: vi.fn().mockRejectedValue(new Error("key mismatch")) },
+      } as any)
+      .mockResolvedValueOnce({
+        subscriptions: { retrieve: vi.fn().mockRejectedValue(new Error("key mismatch")) },
+      } as any);
+
+    const res1 = await post(event);
+    expect(res1.status).toBe(200);
+
+    const res2 = await post(event);
+    expect(res2.status).toBe(200);
+
+    // Exactly one alert row.
+    const alerts = await db
+      .select()
+      .from(stripeAlertsTable)
+      .where(eq(stripeAlertsTable.stripeEventId, eventId));
+    expect(alerts).toHaveLength(1);
+
+    // Notification sent exactly once.
+    expect(sendBillingAlertNotification).toHaveBeenCalledOnce();
+
+    errorSpy.mockRestore();
+  });
+});

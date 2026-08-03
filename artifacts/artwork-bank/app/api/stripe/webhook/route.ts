@@ -80,7 +80,7 @@ export async function POST(request: Request) {
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
       if (session.mode === "subscription") {
-        await handleSubscriptionCheckoutCompleted(session);
+        await handleSubscriptionCheckoutCompleted(session, event.id, event.type);
       } else {
         await handleCheckoutCompleted(session);
       }
@@ -117,6 +117,8 @@ export async function POST(request: Request) {
 /** Tenant subscribed via Checkout — link Stripe IDs and mark active. */
 async function handleSubscriptionCheckoutCompleted(
   session: Stripe.Checkout.Session,
+  eventId: string,
+  eventType: string,
 ) {
   const metaTenantId = session.metadata?.billingTenantId;
 
@@ -175,9 +177,73 @@ async function handleSubscriptionCheckoutCompleted(
       const sub = await stripeClient.subscriptions.retrieve(subscriptionId);
       newStatus = sub.status;
       newTrialEnd = sub.trial_end ? new Date(sub.trial_end * 1000) : null;
-    } catch {
-      // Fall back to "active" if the retrieve fails (e.g. test-mode key mismatch).
+    } catch (err: any) {
+      // Fall back to "active" if the retrieve fails.
+      // Expected in dev when a test-mode key can't reach a live subscription;
+      // in production this indicates a network blip or key mismatch — audit immediately.
+      const retrieveFailReason =
+        `subscriptions.retrieve failed (falling back to "active") — ` +
+        `subscriptionId=${subscriptionId} reason=${err?.message ?? String(err)}`;
+      console.error(`[webhook] ${retrieveFailReason}`);
       newStatus = "active";
+
+      // Persist an operator-facing billing alert so this does not go unnoticed.
+      // Uses the checkout event ID for deduplication — Stripe retries of the same
+      // event are silently ignored via onConflictDoNothing.
+      try {
+        const inserted = await db
+          .insert(stripeAlertsTable)
+          .values({
+            stripeEventId: eventId,
+            eventType,
+            customerId: customerId ?? null,
+            subscriptionId,
+            reason: retrieveFailReason,
+          })
+          .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId })
+          .returning({ id: stripeAlertsTable.id });
+
+        if (inserted.length > 0) {
+          let slackFailure: string | undefined;
+          try {
+            const slackResult = await sendBillingAlertSlackNotification({
+              stripeEventId: eventId,
+              eventType,
+              customerId: customerId ?? null,
+              subscriptionId,
+              reason: retrieveFailReason,
+            });
+            if (!slackResult.ok) slackFailure = slackResult.error;
+          } catch (slackErr) {
+            console.error("[webhook] Failed to send billing alert Slack message:", slackErr);
+            slackFailure = (slackErr as any)?.message ?? String(slackErr);
+          }
+          if (slackFailure) {
+            try {
+              await db
+                .update(stripeAlertsTable)
+                .set({ slackPostFailed: new Date() })
+                .where(eq(stripeAlertsTable.stripeEventId, eventId));
+            } catch (updateErr) {
+              console.error("[webhook] Failed to persist slackPostFailed flag:", updateErr);
+            }
+          }
+          try {
+            await sendBillingAlertNotification({
+              stripeEventId: eventId,
+              eventType,
+              customerId: customerId ?? null,
+              subscriptionId,
+              reason: retrieveFailReason,
+              ...(slackFailure ? { slackFailure } : {}),
+            });
+          } catch (emailErr) {
+            console.error("[webhook] Failed to send billing alert email:", emailErr);
+          }
+        }
+      } catch (dbErr) {
+        console.error("[webhook] Failed to persist billing alert for retrieve failure:", dbErr);
+      }
     }
   }
 
