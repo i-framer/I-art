@@ -7,7 +7,7 @@ import { ordersTable, orderItemsTable } from "@workspace/db";
 import { and, eq, desc, count } from "drizzle-orm";
 import { formatPrice } from "@/lib/tenant-cache";
 import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
-import { AlertTriangle } from "lucide-react";
+import { AlertCircle, AlertTriangle } from "lucide-react";
 
 export const metadata: Metadata = { title: "Orders" };
 
@@ -134,6 +134,10 @@ export default async function OrdersPage({
                 const statusEmailFailed =
                   !!order.statusEmailError &&
                   order.statusEmailAttempts >= MAX_EMAIL_ATTEMPTS;
+                const statusEmailRetrying =
+                  !!order.statusEmailError &&
+                  order.statusEmailAttempts > 0 &&
+                  order.statusEmailAttempts < MAX_EMAIL_ATTEMPTS;
                 return (
                   <tr
                     key={order.id}
@@ -187,6 +191,15 @@ export default async function OrdersPage({
                           >
                             <AlertTriangle className="h-3 w-3" />
                             Email failed
+                          </span>
+                        )}
+                        {statusEmailRetrying && (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700"
+                            title={`Status update email failed — retrying automatically (attempt ${order.statusEmailAttempts} of ${MAX_EMAIL_ATTEMPTS})`}
+                          >
+                            <AlertCircle className="h-3 w-3" />
+                            Update retrying
                           </span>
                         )}
                         {statusEmailFailed && (

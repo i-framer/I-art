@@ -11,7 +11,11 @@
  * 403 to prevent strangers from triggering the sweep.
  */
 import { NextResponse } from "next/server";
-import { sweepUnsentConfirmationEmails } from "@/lib/email-sweep";
+import {
+  sweepUnsentConfirmationEmails,
+  sweepUnsentGalleryAlerts,
+  sweepUnsentStatusEmails,
+} from "@/lib/email-sweep";
 
 export const dynamic = "force-dynamic";
 
@@ -56,12 +60,20 @@ async function runSweep(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const result = await sweepUnsentConfirmationEmails();
-    console.log("[email-sweep] completed:", result);
-    // When per-row failures occurred, use 207 Multi-Status so operators are
-    // alerted even when some rows were processed successfully.
-    const status = result.failed > 0 ? 207 : 200;
-    return NextResponse.json(result, { status });
+    const [confirmResult, galleryResult, statusResult] = await Promise.all([
+      sweepUnsentConfirmationEmails(),
+      sweepUnsentGalleryAlerts(),
+      sweepUnsentStatusEmails(),
+    ]);
+    // Top-level totals kept for backward compatibility (monitoring scripts).
+    const scanned = confirmResult.scanned + galleryResult.scanned + statusResult.scanned;
+    const sent    = confirmResult.sent    + galleryResult.sent    + statusResult.sent;
+    const failed  = confirmResult.failed  + galleryResult.failed  + statusResult.failed;
+    const skipped = confirmResult.skipped + galleryResult.skipped + statusResult.skipped;
+    const body = { scanned, sent, failed, skipped, confirmResult, galleryResult, statusResult };
+    console.log("[email-sweep] completed:", body);
+    // 207 Multi-Status when any pass had per-row failures.
+    return NextResponse.json(body, { status: failed > 0 ? 207 : 200 });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Email sweep failed:", msg);

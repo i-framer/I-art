@@ -6,7 +6,7 @@
  * on emailLastAttemptAt so a permanently bad address doesn't retry forever.
  */
 import { db, ordersTable, orderItemsTable, tenantsTable } from "@workspace/db";
-import { and, eq, isNull, isNotNull, lt, ne } from "drizzle-orm";
+import { and, eq, gte, isNull, isNotNull, lt, ne } from "drizzle-orm";
 import {
   sendOrderConfirmation,
   sendOrderStatusUpdate,
@@ -149,6 +149,84 @@ export async function sweepUnsentConfirmationEmails(
           );
         }
       }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Retry the gallery failure-notification alert for orders whose buyer
+ * confirmation email exhausted all attempts (emailAttempts >= MAX_EMAIL_ATTEMPTS)
+ * but whose gallery was never notified (emailFailureNotifiedAt IS NULL).
+ *
+ * This runs every sweep cycle. Once the alert is delivered successfully,
+ * emailFailureNotifiedAt is set and the order is never re-selected.
+ */
+export async function sweepUnsentGalleryAlerts(
+  now: Date = new Date(),
+): Promise<SweepResult> {
+  const candidates = await db.query.ordersTable.findMany({
+    where: and(
+      gte(ordersTable.emailAttempts, MAX_EMAIL_ATTEMPTS),
+      isNull(ordersTable.emailFailureNotifiedAt),
+      isNotNull(ordersTable.buyerEmail),
+      ne(ordersTable.buyerEmail, ""),
+    ),
+    limit: 50,
+  });
+
+  const result: SweepResult = {
+    scanned: candidates.length,
+    sent: 0,
+    failed: 0,
+    skipped: 0,
+  };
+
+  for (const order of candidates) {
+    const [item, tenant] = await Promise.all([
+      db.query.orderItemsTable.findFirst({
+        where: eq(orderItemsTable.orderId, order.id),
+      }),
+      db.query.tenantsTable.findFirst({
+        where: eq(tenantsTable.id, order.tenantId),
+      }),
+    ]);
+
+    if (!item || !tenant?.contactEmail) {
+      // No gallery contact address — nothing to send; mark as done so we stop
+      // re-selecting this order on every sweep cycle.
+      await db
+        .update(ordersTable)
+        .set({ emailFailureNotifiedAt: now })
+        .where(eq(ordersTable.id, order.id));
+      result.skipped++;
+      continue;
+    }
+
+    try {
+      await sendConfirmationFailureNotice({
+        galleryEmail: tenant.contactEmail,
+        buyerEmail: order.buyerEmail,
+        buyerName: order.buyerName,
+        artworkTitle: item.artworkTitle,
+        orderRef: order.id.slice(0, 8).toUpperCase(),
+        tenantName: tenant.businessName,
+        lastError: order.emailError ?? "Unknown error",
+      });
+      await db
+        .update(ordersTable)
+        .set({ emailFailureNotifiedAt: now })
+        .where(eq(ordersTable.id, order.id));
+      result.sent++;
+    } catch (err) {
+      // Leave emailFailureNotifiedAt unset — this order will be re-selected
+      // on the next sweep run and the send will be retried automatically.
+      console.error(
+        `Email sweep: gallery alert retry failed for order ${order.id}:`,
+        (err as any)?.message ?? String(err),
+      );
+      result.failed++;
     }
   }
 
