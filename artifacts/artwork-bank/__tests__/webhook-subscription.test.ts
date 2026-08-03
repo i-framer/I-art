@@ -71,6 +71,7 @@ const mockHeaders = vi.hoisted(() => vi.fn());
 vi.mock("next/headers", () => ({ headers: () => mockHeaders() }));
 
 import { POST as webhookPOST } from "@/app/api/stripe/webhook/route";
+import { getSubscriptionBadge } from "@/lib/billing";
 
 function post(event: any) {
   return webhookPOST(
@@ -307,5 +308,58 @@ describe("subscription webhook events", () => {
       expect.stringContaining("cus_unknown"),
     );
     errorSpy.mockRestore();
+  });
+
+  it("trial-to-active: customer.subscription.updated transitions status from trialing to active", async () => {
+    // Tenant is currently trialing
+    vi.mocked(db.query.tenantsTable.findFirst).mockResolvedValue({
+      id: "tenant-1",
+      subscriptionStatus: "trialing",
+      stripeSubscriptionId: "sub_trial",
+    } as any);
+
+    const res = await post({
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_trial",
+          status: "active",
+          customer: "cus_1",
+          metadata: { billingTenantId: "tenant-1" },
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].vals).toMatchObject({
+      subscriptionStatus: "active",
+      stripeSubscriptionId: "sub_trial",
+    });
+    // Confirm it did NOT stay as "trialing"
+    expect(state.updates[0].vals.subscriptionStatus).not.toBe("trialing");
+  });
+});
+
+describe("getSubscriptionBadge — active vs trialing", () => {
+  it("active status returns the green Active badge", () => {
+    const badge = getSubscriptionBadge("active");
+    expect(badge).not.toBeNull();
+    expect(badge!.label).toBe("Active");
+    expect(badge!.cls).toContain("emerald");
+  });
+
+  it("trialing status returns the blue Trialing badge", () => {
+    const badge = getSubscriptionBadge("trialing");
+    expect(badge).not.toBeNull();
+    expect(badge!.label).toBe("Trialing");
+    expect(badge!.cls).toContain("blue");
+  });
+
+  it("active and trialing badges are visually distinct", () => {
+    const activeBadge = getSubscriptionBadge("active");
+    const trialingBadge = getSubscriptionBadge("trialing");
+    expect(activeBadge!.cls).not.toBe(trialingBadge!.cls);
+    expect(activeBadge!.label).not.toBe(trialingBadge!.label);
   });
 });
