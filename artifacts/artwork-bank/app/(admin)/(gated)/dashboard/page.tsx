@@ -11,6 +11,8 @@ import {
   TrendingUp,
   ArrowRight,
   Store,
+  AlertTriangle,
+  Clock,
 } from "lucide-react";
 import Link from "next/link";
 import { getTenantUrl } from "@/lib/base-url";
@@ -77,6 +79,52 @@ export default async function DashboardPage() {
           </span>
         </p>
       </div>
+
+      {/* Stripe Connect banners */}
+      {tenant.stripeAccountId && tenant.stripeChargesEnabled === false && (
+        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 flex items-start gap-4">
+          <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-red-900">
+              Your Stripe account cannot accept payments yet
+            </p>
+            <p className="text-sm text-red-700 mt-0.5">
+              Buyers will not be able to check out until your Stripe Connect
+              onboarding is complete. Finish setting up your account to start
+              selling.
+            </p>
+          </div>
+          <Link
+            href="/settings?stripe=refresh"
+            className="shrink-0 text-sm font-medium text-red-700 bg-red-100 hover:bg-red-200 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+          >
+            Complete setup
+          </Link>
+        </div>
+      )}
+
+      {tenant.stripeAccountId && tenant.stripeChargesEnabled === null && (
+        <div className="mb-6 rounded-xl border border-yellow-200 bg-yellow-50 px-5 py-4 flex items-start gap-4">
+          <Clock className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-yellow-900">
+              Stripe account status is pending
+            </p>
+            <p className="text-sm text-yellow-700 mt-0.5">
+              Your Stripe Connect account is linked but we haven&apos;t
+              confirmed it can accept payments yet. If you recently completed
+              onboarding, this will update automatically. Otherwise, check your
+              account status.
+            </p>
+          </div>
+          <Link
+            href="/settings"
+            className="shrink-0 text-sm font-medium text-yellow-700 bg-yellow-100 hover:bg-yellow-200 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+          >
+            Check status
+          </Link>
+        </div>
+      )}
 
       {/* Storefront slug banner */}
       <div className="mb-8 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 flex items-center gap-4">
