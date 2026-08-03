@@ -87,6 +87,35 @@ on Vercel — re-upload any artwork images you want in production (seed/demo dat
    app adds the domain automatically when the tenant's CNAME check passes
    (fully self-serve). Otherwise, add it manually under Settings → Domains.
 
+### ⚠️ Apex vs www redirect — critical production configuration
+
+Vercel's default for a domain it doesn't recognise as primary is to redirect
+`i-art.com.au` (apex) → `www.i-art.com.au`. This **breaks** two critical systems:
+
+| System | Why it breaks |
+|---|---|
+| Stripe webhook | Stripe signs the payload for the exact URL you register. A 308 redirect changes the URL and Stripe does **not** follow redirects — it returns a 4xx delivery failure. |
+| Vercel Cron | The cron runner hits the registered path exactly. A redirect causes the job to be silently dropped. |
+
+**Fix — choose ONE approach:**
+
+**Option A (recommended): Set `i-art.com.au` as the primary domain in Vercel**
+
+1. Vercel → Project → Settings → Domains.
+2. Click the `⋮` menu next to `i-art.com.au` → **Set as primary**.
+3. Vercel will now redirect `www.i-art.com.au` → `i-art.com.au` (the correct direction).
+4. Ensure `NEXT_PUBLIC_SITE_URL=https://i-art.com.au` (no `www`).
+5. Re-register the Stripe webhook URL as `https://i-art.com.au/api/stripe/webhook`.
+
+**Option B: Remove the `www` entry entirely**
+
+1. Remove `www.i-art.com.au` from Vercel → Domains.
+2. The apex domain is then served directly with no redirect in either direction.
+3. Ensure `NEXT_PUBLIC_SITE_URL=https://i-art.com.au`.
+
+> After changing the primary domain, send a test Stripe webhook event from the
+> Stripe Dashboard and confirm it returns `200` (not `3xx`) in the webhook delivery log.
+
 ## 5. Stripe webhook
 
 1. Stripe Dashboard → Developers → Webhooks → Add endpoint.
