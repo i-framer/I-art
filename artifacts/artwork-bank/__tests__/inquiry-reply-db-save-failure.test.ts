@@ -102,7 +102,7 @@ describe("replyToInquiry — DB save failure after email (Task #51)", () => {
   it("returns sent_not_saved when DB insert throws after email succeeds", async () => {
     dbInsert.mockRejectedValueOnce(new Error("deadlock detected"));
 
-    const result = await replyToInquiry({}, makeFormData("inq-1", "Hello!"));
+    const result = await replyToInquiry({ status: "idle" }, makeFormData("inq-1", "Hello!"));
 
     expect(result.status).toBe("sent_not_saved");
     expect(result.message).toMatch(/sent to the buyer/i);
@@ -112,7 +112,7 @@ describe("replyToInquiry — DB save failure after email (Task #51)", () => {
   it("still sends the email before the DB insert attempt", async () => {
     dbInsert.mockRejectedValueOnce(new Error("db down"));
 
-    await replyToInquiry({}, makeFormData("inq-1", "Hello!"));
+    await replyToInquiry({ status: "idle" }, makeFormData("inq-1", "Hello!"));
 
     expect(sendInquiryReply).toHaveBeenCalledOnce();
   });
@@ -120,7 +120,7 @@ describe("replyToInquiry — DB save failure after email (Task #51)", () => {
   it("does NOT mark inquiry as HANDLED when DB insert fails", async () => {
     dbInsert.mockRejectedValueOnce(new Error("db down"));
 
-    await replyToInquiry({}, makeFormData("inq-1", "Hello!"));
+    await replyToInquiry({ status: "idle" }, makeFormData("inq-1", "Hello!"));
 
     // dbUpdate drives both the insert-values path and the inquiry status update.
     // When the insert fails, the subsequent UPDATE should not run.
@@ -131,7 +131,7 @@ describe("replyToInquiry — DB save failure after email (Task #51)", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     dbInsert.mockRejectedValueOnce(new Error("connection reset"));
 
-    await replyToInquiry({}, makeFormData("inq-1", "Hello!"));
+    await replyToInquiry({ status: "idle" }, makeFormData("inq-1", "Hello!"));
 
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining("Email sent but DB record failed"),
@@ -144,7 +144,7 @@ describe("replyToInquiry — DB save failure after email (Task #51)", () => {
   it("returns sent (not sent_not_saved) when everything works normally", async () => {
     dbInsert.mockResolvedValueOnce(undefined);
 
-    const result = await replyToInquiry({}, makeFormData("inq-1", "Hello!"));
+    const result = await replyToInquiry({ status: "idle" }, makeFormData("inq-1", "Hello!"));
 
     expect(result.status).toBe("sent");
   });
@@ -152,7 +152,7 @@ describe("replyToInquiry — DB save failure after email (Task #51)", () => {
   it("returns error (not sent_not_saved) when the email fails", async () => {
     sendInquiryReply.mockRejectedValueOnce(new Error("SMTP timeout"));
 
-    const result = await replyToInquiry({}, makeFormData("inq-1", "Hello!"));
+    const result = await replyToInquiry({ status: "idle" }, makeFormData("inq-1", "Hello!"));
 
     // Email failed before send — DB was never reached
     expect(result.status).toBe("error");

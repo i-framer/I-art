@@ -29,6 +29,21 @@ function formatDate(d: Date) {
   }).format(d);
 }
 
+/**
+ * Derive a friendly display name from an email address.
+ * "jane.smith@example.com" → "Jane Smith"
+ * "j@x.co"                → "J"
+ * null/undefined           → "" (caller renders the fallback)
+ */
+function senderDisplayName(email: string | null | undefined): string {
+  if (!email) return "";
+  const local = email.split("@")[0] ?? "";
+  return local
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+}
+
 const FILTERS = [
   { key: "all", label: "All" },
   { key: "new", label: "New" },
@@ -309,8 +324,11 @@ export default async function InquiriesPage({
                           {reply.senderEmail ? (
                             <>
                               {" · "}
-                              <span className="font-medium text-stone-600">
-                                {reply.senderEmail}
+                              <span
+                                className="font-medium text-stone-600"
+                                title={reply.senderEmail ?? undefined}
+                              >
+                                {senderDisplayName(reply.senderEmail)}
                               </span>
                             </>
                           ) : (

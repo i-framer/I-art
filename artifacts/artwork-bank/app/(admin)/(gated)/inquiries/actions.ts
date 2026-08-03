@@ -136,7 +136,7 @@ export async function bulkSetInquiriesStatus(
 }
 
 export type ReplyState = {
-  status: "idle" | "sent" | "error";
+  status: "idle" | "sent" | "sent_not_saved" | "error";
   message?: string;
 };
 
