@@ -41,6 +41,7 @@ import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { POST as webhookPOST } from "@/app/api/stripe/webhook/route";
 import { sendBillingAlertNotification } from "@/lib/email";
+import { getStripeClient } from "@/lib/stripe";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -397,6 +398,53 @@ describeIntegration("checkout.session.completed re-delivery via billingTenantId 
     // Status must remain "active" — the re-delivery via metadata path is a clean no-op.
     expect(row?.subscriptionStatus).toBe("active");
     expect(row?.stripeSubscriptionId).toBe(subId);
+  });
+});
+
+// ── checkout.session.completed with trialing subscription ────────────────────
+
+describeIntegration("checkout.session.completed with trialing subscription", () => {
+  it("stores 'trialing' when subscriptions.retrieve returns status=trialing", async () => {
+    // A new tenant subscribes via Checkout but their subscription is in trial.
+    // The handler calls subscriptions.retrieve to get the real status, so it
+    // must store "trialing" — not silently default to "active".
+    const tenantId = await createTenant();
+    createdTenantIds.push(tenantId);
+
+    const subId = `sub_trialing_chk_${uid()}`;
+    const cusId = `cus_trialing_chk_${uid()}`;
+
+    // Make getStripeClient return a minimal fake whose subscriptions.retrieve
+    // resolves to { status: "trialing" } so the retrieve call succeeds.
+    vi.mocked(getStripeClient).mockResolvedValueOnce({
+      subscriptions: {
+        retrieve: vi.fn().mockResolvedValue({ status: "trialing" }),
+      },
+    } as any);
+
+    const res = await post({
+      id: `evt_checkout_trialing_${tenantId}`,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_trialing_${tenantId}`,
+          mode: "subscription",
+          customer: cusId,
+          subscription: subId,
+          metadata: { billingTenantId: tenantId },
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+
+    const row = await getTenantBillingFields(tenantId);
+    // Must be "trialing" — not "active". The retrieve path is the only way to
+    // know the real Stripe status at checkout time; skipping it would silently
+    // promote a trial to active.
+    expect(row?.subscriptionStatus).toBe("trialing");
+    expect(row?.stripeSubscriptionId).toBe(subId);
+    expect(row?.stripeCustomerId).toBe(cusId);
   });
 });
 
