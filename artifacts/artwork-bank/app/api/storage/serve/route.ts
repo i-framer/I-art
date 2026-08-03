@@ -30,8 +30,8 @@ export async function GET(request: NextRequest) {
         { status: 500 },
       );
     }
-    // BlobNotFoundError or any other error means the specific object is absent.
-    console.error("Serve error:", err);
+    // BlobNotFoundError or any other error means the specific object is absent or unreachable.
+    console.error("Serve error for path", objectPath, ":", err);
     return NextResponse.json({ error: "Object not found" }, { status: 404 });
   }
 }

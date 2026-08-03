@@ -39,7 +39,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     ),
   });
   const ogImage = primaryImage
-    ? await getServeUrl(primaryImage.objectPath, 3600).catch(() => null)
+    ? await getServeUrl(primaryImage.objectPath, 3600).catch((err) => {
+        console.error(
+          `[artwork/${artwork.id}/og] Failed to resolve OG image URL for`,
+          primaryImage.objectPath,
+          "—",
+          err instanceof Error ? err.message : String(err),
+        );
+        return null;
+      })
     : null;
   return {
     title: artwork.title,
@@ -94,7 +102,15 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
   // Resolve signed URLs for all images
   const resolvedImages = await Promise.all(
     images.map(async (img) => ({
-      url: await getServeUrl(img.objectPath, 3600).catch(() => ""),
+      url: await getServeUrl(img.objectPath, 3600).catch((err) => {
+        console.error(
+          `[artwork/${artworkId}] Failed to resolve image URL for`,
+          img.objectPath,
+          "—",
+          err instanceof Error ? err.message : String(err),
+        );
+        return "";
+      }),
       filename: img.filename,
     })),
   );

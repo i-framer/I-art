@@ -170,7 +170,15 @@ export default async function BrowsePage({
     rows.map(async (row) => ({
       ...row,
       imageUrl: row.primaryImage
-        ? await getServeUrl(row.primaryImage.objectPath, 3600).catch(() => null)
+        ? await getServeUrl(row.primaryImage.objectPath, 3600).catch((err) => {
+            console.error(
+              "[browse] Failed to resolve image URL for",
+              row.primaryImage!.objectPath,
+              "—",
+              err instanceof Error ? err.message : String(err),
+            );
+            return null;
+          })
         : null,
     })),
   );

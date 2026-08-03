@@ -155,8 +155,14 @@ export async function POST(request: Request) {
       if (primaryImage) {
         try {
           imageUrl = await getServeUrl(primaryImage.objectPath, 3600);
-        } catch {
-          // Non-fatal
+        } catch (err) {
+          // Non-fatal — Stripe checkout line-item image is optional
+          console.error(
+            "[checkout] Failed to resolve image URL for",
+            primaryImage.objectPath,
+            "—",
+            err instanceof Error ? err.message : String(err),
+          );
         }
       }
 

@@ -104,7 +104,15 @@ export default async function GalleryPage({ params, searchParams }: Props) {
     rows.map(async ({ artwork, primaryImage }) => ({
       artwork,
       imageUrl: primaryImage
-        ? await getServeUrl(primaryImage.objectPath, 3600).catch(() => null)
+        ? await getServeUrl(primaryImage.objectPath, 3600).catch((err) => {
+            console.error(
+              `[gallery/${slug}] Failed to resolve image URL for`,
+              primaryImage.objectPath,
+              "—",
+              err instanceof Error ? err.message : String(err),
+            );
+            return null;
+          })
         : null,
     })),
   );
