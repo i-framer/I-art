@@ -549,6 +549,11 @@ export function ArtworkForm({
           Cancel
         </Link>
       </div>
+      {!isEdit && (
+        <p className="text-xs text-stone-400 -mt-1">
+          You can upload images after the artwork is created.
+        </p>
+      )}
     </form>
   );
 }

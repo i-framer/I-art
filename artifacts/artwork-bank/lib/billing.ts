@@ -32,6 +32,10 @@ export const SUBSCRIPTION_STATUS_BADGES: Record<
   canceled: { label: "Cancelled", cls: "bg-red-100 text-red-700" },
   unpaid: { label: "Unpaid", cls: "bg-red-100 text-red-700" },
   incomplete: { label: "Incomplete", cls: "bg-amber-100 text-amber-700" },
+  incomplete_expired: {
+    label: "Expired",
+    cls: "bg-red-100 text-red-700",
+  },
 };
 
 /** Returns the badge descriptor for a given raw subscriptionStatus, or null. */

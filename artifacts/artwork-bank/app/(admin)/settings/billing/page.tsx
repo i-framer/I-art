@@ -167,9 +167,9 @@ export default async function BillingPage({
               <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
                 <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
                 <p>
-                  Your subscription is no longer active. Re-subscribe to regain
-                  access to your admin dashboard. Your public storefront stays
-                  online either way.
+                  {status === "incomplete_expired"
+                    ? "Your subscription setup wasn't completed — the checkout window expired before payment was collected. Subscribe below to get started."
+                    : "Your subscription is no longer active. Re-subscribe to regain access to your admin dashboard. Your public storefront stays online either way."}
                 </p>
               </div>
             )}

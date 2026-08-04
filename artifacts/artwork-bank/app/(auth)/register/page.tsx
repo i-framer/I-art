@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import Link from "next/link";
 import { register, type AuthState } from "@/app/(auth)/actions";
 
@@ -11,6 +11,22 @@ export default function RegisterPage() {
     register,
     initialState,
   );
+  const [passwordError, setPasswordError] = useState("");
+
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    const form = e.currentTarget;
+    const password = (form.elements.namedItem("password") as HTMLInputElement)
+      .value;
+    const confirm = (
+      form.elements.namedItem("confirmPassword") as HTMLInputElement
+    ).value;
+    if (password !== confirm) {
+      e.preventDefault();
+      setPasswordError("Passwords don't match — please re-enter them.");
+      return;
+    }
+    setPasswordError("");
+  }
 
   return (
     <div className="min-h-screen bg-stone-50 flex items-center justify-center p-4">
@@ -25,7 +41,7 @@ export default function RegisterPage() {
 
         {/* Card */}
         <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-6">
-          <form action={formAction} className="space-y-4">
+          <form action={formAction} onSubmit={handleSubmit} className="space-y-4">
             {state.error && (
               <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
                 {state.error}
@@ -119,9 +135,37 @@ export default function RegisterPage() {
                 autoComplete="new-password"
                 required
                 minLength={8}
+                onChange={() => setPasswordError("")}
                 className="w-full rounded-lg border border-stone-300 bg-white px-3.5 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-900/10 transition-colors"
                 placeholder="••••••••"
               />
+            </div>
+
+            <div>
+              <label
+                htmlFor="confirmPassword"
+                className="block text-sm font-medium text-stone-700 mb-1.5"
+              >
+                Confirm password
+              </label>
+              <input
+                id="confirmPassword"
+                name="confirmPassword"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={8}
+                onChange={() => setPasswordError("")}
+                className={`w-full rounded-lg border bg-white px-3.5 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-2 transition-colors ${
+                  passwordError
+                    ? "border-red-400 focus:border-red-500 focus:ring-red-500/10"
+                    : "border-stone-300 focus:border-stone-900 focus:ring-stone-900/10"
+                }`}
+                placeholder="••••••••"
+              />
+              {passwordError && (
+                <p className="mt-1.5 text-xs text-red-600">{passwordError}</p>
+              )}
             </div>
 
             <button

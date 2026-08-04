@@ -49,6 +49,29 @@ describe("getSubscriptionBadge – all defined statuses", () => {
   });
 });
 
+describe('getSubscriptionBadge – incomplete_expired', () => {
+  it('returns a non-null badge for incomplete_expired', () => {
+    const badge = getSubscriptionBadge('incomplete_expired');
+    expect(badge).not.toBeNull();
+  });
+
+  it('labels incomplete_expired as "Expired" so gallery owners see a clear status', () => {
+    const badge = getSubscriptionBadge('incomplete_expired');
+    expect(badge!.label).toBe('Expired');
+  });
+
+  it('uses red colour classes so the status is visually distinct from active/trialing', () => {
+    const badge = getSubscriptionBadge('incomplete_expired');
+    expect(badge!.cls).toContain('red');
+  });
+
+  it('hasActiveAccess returns false for incomplete_expired (no admin access)', () => {
+    expect(
+      hasActiveAccess({ billingExempt: false, subscriptionStatus: 'incomplete_expired' }),
+    ).toBe(false);
+  });
+});
+
 describe("billing portal / cancel flow accessible from trialing", () => {
   it("hasActiveAccess returns true for trialing so Manage subscription button renders", () => {
     expect(
