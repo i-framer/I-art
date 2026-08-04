@@ -8,17 +8,15 @@ import { eq } from "drizzle-orm";
 import { startSubscriptionCheckout, openBillingPortal } from "../actions";
 import {
   hasActiveAccess,
-  getSubscriptionBadge,
-  getTrialDaysRemaining,
   SUBSCRIPTION_PRICE_CENTS,
 } from "@/lib/billing";
 import { formatPrice } from "@/lib/format";
+import { SubscriptionStatusBadge } from "./_components/subscription-status-badge";
 import {
   Users,
   CreditCard,
   CheckCircle2,
   AlertCircle,
-  Sparkles,
 } from "lucide-react";
 
 export const metadata: Metadata = { title: "Billing" };
@@ -39,10 +37,6 @@ export default async function BillingPage({
   const { billing } = await searchParams;
   const active = hasActiveAccess(tenant);
   const status = tenant.subscriptionStatus;
-  const badge = getSubscriptionBadge(status);
-
-  // Days remaining in the Stripe trial (null unless trialing with an end date).
-  const trialDaysRemaining = getTrialDaysRemaining(status, tenant.trialEnd);
 
   return (
     <div className="px-8 py-8 max-w-2xl">
@@ -118,46 +112,12 @@ export default async function BillingPage({
               your catalog, storefront, orders and inquiries.
             </p>
           </div>
-          {tenant.billingExempt && tenant.iframerAccountId ? (
-            <span className="flex items-center gap-1 rounded-full bg-indigo-100 text-indigo-700 px-3 py-1 text-sm font-semibold">
-              <Sparkles className="h-3.5 w-3.5" /> i-Framer Premium
-            </span>
-          ) : tenant.billingExempt ? (
-            <span className="flex items-center gap-1 rounded-full bg-violet-100 text-violet-700 px-3 py-1 text-sm font-semibold">
-              <Sparkles className="h-3.5 w-3.5" /> Complimentary
-            </span>
-          ) : badge ? (
-            <div className="flex flex-col items-end gap-1.5">
-              <span className={`rounded-full px-3 py-1 text-sm font-semibold ${badge.cls}`}>
-                {badge.label}
-              </span>
-              {trialDaysRemaining !== null && (
-                <span
-                  className={`text-xs font-medium ${
-                    trialDaysRemaining <= 3 ? "text-amber-600" : "text-stone-500"
-                  }`}
-                >
-                  {trialDaysRemaining === 0
-                    ? "Your trial ends today"
-                    : `${trialDaysRemaining} day${trialDaysRemaining === 1 ? "" : "s"} remaining in your trial`}
-                </span>
-              )}
-              {status === "trialing" && tenant.trialEnd && (
-                <span className="text-xs text-stone-400">
-                  Ends{" "}
-                  {new Intl.DateTimeFormat("en-AU", {
-                    day: "numeric",
-                    month: "long",
-                    year: "numeric",
-                  }).format(tenant.trialEnd)}
-                </span>
-              )}
-            </div>
-          ) : (
-            <span className="rounded-full bg-stone-100 text-stone-500 px-3 py-1 text-sm font-semibold">
-              Not subscribed
-            </span>
-          )}
+          <SubscriptionStatusBadge
+            subscriptionStatus={status}
+            billingExempt={tenant.billingExempt}
+            iframerAccountId={tenant.iframerAccountId}
+            trialEnd={tenant.trialEnd}
+          />
         </div>
 
         {tenant.billingExempt && tenant.iframerAccountId ? (
