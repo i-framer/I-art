@@ -196,3 +196,67 @@ describeIntegration("requireActiveBillingAccess — Task #366 (expired trial blo
     await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
   });
 });
+
+// ── Task #385: incomplete_expired tenant can resubscribe and regain access ────
+//
+// After a checkout.session.completed event for a new subscription ID flips
+// the tenant's subscriptionStatus from 'incomplete_expired' to 'active', the
+// billing guard must pass.  These tests exercise the billing-access layer in
+// isolation: the DB row is updated directly (simulating what the webhook
+// handler would do) so this file stays free of Stripe mock machinery.  The
+// full end-to-end flow — posting the webhook event, reading back the updated
+// row, and calling requireActiveBillingAccess — lives in
+// webhook-subscription-integration.test.ts.
+
+describeIntegration("requireActiveBillingAccess — Task #385 (incomplete_expired recovery)", () => {
+  it("throws before recovery: incomplete_expired blocks admin access", async () => {
+    // Baseline: the tenant is still locked out while status is incomplete_expired.
+    const id = tenantId("ie-before-recovery");
+    await insertTenant(id, { subscriptionStatus: "incomplete_expired" });
+    await expect(requireActiveBillingAccess(id)).rejects.toThrow(
+      "Subscription required",
+    );
+  });
+
+  it("passes after recovery: status updated to 'active' (simulates webhook reactivation)", async () => {
+    // Seed the tenant in the locked-out state.
+    const id = tenantId("ie-after-recovery-active");
+    await insertTenant(id, { subscriptionStatus: "incomplete_expired" });
+
+    // Confirm the tenant is initially locked out.
+    await expect(requireActiveBillingAccess(id)).rejects.toThrow(
+      "Subscription required",
+    );
+
+    // Simulate the webhook handler writing the new subscription's status.
+    await db
+      .update(tenantsTable)
+      .set({ subscriptionStatus: "active" })
+      .where(eq(tenantsTable.id, id));
+
+    // Billing guard must now pass — the tenant has regained access.
+    await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
+  });
+
+  it("passes after recovery: status updated to 'trialing' (simulates a trial re-subscription)", async () => {
+    // A tenant whose initial trial expired without payment can start a new trial.
+    // If Stripe sets the new subscription to 'trialing', the webhook handler
+    // writes 'trialing' and the billing guard must grant access.
+    const id = tenantId("ie-after-recovery-trialing");
+    await insertTenant(id, { subscriptionStatus: "incomplete_expired" });
+
+    // Confirm the tenant is initially locked out.
+    await expect(requireActiveBillingAccess(id)).rejects.toThrow(
+      "Subscription required",
+    );
+
+    // Simulate the webhook handler writing the new subscription's trialing status.
+    await db
+      .update(tenantsTable)
+      .set({ subscriptionStatus: "trialing" })
+      .where(eq(tenantsTable.id, id));
+
+    // Billing guard must now pass.
+    await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
+  });
+});

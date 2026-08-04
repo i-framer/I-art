@@ -893,6 +893,159 @@ describeIntegration("no-match error path against real DB", () => {
   });
 });
 
+// ── Task #385: incomplete_expired tenant reactivation ────────────────────────
+//
+// An 'incomplete_expired' tenant (trial lapsed without payment) must be able
+// to resubscribe via a new checkout.session.completed event.  The webhook
+// handler must flip subscriptionStatus to 'active' (or 'trialing') and
+// requireActiveBillingAccess must then pass.
+
+describeIntegration("incomplete_expired tenant — reactivation via checkout.session.completed (billingTenantId metadata)", () => {
+  it("flips subscriptionStatus from incomplete_expired to active on a new subscription ID", async () => {
+    const subOld = `sub_ie_meta_old_${uid()}`;
+    const tenantId = await createTenant({
+      stripeSubscriptionId: subOld,
+      subscriptionStatus: "incomplete_expired",
+    });
+    createdTenantIds.push(tenantId);
+
+    const subNew = `sub_ie_meta_new_${uid()}`;
+    const cusId = `cus_ie_meta_${uid()}`;
+
+    const res = await post({
+      id: `evt_ie_meta_${tenantId}`,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_ie_meta_${tenantId}`,
+          mode: "subscription",
+          customer: cusId,
+          subscription: subNew, // new sub ID — this is a genuine re-subscription
+          metadata: { billingTenantId: tenantId },
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+
+    const row = await getTenantBillingFields(tenantId);
+    expect(["active", "trialing"]).toContain(row?.subscriptionStatus);
+    expect(row?.stripeSubscriptionId).toBe(subNew);
+    expect(row?.stripeCustomerId).toBe(cusId);
+  });
+
+  it("requireActiveBillingAccess passes after an incomplete_expired tenant resubscribes (billingTenantId path)", async () => {
+    const { requireActiveBillingAccess } = await import("@/lib/billing");
+
+    const subOld = `sub_ie_access_old_${uid()}`;
+    const tenantId = await createTenant({
+      stripeSubscriptionId: subOld,
+      subscriptionStatus: "incomplete_expired",
+    });
+    createdTenantIds.push(tenantId);
+
+    // Confirm the tenant is locked out before resubscribing.
+    await expect(requireActiveBillingAccess(tenantId)).rejects.toThrow(
+      "Subscription required",
+    );
+
+    const subNew = `sub_ie_access_new_${uid()}`;
+    const cusId = `cus_ie_access_${uid()}`;
+
+    await post({
+      id: `evt_ie_access_${tenantId}`,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_ie_access_${tenantId}`,
+          mode: "subscription",
+          customer: cusId,
+          subscription: subNew,
+          metadata: { billingTenantId: tenantId },
+        },
+      },
+    });
+
+    // Billing guard must now pass.
+    await expect(requireActiveBillingAccess(tenantId)).resolves.toBeUndefined();
+  });
+});
+
+describeIntegration("incomplete_expired tenant — reactivation via checkout.session.completed (stripeCustomerId fallback)", () => {
+  it("flips subscriptionStatus from incomplete_expired to active when matched by stripeCustomerId", async () => {
+    const cusId = `cus_ie_cusid_${uid()}`;
+    const subOld = `sub_ie_cusid_old_${uid()}`;
+
+    const tenantId = await createTenant({
+      stripeCustomerId: cusId,
+      stripeSubscriptionId: subOld,
+      subscriptionStatus: "incomplete_expired",
+    });
+    createdTenantIds.push(tenantId);
+
+    const subNew = `sub_ie_cusid_new_${uid()}`;
+
+    const res = await post({
+      id: `evt_ie_cusid_${tenantId}`,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_ie_cusid_${tenantId}`,
+          mode: "subscription",
+          customer: cusId,         // matched via stripeCustomerId
+          subscription: subNew,    // new sub ID — genuine re-subscription
+          metadata: {},            // no billingTenantId — exercises customer-ID fallback
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+
+    const row = await getTenantBillingFields(tenantId);
+    expect(["active", "trialing"]).toContain(row?.subscriptionStatus);
+    expect(row?.stripeSubscriptionId).toBe(subNew);
+    expect(row?.stripeCustomerId).toBe(cusId);
+  });
+
+  it("requireActiveBillingAccess passes after an incomplete_expired tenant resubscribes (stripeCustomerId path)", async () => {
+    const { requireActiveBillingAccess } = await import("@/lib/billing");
+
+    const cusId = `cus_ie_cusid_access_${uid()}`;
+    const subOld = `sub_ie_cusid_access_old_${uid()}`;
+
+    const tenantId = await createTenant({
+      stripeCustomerId: cusId,
+      stripeSubscriptionId: subOld,
+      subscriptionStatus: "incomplete_expired",
+    });
+    createdTenantIds.push(tenantId);
+
+    // Locked out before resubscribing.
+    await expect(requireActiveBillingAccess(tenantId)).rejects.toThrow(
+      "Subscription required",
+    );
+
+    const subNew = `sub_ie_cusid_access_new_${uid()}`;
+
+    await post({
+      id: `evt_ie_cusid_access_${tenantId}`,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_ie_cusid_access_${tenantId}`,
+          mode: "subscription",
+          customer: cusId,
+          subscription: subNew,
+          metadata: {},
+        },
+      },
+    });
+
+    // Billing guard must now pass.
+    await expect(requireActiveBillingAccess(tenantId)).resolves.toBeUndefined();
+  });
+});
+
 // ── checkout.session.completed — subscriptions.retrieve failure alert ─────────
 
 describeIntegration("checkout.session.completed — subscriptions.retrieve failure", () => {
