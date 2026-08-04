@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { getTenantUrl } from "@/lib/base-url";
+import { getStripeBannerKind } from "@/lib/stripe";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -33,6 +34,7 @@ export default async function DashboardPage() {
   });
 
   const storefrontUrl = getTenantUrl(tenant);
+  const stripeBanner = getStripeBannerKind(tenant);
 
   const stats = [
     {
@@ -81,7 +83,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Stripe Connect banners */}
-      {tenant.stripeAccountId && tenant.stripeChargesEnabled === false && (
+      {stripeBanner === "warning" && (
         <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 flex items-start gap-4">
           <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
@@ -103,7 +105,7 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {tenant.stripeAccountId && tenant.stripeChargesEnabled === null && (
+      {stripeBanner === "pending" && (
         <div className="mb-6 rounded-xl border border-yellow-200 bg-yellow-50 px-5 py-4 flex items-start gap-4">
           <Clock className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">

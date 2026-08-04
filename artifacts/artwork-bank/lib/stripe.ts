@@ -247,3 +247,25 @@ export const PLATFORM_FEE_PERCENT = parsePlatformFeePercent();
 export function calcApplicationFee(subtotalCents: number): number {
   return Math.round(subtotalCents * (PLATFORM_FEE_PERCENT / 100));
 }
+
+// ---------------------------------------------------------------------------
+// Dashboard Stripe Connect banner logic
+// ---------------------------------------------------------------------------
+
+/**
+ * Determines which Stripe Connect banner (if any) the dashboard should show.
+ *
+ * - "warning"  → account is linked but charges are disabled (onboarding incomplete)
+ * - "pending"  → account is linked but we have not yet received an account.updated
+ *                event (stripeChargesEnabled is null)
+ * - null       → no banner (charges are enabled, or no Stripe account linked)
+ */
+export function getStripeBannerKind(tenant: {
+  stripeAccountId: string | null | undefined;
+  stripeChargesEnabled: boolean | null | undefined;
+}): "warning" | "pending" | null {
+  if (!tenant.stripeAccountId) return null;
+  if (tenant.stripeChargesEnabled === false) return "warning";
+  if (tenant.stripeChargesEnabled === null) return "pending";
+  return null;
+}
