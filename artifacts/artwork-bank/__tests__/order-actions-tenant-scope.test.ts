@@ -185,12 +185,18 @@ describe("cross-tenant order ids are rejected with no side effects", () => {
 describe("ownership lookups always include the session tenantId", () => {
   it("markCancelled scopes the ownership lookup by tenantId", async () => {
     await markCancelled(formData({ orderId: "order-1" }));
-    expect(JSON.stringify(state.orderFindWhere)).toEqual(
+    // The FIRST findFirst call is requireOwnership — it must include the session tenantId.
+    // (notifyBuyerOfUpdate also calls findFirst but by id alone, which is intentional.)
+    expect(JSON.stringify(orderFindFirst.mock.calls[0]?.[0]?.where)).toEqual(
       JSON.stringify(scopedWhere("tenant-A")),
     );
-    // and the update proceeds for the owning tenant
-    expect(state.updates).toHaveLength(1);
-    expect(state.updates[0].vals).toEqual({ status: "CANCELLED" });
+    // CANCELLED status update is present (extra updates come from notifyBuyerOfUpdate
+    // queuing and recording the buyer email).
+    expect(
+      state.updates.some(
+        (u) => JSON.stringify(u.vals) === JSON.stringify({ status: "CANCELLED" }),
+      ),
+    ).toBe(true);
   });
 
   it("markFulfilled proceeds for the owning tenant and notifies the buyer", async () => {

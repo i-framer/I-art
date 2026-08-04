@@ -31,6 +31,18 @@ const registerSchema = z.object({
   password: z.string().min(8),
 });
 
+/**
+ * Returns `from` if it is a safe same-origin relative path (starts with "/"
+ * but not "//", which would be a protocol-relative external URL).
+ * Falls back to `fallback` for anything else, preventing open redirects.
+ */
+function safeDest(
+  from: string | null | undefined,
+  fallback = "/dashboard",
+): string {
+  return from && /^\/[^/]/.test(from) ? from : fallback;
+}
+
 export async function login(
   _prevState: AuthState,
   formData: FormData,
@@ -73,7 +85,8 @@ export async function login(
   session.email = user.email;
   await session.save();
 
-  redirect("/dashboard");
+  // Honour the ?from= param set by middleware (e.g. /dashboard?from=/orders).
+  redirect(safeDest(formData.get("from") as string | null));
 }
 
 export async function register(
@@ -112,28 +125,40 @@ export async function register(
     slug = `${slug}-${suffix}`;
   }
 
-  const [tenant] = await db
-    .insert(tenantsTable)
-    .values({ businessName, type, slug })
-    .returning();
-  if (!tenant) {
-    return { error: "Failed to create account. Please try again." };
-  }
-
+  // Hash outside the transaction — bcrypt is CPU-bound; minimise lock time.
   const passwordHash = await hashPassword(password);
-  const [user] = await db
-    .insert(usersTable)
-    .values({ email: email.toLowerCase(), passwordHash })
-    .returning();
-  if (!user) {
+
+  // Wrap all three inserts in a single transaction so a failure in any step
+  // rolls back the others — no orphan tenant or user rows left behind.
+  const result = await db
+    .transaction(async (tx) => {
+      const [tenant] = await tx
+        .insert(tenantsTable)
+        .values({ businessName, type, slug })
+        .returning();
+      if (!tenant) throw new Error("tenant insert returned nothing");
+
+      const [user] = await tx
+        .insert(usersTable)
+        .values({ email: email.toLowerCase(), passwordHash })
+        .returning();
+      if (!user) throw new Error("user insert returned nothing");
+
+      await tx.insert(tenantUsersTable).values({
+        tenantId: tenant.id,
+        userId: user.id,
+        role: "owner",
+      });
+
+      return { tenant, user };
+    })
+    .catch(() => null);
+
+  if (!result) {
     return { error: "Failed to create account. Please try again." };
   }
 
-  await db.insert(tenantUsersTable).values({
-    tenantId: tenant.id,
-    userId: user.id,
-    role: "owner",
-  });
+  const { tenant, user } = result;
 
   const cookieStore = await cookies();
   const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
@@ -148,6 +173,6 @@ export async function register(
 
 export async function logout() {
   const session = await getSession();
-  session.destroy();
-  redirect("/login");
+  await session.destroy(); // must be awaited — otherwise the cookie deletion
+  redirect("/login"); //   may not be flushed before the redirect response
 }

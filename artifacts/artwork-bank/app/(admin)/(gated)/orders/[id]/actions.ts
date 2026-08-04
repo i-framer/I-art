@@ -162,6 +162,7 @@ export async function markCancelled(formData: FormData): Promise<void> {
     .update(ordersTable)
     .set({ status: "CANCELLED" })
     .where(eq(ordersTable.id, orderId));
+  await notifyBuyerOfUpdate(orderId);
   revalidatePath(`/orders/${orderId}`);
   revalidatePath("/orders");
 }

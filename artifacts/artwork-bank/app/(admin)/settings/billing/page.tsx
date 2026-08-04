@@ -142,6 +142,16 @@ export default async function BillingPage({
                     : `${trialDaysRemaining} day${trialDaysRemaining === 1 ? "" : "s"} remaining in your trial`}
                 </span>
               )}
+              {status === "trialing" && tenant.trialEnd && (
+                <span className="text-xs text-stone-400">
+                  Ends{" "}
+                  {new Intl.DateTimeFormat("en-AU", {
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric",
+                  }).format(tenant.trialEnd)}
+                </span>
+              )}
             </div>
           ) : (
             <span className="rounded-full bg-stone-100 text-stone-500 px-3 py-1 text-sm font-semibold">
