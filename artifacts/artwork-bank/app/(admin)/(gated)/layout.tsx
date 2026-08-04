@@ -36,9 +36,11 @@ export default async function GatedAdminLayout({
             Subscription required
           </h1>
           <p className="text-sm text-stone-500 mt-2 leading-relaxed">
-            {tenant.subscriptionStatus
-              ? "Your subscription is no longer active. Re-subscribe to regain access to your dashboard, catalog, orders and inquiries."
-              : "Subscribe to Artwork Bank to access your dashboard, catalog, orders and inquiries."}{" "}
+            {tenant.subscriptionStatus === "incomplete_expired"
+              ? "Your subscription setup wasn't completed — the checkout window expired. Subscribe below to get started."
+              : tenant.subscriptionStatus
+                ? "Your subscription is no longer active. Re-subscribe to regain access to your dashboard, catalog, orders and inquiries."
+                : "Subscribe to Artwork Bank to access your dashboard, catalog, orders and inquiries."}{" "}
             Your public storefront stays online.
           </p>
           <Link
