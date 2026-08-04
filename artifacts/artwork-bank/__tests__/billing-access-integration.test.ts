@@ -1,5 +1,5 @@
 /**
- * Tasks #80 and #88 — billing access on a real database.
+ * Tasks #80, #88, and #366 — billing access on a real database.
  *
  *  #80 — Confirm unsubscribed galleries are blocked from admin actions on a
  *         real database.  requireActiveBillingAccess must throw "Subscription
@@ -9,6 +9,12 @@
  *  #88 — Confirm comped galleries skip the paywall end-to-end on a real
  *         database.  When billingExempt=true the function must return without
  *         throwing, regardless of subscriptionStatus.
+ *
+ *  #366 — Confirm a tenant with an expired trial is blocked from admin actions
+ *          on a real database.  requireActiveBillingAccess must throw
+ *          "Subscription required" when subscriptionStatus is
+ *          'incomplete_expired' (trial lapsed without payment) or 'canceled'
+ *          (trial canceled before converting to a paid subscription).
  *
  * These tests write real rows to the Postgres DB and clean up after themselves.
  * They are skipped automatically when DATABASE_URL is absent.
@@ -140,5 +146,53 @@ describeIntegration("requireActiveBillingAccess — Task #88 (comped galleries)"
       await insertTenant(id, { billingExempt: true, subscriptionStatus: status });
       await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
     }
+  });
+});
+
+// ── Task #366: expired-trial tenants blocked ──────────────────────────────────
+
+describeIntegration("requireActiveBillingAccess — Task #366 (expired trial blocked)", () => {
+  it("throws 'Subscription required' when subscriptionStatus is 'incomplete_expired' (trial lapsed without payment)", async () => {
+    // Stripe sends 'incomplete_expired' when a trial ends and no payment method
+    // was ever added, or when the initial payment attempt fails and the
+    // subscription is automatically voided.  The tenant must be locked out.
+    const id = tenantId("incomplete-expired");
+    await insertTenant(id, { subscriptionStatus: "incomplete_expired" });
+    await expect(requireActiveBillingAccess(id)).rejects.toThrow(
+      "Subscription required",
+    );
+  });
+
+  it("throws 'Subscription required' when subscriptionStatus is 'canceled' following a trialing state", async () => {
+    // Represents a tenant whose trial was explicitly canceled (e.g. via the
+    // Stripe dashboard or a customer.subscription.deleted webhook) before they
+    // converted to a paid subscription.  The DB row will carry 'canceled' as
+    // the final status; the tenant must be denied access.
+    const id = tenantId("trial-canceled");
+    // Seed with 'canceled' — the prior trialing status is the scenario context;
+    // the row the billing guard reads will already reflect the final state.
+    await insertTenant(id, { subscriptionStatus: "canceled" });
+    await expect(requireActiveBillingAccess(id)).rejects.toThrow(
+      "Subscription required",
+    );
+  });
+
+  it("does NOT throw when subscriptionStatus is 'trialing' (trial still active)", async () => {
+    // Confirms the boundary: a tenant whose trial is still running must retain
+    // full access; only post-expiry statuses are denied.
+    const id = tenantId("trial-still-active");
+    await insertTenant(id, { subscriptionStatus: "trialing" });
+    await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
+  });
+
+  it("does NOT throw for billingExempt=true even with incomplete_expired status", async () => {
+    // A comped (billing-exempt) tenant must never be locked out, regardless of
+    // whatever subscriptionStatus the row carries.
+    const id = tenantId("comped-incomplete-expired");
+    await insertTenant(id, {
+      billingExempt: true,
+      subscriptionStatus: "incomplete_expired",
+    });
+    await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
   });
 });
