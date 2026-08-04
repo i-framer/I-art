@@ -422,6 +422,37 @@ export default async function SettingsPage({
           </form>
         )}
 
+        {/* Stale-cache warning — live Stripe says charges enabled but the cache disagrees */}
+        {stripeStatus === "active" && tenant.stripeChargesEnabled !== true && (
+          <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
+            <div className="space-y-1">
+              <p className="font-medium">Cached status is out of sync</p>
+              <p className="text-amber-700">
+                Stripe confirms charges are enabled on your account, but the
+                cached value buyers see at checkout still shows{" "}
+                {tenant.stripeChargesEnabled === false ? "disabled" : "not yet received"}.
+                This usually means a webhook event was missed. To resync, go to
+                your{" "}
+                <a
+                  href="https://dashboard.stripe.com/webhooks"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline font-medium hover:text-amber-900"
+                >
+                  Stripe webhook settings
+                </a>{" "}
+                and resend the most recent{" "}
+                <span className="font-mono text-xs bg-amber-100 px-1 py-0.5 rounded">
+                  account.updated
+                </span>{" "}
+                event, or wait for the next Stripe activity to trigger a fresh
+                webhook.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Cached status — shown once a Stripe account exists */}
         {tenant.stripeAccountId && (
           <div className="rounded-lg border border-stone-200 bg-stone-50 px-4 py-3 space-y-2">
