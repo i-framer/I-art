@@ -71,7 +71,7 @@ const mockHeaders = vi.hoisted(() => vi.fn());
 vi.mock("next/headers", () => ({ headers: () => mockHeaders() }));
 
 import { POST as webhookPOST } from "@/app/api/stripe/webhook/route";
-import { getSubscriptionBadge } from "@/lib/billing";
+import { getSubscriptionBadge, hasActiveAccess } from "@/lib/billing";
 import { getStripeClient } from "@/lib/stripe";
 
 function post(event: any) {
@@ -398,6 +398,111 @@ describe("subscription webhook events", () => {
     });
     // Confirm it did NOT stay as "trialing"
     expect(state.updates[0].vals.subscriptionStatus).not.toBe("trialing");
+  });
+
+  it("trial-expired: customer.subscription.updated with incomplete_expired locks the tenant out", async () => {
+    // Tenant whose trial lapsed without payment — Stripe sends incomplete_expired
+    vi.mocked(db.query.tenantsTable.findFirst).mockResolvedValue({
+      id: "tenant-1",
+      subscriptionStatus: "trialing",
+      stripeSubscriptionId: "sub_expired",
+    } as any);
+
+    const res = await post({
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_expired",
+          status: "incomplete_expired",
+          customer: "cus_1",
+          metadata: { billingTenantId: "tenant-1" },
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(state.updates).toHaveLength(1);
+    // DB must record the lapsed status — not leave it as "trialing"
+    expect(state.updates[0].vals).toMatchObject({
+      subscriptionStatus: "incomplete_expired",
+      stripeSubscriptionId: "sub_expired",
+    });
+    expect(state.updates[0].vals.subscriptionStatus).not.toBe("trialing");
+    // The resulting status must deny access
+    expect(
+      hasActiveAccess({
+        billingExempt: false,
+        subscriptionStatus: "incomplete_expired",
+      }),
+    ).toBe(false);
+  });
+
+  it("trial-canceled: customer.subscription.updated with canceled locks the tenant out", async () => {
+    // Tenant whose trial was canceled (e.g. operator-initiated) before converting
+    vi.mocked(db.query.tenantsTable.findFirst).mockResolvedValue({
+      id: "tenant-1",
+      subscriptionStatus: "trialing",
+      stripeSubscriptionId: "sub_trial_canceled",
+    } as any);
+
+    const res = await post({
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_trial_canceled",
+          status: "canceled",
+          customer: "cus_1",
+          metadata: { billingTenantId: "tenant-1" },
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].vals).toMatchObject({
+      subscriptionStatus: "canceled",
+      stripeSubscriptionId: "sub_trial_canceled",
+    });
+    expect(state.updates[0].vals.subscriptionStatus).not.toBe("trialing");
+    // The resulting status must deny access
+    expect(
+      hasActiveAccess({
+        billingExempt: false,
+        subscriptionStatus: "canceled",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("hasActiveAccess — trial-expiry statuses deny access", () => {
+  it("returns false for incomplete_expired (trial lapsed without payment)", () => {
+    expect(
+      hasActiveAccess({ billingExempt: false, subscriptionStatus: "incomplete_expired" }),
+    ).toBe(false);
+  });
+
+  it("returns false for canceled (trial or subscription canceled)", () => {
+    expect(
+      hasActiveAccess({ billingExempt: false, subscriptionStatus: "canceled" }),
+    ).toBe(false);
+  });
+
+  it("returns false for unpaid (dunning exhausted)", () => {
+    expect(
+      hasActiveAccess({ billingExempt: false, subscriptionStatus: "unpaid" }),
+    ).toBe(false);
+  });
+
+  it("returns true for trialing (trial still active)", () => {
+    expect(
+      hasActiveAccess({ billingExempt: false, subscriptionStatus: "trialing" }),
+    ).toBe(true);
+  });
+
+  it("billingExempt bypasses all status checks including incomplete_expired", () => {
+    expect(
+      hasActiveAccess({ billingExempt: true, subscriptionStatus: "incomplete_expired" }),
+    ).toBe(true);
   });
 });
 
