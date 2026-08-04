@@ -76,13 +76,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // Fast-path: if we have cached account readiness from the account.updated
-    // webhook and it says charges are not enabled, reject early without making a
-    // live Stripe API call.  stripeChargesEnabled is null when we have never
-    // received an account.updated event for this account (e.g. brand-new
-    // onboarding).  Treat null the same as false — only allow checkout when
-    // the value is explicitly true.
-    if (tenant.stripeChargesEnabled !== true) {
+    // Fast-path: if the cached account status from the account.updated webhook
+    // explicitly says charges are disabled, reject immediately without making a
+    // live Stripe API call or reserving the artwork.
+    //
+    // stripeChargesEnabled values:
+    //   false — webhook confirmed charges are off → reject fast (gallery not ready)
+    //   null  — no account.updated webhook received yet (new onboarding, delayed
+    //            delivery) → give benefit of the doubt and attempt the Stripe call;
+    //            Stripe itself returns account_invalid if the account isn't ready
+    //   true  — webhook confirmed charges are on → proceed normally
+    if (tenant.stripeChargesEnabled === false) {
       return NextResponse.json(
         {
           error:

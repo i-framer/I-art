@@ -8,8 +8,11 @@
  *     and Stripe must not be contacted.
  *
  *  2. Tenant with stripeChargesEnabled = null (no account.updated webhook ever
- *     received) → same 503 as false.  A brand-new onboarding must not silently
- *     allow checkout to proceed against an account that cannot yet accept charges.
+ *     received) → benefit of the doubt: the gate is passed and the route
+ *     advances to the artwork-reservation step.  With no matching artwork it
+ *     returns 400 "not available for purchase", confirming the gate did not
+ *     block checkout.  Stripe's account_invalid error is the safety net if the
+ *     account is genuinely not charge-ready.
  *
  *  3. Tenant with stripeChargesEnabled = true → the readiness check is passed;
  *     the route advances to the artwork-reservation step.  With no matching
@@ -22,8 +25,8 @@
  *
  * Non-DB dependencies (Stripe client, rate-limit, object-storage, email,
  * iFramer) are mocked because the readiness path either rejects before
- * touching them (scenario 1) or is simply not the focus of this test
- * (scenario 2).
+ * touching them (false scenario) or is simply not the focus of this test
+ * (null/true scenarios).
  */
 import { it, expect, beforeEach, afterEach, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -177,7 +180,7 @@ describeIntegration(
     );
 
     it(
-      "returns 503 with a user-visible message when stripeChargesEnabled is null",
+      "proceeds past the readiness check when stripeChargesEnabled is null (benefit of the doubt)",
       async () => {
         const { id, slug } = await createTenant({
           stripeChargesEnabled: null,
@@ -186,23 +189,30 @@ describeIntegration(
 
         const res = await checkoutPOST(checkoutRequest(slug));
 
-        expect(res.status).toBe(503);
+        // The gate must NOT fast-reject with 503.  The unknown artworkId means
+        // the route returns 400 "not available for purchase" — confirming the
+        // readiness gate was passed and the route proceeded to the reservation step.
+        expect(res.status).toBe(400);
         const json = await res.json();
-        expect(json.error).toMatch(/not yet ready to accept payments/i);
+        expect(json.error).toMatch(/not available for purchase/i);
+        // Critically: must NOT be the readiness-gate message.
+        expect(json.error).not.toMatch(/not yet ready to accept payments/i);
       },
     );
 
     it(
-      "does NOT call Stripe when stripeChargesEnabled is null (fast-path reject)",
+      "does NOT fast-reject Stripe contact when stripeChargesEnabled is null",
       async () => {
         const { id, slug } = await createTenant({
           stripeChargesEnabled: null,
         });
         createdTenantIds.push(id);
 
-        await checkoutPOST(checkoutRequest(slug));
-
-        expect(sessionsCreate).not.toHaveBeenCalled();
+        // The reservation will fail (no matching artwork), so Stripe is never
+        // reached in this specific call — but the important thing is that the
+        // route did NOT return 503 before even attempting reservation.
+        const res = await checkoutPOST(checkoutRequest(slug));
+        expect(res.status).not.toBe(503);
       },
     );
 

@@ -4,14 +4,18 @@
  * The page computes:
  *   paymentsAvailable =
  *     Boolean(tenant.stripeAccountId) &&
- *     tenant.stripeChargesEnabled === true &&
+ *     tenant.stripeChargesEnabled !== false &&
  *     isStripeConfigured()
+ *
+ * stripeChargesEnabled values:
+ *   true  — account.updated webhook confirmed charges are on → show buy button
+ *   false — account.updated webhook confirmed charges are off → hide buy button
+ *   null  — no webhook received yet (give benefit of the doubt) → show buy button
  *
  * These unit tests document and lock the three conditions, with particular
  * attention to stripeChargesEnabled = null (no account.updated webhook
- * received yet) — it must evaluate to false, not true, so a buyer sees
- * "Gallery not yet accepting payments" rather than a checkout CTA that
- * immediately returns 503.
+ * received yet) — it gives benefit of the doubt and lets the buyer proceed;
+ * the checkout route performs its own live Stripe check at payment time.
  */
 import { describe, it, expect } from "vitest";
 
@@ -24,14 +28,14 @@ function paymentsAvailable(
 ): boolean {
   return (
     Boolean(stripeAccountId) &&
-    stripeChargesEnabled === true &&
+    stripeChargesEnabled !== false &&
     stripeConfigured
   );
 }
 
 describe("storefront paymentsAvailable — stripeChargesEnabled", () => {
-  it("returns false when stripeChargesEnabled is null (no webhook received yet)", () => {
-    expect(paymentsAvailable("acct_123", null, true)).toBe(false);
+  it("returns true when stripeChargesEnabled is null (no webhook yet — benefit of the doubt)", () => {
+    expect(paymentsAvailable("acct_123", null, true)).toBe(true);
   });
 
   it("returns false when stripeChargesEnabled is false (explicitly not ready)", () => {

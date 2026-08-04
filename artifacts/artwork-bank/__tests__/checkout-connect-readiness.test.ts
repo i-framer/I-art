@@ -2,12 +2,13 @@
  * Checkout route — Stripe Connect account readiness gate:
  *  - Returns 503 with a clear message when stripeChargesEnabled is cached false,
  *    before reserving the artwork or calling Stripe.
- *  - Returns 503 with the same message when stripeChargesEnabled is null (no
- *    account.updated webhook received yet — new onboarding not confirmed ready).
+ *  - When stripeChargesEnabled is null (no account.updated webhook received yet)
+ *    the route gives benefit of the doubt and attempts the Stripe call; Stripe
+ *    itself returns account_invalid if the account is not actually ready.
  *  - Returns 503 with the same message when Stripe itself returns an
  *    account_invalid error (second line of defence), and releases the artwork
  *    reservation.
- *  - Only allows checkout when stripeChargesEnabled is explicitly true.
+ *  - Only fast-rejects when stripeChargesEnabled is explicitly false.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -178,9 +179,14 @@ describe("checkout gate — stripeChargesEnabled cached as false", () => {
   });
 });
 
-// ── stripeChargesEnabled is null (no webhook received yet) ───────────────────
+// ── stripeChargesEnabled is null (no webhook received yet — benefit of doubt) ─
+// null means no account.updated webhook has arrived yet (brand-new onboarding
+// or delayed delivery).  The route gives benefit of the doubt: it proceeds to
+// reserve the artwork and attempt the Stripe session rather than fast-rejecting.
+// Stripe's own account_invalid error is the safety net if the account is
+// genuinely not charge-ready.
 
-describe("checkout gate — stripeChargesEnabled is null (no webhook received yet)", () => {
+describe("checkout gate — stripeChargesEnabled is null (benefit of the doubt)", () => {
   beforeEach(() => {
     vi.mocked(getTenantBySlug).mockResolvedValue({
       ...baseTenant,
@@ -188,26 +194,42 @@ describe("checkout gate — stripeChargesEnabled is null (no webhook received ye
     } as any);
   });
 
-  it("returns 503 with the account-not-ready message", async () => {
+  it("does NOT fast-reject — proceeds to attempt checkout", async () => {
+    const res = await checkoutPOST(checkoutRequest());
+
+    // Should reach Stripe and return a redirect URL (not a 503 pre-rejection)
+    expect(res.status).not.toBe(503);
+    expect(sessionsCreate).toHaveBeenCalledOnce();
+  });
+
+  it("reserves the artwork before calling Stripe", async () => {
+    await checkoutPOST(checkoutRequest());
+
+    expect(state.reserveAttempts).toBe(1);
+  });
+
+  it("returns 200 with a checkout URL when Stripe accepts the session", async () => {
+    const res = await checkoutPOST(checkoutRequest());
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.url).toBe("https://stripe.test/session");
+  });
+
+  it("returns 503 and releases the reservation when Stripe rejects with account_invalid", async () => {
+    const stripeError = Object.assign(
+      new Error("The provided key 'acct_1' does not have charges enabled"),
+      { type: "StripeInvalidRequestError", code: "account_invalid" },
+    );
+    sessionsCreate.mockRejectedValue(stripeError);
+
     const res = await checkoutPOST(checkoutRequest());
 
     expect(res.status).toBe(503);
     const json = await res.json();
     expect(json.error).toMatch(/not yet ready to accept payments/i);
-  });
-
-  it("does NOT reserve the artwork before rejecting", async () => {
-    await checkoutPOST(checkoutRequest());
-
-    expect(state.reserveAttempts).toBe(0);
     expect(state.artworkStatus).toBe("AVAILABLE");
-  });
-
-  it("does NOT call Stripe before rejecting", async () => {
-    await checkoutPOST(checkoutRequest());
-
-    expect(getStripeClient).not.toHaveBeenCalled();
-    expect(sessionsCreate).not.toHaveBeenCalled();
+    expect(state.releaseAttempts).toBe(1);
   });
 });
 
