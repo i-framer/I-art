@@ -186,6 +186,8 @@ describe("checkout.session.completed — 30-day trial status sync", () => {
       new Error("No such subscription: sub_stale"),
     );
 
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
     const res = await post({
       type: "checkout.session.completed",
       data: {
@@ -203,6 +205,17 @@ describe("checkout.session.completed — 30-day trial status sync", () => {
     expect(state.updates[0].vals).toMatchObject({
       subscriptionStatus: "active",
     });
+
+    // The catch block must log a console.error that includes the subscription ID
+    // and the underlying error reason so operators can diagnose the failure.
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("sub_stale"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("No such subscription: sub_stale"),
+    );
+
+    errorSpy.mockRestore();
   });
 
   it("does NOT call subscriptions.retrieve for a same-subscription re-delivery (no-op case)", async () => {
