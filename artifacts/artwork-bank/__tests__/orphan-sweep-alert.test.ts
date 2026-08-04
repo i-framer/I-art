@@ -195,4 +195,24 @@ describe("orphan-sweep route — operator alert on errors (Task #205)", () => {
     expect(sendOrphanSweepSlackNotification).toHaveBeenCalledOnce();
     expect(sendOrphanSweepErrorNotification).toHaveBeenCalledOnce();
   });
+
+  it("returns 207 with the sweep counts even when sendOrphanSweepErrorNotification throws", async () => {
+    const sweepResult = {
+      orphaned: 4,
+      deleted: 2,
+      errors: 2,
+      failedPaths: ["/objects/uploads/fail1.jpg", "/objects/uploads/fail2.jpg"],
+    };
+    sweepOrphanedImageFiles.mockResolvedValue(sweepResult);
+    sendOrphanSweepErrorNotification.mockRejectedValue(
+      new Error("SMTP connection refused"),
+    );
+
+    const res = await GET(makeRequest());
+
+    // HTTP status must be 207, not 500
+    expect(res.status).toBe(207);
+    // The response body must carry the original sweep counts
+    expect(res.body).toEqual(sweepResult);
+  });
 });
