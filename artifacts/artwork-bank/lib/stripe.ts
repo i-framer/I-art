@@ -253,6 +253,17 @@ export function calcApplicationFee(subtotalCents: number): number {
 // ---------------------------------------------------------------------------
 
 /**
+ * Href for the "Complete setup" link shown in the warning banner.
+ * Points to the settings page with the Stripe onboarding refresh flow.
+ */
+export const STRIPE_WARNING_BANNER_HREF = "/settings?stripe=refresh";
+
+/**
+ * Href for the "Check status" link shown in the pending banner.
+ */
+export const STRIPE_PENDING_BANNER_HREF = "/settings";
+
+/**
  * Determines which Stripe Connect banner (if any) the dashboard should show.
  *
  * - "warning"  → account is linked but charges are disabled (onboarding incomplete)

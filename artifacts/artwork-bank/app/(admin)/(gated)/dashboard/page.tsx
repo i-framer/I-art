@@ -16,7 +16,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { getTenantUrl } from "@/lib/base-url";
-import { getStripeBannerKind } from "@/lib/stripe";
+import {
+  getStripeBannerKind,
+  STRIPE_WARNING_BANNER_HREF,
+  STRIPE_PENDING_BANNER_HREF,
+} from "@/lib/stripe";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -97,7 +101,7 @@ export default async function DashboardPage() {
             </p>
           </div>
           <Link
-            href="/settings?stripe=refresh"
+            href={STRIPE_WARNING_BANNER_HREF}
             className="shrink-0 text-sm font-medium text-red-700 bg-red-100 hover:bg-red-200 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
           >
             Complete setup
@@ -120,7 +124,7 @@ export default async function DashboardPage() {
             </p>
           </div>
           <Link
-            href="/settings"
+            href={STRIPE_PENDING_BANNER_HREF}
             className="shrink-0 text-sm font-medium text-yellow-700 bg-yellow-100 hover:bg-yellow-200 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
           >
             Check status

@@ -9,7 +9,11 @@
  *  - no banner         when charges are enabled (onboarding complete)
  */
 import { describe, it, expect } from "vitest";
-import { getStripeBannerKind } from "@/lib/stripe";
+import {
+  getStripeBannerKind,
+  STRIPE_WARNING_BANNER_HREF,
+  STRIPE_PENDING_BANNER_HREF,
+} from "@/lib/stripe";
 
 const ACCOUNT_ID = "acct_test_123";
 
@@ -55,5 +59,15 @@ describe("getStripeBannerKind", () => {
         stripeChargesEnabled: null,
       }),
     ).toBeNull();
+  });
+});
+
+describe("Stripe banner hrefs", () => {
+  it("warning banner links to /settings?stripe=refresh (triggers Stripe onboarding refresh)", () => {
+    expect(STRIPE_WARNING_BANNER_HREF).toBe("/settings?stripe=refresh");
+  });
+
+  it("pending banner links to /settings (not the refresh flow)", () => {
+    expect(STRIPE_PENDING_BANNER_HREF).toBe("/settings");
   });
 });
