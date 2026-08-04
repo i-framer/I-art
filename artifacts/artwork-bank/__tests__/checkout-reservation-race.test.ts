@@ -124,6 +124,7 @@ const tenant = {
   id: "tenant-1",
   storefrontEnabled: true,
   stripeAccountId: "acct_1",
+  stripeChargesEnabled: true,
   type: "GALLERY",
   customDomain: null,
   customDomainVerified: false,

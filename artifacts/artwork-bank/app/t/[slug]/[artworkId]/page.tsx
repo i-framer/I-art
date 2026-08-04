@@ -116,13 +116,13 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
   );
 
   // Payment availability: tenant must have a connected Stripe account, charges
-  // must be enabled on that account (stripeChargesEnabled is null when we have
-  // never received an account.updated webhook — give benefit of the doubt and
-  // let the checkout route decide; only block when explicitly false), and the
-  // platform's Stripe credentials must be configured.
+  // must be explicitly enabled on that account (stripeChargesEnabled === true).
+  // null means no account.updated webhook has ever arrived — treat the same as
+  // false so the buyer sees the "not yet accepting payments" message rather than
+  // a checkout CTA that immediately returns 503.
   const paymentsAvailable =
     Boolean(tenant.stripeAccountId) &&
-    tenant.stripeChargesEnabled !== false &&
+    tenant.stripeChargesEnabled === true &&
     (await isStripeConfigured());
 
   const isSold = artwork.status === "SOLD";

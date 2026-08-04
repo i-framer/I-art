@@ -33,6 +33,7 @@ const VALID_TENANT = vi.hoisted(() => ({
   businessName: "Gallery A",
   storefrontEnabled: true,
   stripeAccountId: "acct_test_123",
+  stripeChargesEnabled: true,
   type: "ARTIST",
   customDomain: null,
   customDomainVerified: false,

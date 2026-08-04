@@ -2,11 +2,12 @@
  * Checkout route — Stripe Connect account readiness gate:
  *  - Returns 503 with a clear message when stripeChargesEnabled is cached false,
  *    before reserving the artwork or calling Stripe.
+ *  - Returns 503 with the same message when stripeChargesEnabled is null (no
+ *    account.updated webhook received yet — new onboarding not confirmed ready).
  *  - Returns 503 with the same message when Stripe itself returns an
- *    account_invalid error (second line of defence for accounts with no
- *    cached state yet), and releases the artwork reservation.
- *  - Allows checkout to proceed when stripeChargesEnabled is null (not yet
- *    cached from a webhook — do not block new onboardings prematurely).
+ *    account_invalid error (second line of defence), and releases the artwork
+ *    reservation.
+ *  - Only allows checkout when stripeChargesEnabled is explicitly true.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -177,26 +178,52 @@ describe("checkout gate — stripeChargesEnabled cached as false", () => {
   });
 });
 
-// ── stripeChargesEnabled is null (no cached state yet) ────────────────────────
+// ── stripeChargesEnabled is null (no webhook received yet) ───────────────────
 
 describe("checkout gate — stripeChargesEnabled is null (no webhook received yet)", () => {
-  it("does NOT block checkout — proceeds to Stripe normally", async () => {
+  beforeEach(() => {
     vi.mocked(getTenantBySlug).mockResolvedValue({
       ...baseTenant,
       stripeChargesEnabled: null,
     } as any);
+  });
 
+  it("returns 503 with the account-not-ready message", async () => {
     const res = await checkoutPOST(checkoutRequest());
 
-    // Checkout must not be blocked when we have no cached readiness info.
-    expect(res.status).toBe(200);
-    expect(sessionsCreate).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(503);
+    const json = await res.json();
+    expect(json.error).toMatch(/not yet ready to accept payments/i);
+  });
+
+  it("does NOT reserve the artwork before rejecting", async () => {
+    await checkoutPOST(checkoutRequest());
+
+    expect(state.reserveAttempts).toBe(0);
+    expect(state.artworkStatus).toBe("AVAILABLE");
+  });
+
+  it("does NOT call Stripe before rejecting", async () => {
+    await checkoutPOST(checkoutRequest());
+
+    expect(getStripeClient).not.toHaveBeenCalled();
+    expect(sessionsCreate).not.toHaveBeenCalled();
   });
 });
 
 // ── Stripe returns account_invalid (second line of defence) ───────────────────
+// These tests simulate an account where the webhook said charges were enabled
+// (stripeChargesEnabled = true) but Stripe rejects the session creation anyway
+// (e.g. account restricted after the last webhook).
 
-describe("checkout gate — Stripe account_invalid error (no cached state)", () => {
+describe("checkout gate — Stripe account_invalid error (cached as true, Stripe rejects)", () => {
+  beforeEach(() => {
+    vi.mocked(getTenantBySlug).mockResolvedValue({
+      ...baseTenant,
+      stripeChargesEnabled: true,
+    } as any);
+  });
+
   it("returns 503 with the account-not-ready message and releases the reservation", async () => {
     const stripeError = Object.assign(
       new Error("The provided key 'acct_1' does not have charges enabled"),

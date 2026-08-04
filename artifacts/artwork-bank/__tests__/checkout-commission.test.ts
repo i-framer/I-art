@@ -52,6 +52,7 @@ const tenant = vi.hoisted(() => ({
   id: "tenant-1",
   storefrontEnabled: true,
   stripeAccountId: "acct_gallery_001",
+  stripeChargesEnabled: true,
   type: "GALLERY",
   customDomain: null,
   customDomainVerified: false,

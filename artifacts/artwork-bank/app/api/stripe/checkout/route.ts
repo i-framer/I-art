@@ -80,8 +80,9 @@ export async function POST(request: Request) {
     // webhook and it says charges are not enabled, reject early without making a
     // live Stripe API call.  stripeChargesEnabled is null when we have never
     // received an account.updated event for this account (e.g. brand-new
-    // onboarding), so we only block when the value is explicitly false.
-    if (tenant.stripeChargesEnabled === false) {
+    // onboarding).  Treat null the same as false — only allow checkout when
+    // the value is explicitly true.
+    if (tenant.stripeChargesEnabled !== true) {
       return NextResponse.json(
         {
           error:

@@ -1,13 +1,17 @@
 /**
  * Integration tests: checkout route readiness gate — real DB.
  *
- * Two scenarios under test:
+ * Three scenarios under test:
  *
  *  1. Tenant with stripeChargesEnabled = false → 503 with a user-visible
  *     "not yet ready" message, never a 500.  The artwork must not be reserved
  *     and Stripe must not be contacted.
  *
- *  2. Tenant with stripeChargesEnabled = true → the readiness check is passed;
+ *  2. Tenant with stripeChargesEnabled = null (no account.updated webhook ever
+ *     received) → same 503 as false.  A brand-new onboarding must not silently
+ *     allow checkout to proceed against an account that cannot yet accept charges.
+ *
+ *  3. Tenant with stripeChargesEnabled = true → the readiness check is passed;
  *     the route advances to the artwork-reservation step.  With no matching
  *     artwork in the DB it returns 400 "not available for purchase", which
  *     confirms the gate did not block checkout.
@@ -168,6 +172,36 @@ describeIntegration(
         await checkoutPOST(checkoutRequest(slug));
 
         // The route must short-circuit before ever contacting Stripe.
+        expect(sessionsCreate).not.toHaveBeenCalled();
+      },
+    );
+
+    it(
+      "returns 503 with a user-visible message when stripeChargesEnabled is null",
+      async () => {
+        const { id, slug } = await createTenant({
+          stripeChargesEnabled: null,
+        });
+        createdTenantIds.push(id);
+
+        const res = await checkoutPOST(checkoutRequest(slug));
+
+        expect(res.status).toBe(503);
+        const json = await res.json();
+        expect(json.error).toMatch(/not yet ready to accept payments/i);
+      },
+    );
+
+    it(
+      "does NOT call Stripe when stripeChargesEnabled is null (fast-path reject)",
+      async () => {
+        const { id, slug } = await createTenant({
+          stripeChargesEnabled: null,
+        });
+        createdTenantIds.push(id);
+
+        await checkoutPOST(checkoutRequest(slug));
+
         expect(sessionsCreate).not.toHaveBeenCalled();
       },
     );
