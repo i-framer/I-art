@@ -98,7 +98,7 @@ describe("sendBillingAlertNotification: env-var guard", () => {
     );
   });
 
-  it("resolves without throwing when Resend returns a non-2xx status", async () => {
+  it("re-throws when Resend returns a non-2xx status so the caller is not silently misled", async () => {
     process.env.RESEND_API_KEY = "re_test_key";
     process.env.PLATFORM_ADMIN_EMAIL = "operator@example.com";
 
@@ -106,16 +106,16 @@ describe("sendBillingAlertNotification: env-var guard", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response("rate limited", { status: 429 }));
 
-    // Must not throw — the webhook already committed the alert row and must
-    // return 200 to Stripe regardless of the notification outcome.
+    // The webhook callers already wrap this in try-catch; the function must
+    // re-throw so those callers know the notification attempt failed.
     await expect(
       sendBillingAlertNotification(alertArgs),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow();
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("resolves without throwing when fetch itself rejects (network failure)", async () => {
+  it("re-throws when fetch itself rejects (transient network failure)", async () => {
     process.env.RESEND_API_KEY = "re_test_key";
     process.env.PLATFORM_ADMIN_EMAIL = "operator@example.com";
 
@@ -125,7 +125,7 @@ describe("sendBillingAlertNotification: env-var guard", () => {
 
     await expect(
       sendBillingAlertNotification(alertArgs),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("ECONNREFUSED");
   });
 });
 

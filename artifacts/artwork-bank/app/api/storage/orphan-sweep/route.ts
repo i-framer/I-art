@@ -76,11 +76,21 @@ async function runSweep(request: Request) {
       });
       const slackFailure = slackResult.ok ? undefined : slackResult.error;
       // Fire email regardless of Slack outcome; include Slack failure info if present.
-      await sendOrphanSweepErrorNotification({
-        errors: result.errors,
-        failedPaths: result.failedPaths,
-        slackFailure,
-      });
+      // sendOrphanSweepErrorNotification re-throws on transport failure — catch
+      // here so a notification error never masks the sweep result or changes the
+      // HTTP status code.
+      try {
+        await sendOrphanSweepErrorNotification({
+          errors: result.errors,
+          failedPaths: result.failedPaths,
+          slackFailure,
+        });
+      } catch (notifyErr) {
+        console.error(
+          "[orphan-sweep] Email notification failed (sweep result unaffected):",
+          notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+        );
+      }
     }
 
     // When per-row storage errors occurred, use 207 Multi-Status so operators

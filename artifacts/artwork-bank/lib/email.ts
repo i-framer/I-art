@@ -471,11 +471,14 @@ export async function sendOrphanSweepErrorNotification({
       `,
     });
   } catch (err) {
-    // Best-effort — log but do not propagate so the sweep response is unaffected.
+    // Log the failure so it appears in server logs and monitoring dashboards.
+    // Re-throw so callers know the delivery attempt failed and can handle it
+    // (e.g. record the miss instead of silently swallowing it).
     console.error(
       "[Orphan sweep email] Failed to send operator notification:",
       (err as any)?.message ?? String(err),
     );
+    throw err;
   }
 }
 
@@ -571,9 +574,13 @@ export async function sendBillingAlertNotification({
         `,
     });
   } catch (err) {
+    // Log the failure so it appears in server logs and monitoring dashboards.
+    // Re-throw so callers know the delivery attempt failed and can handle it
+    // (e.g. record the miss instead of silently swallowing it).
     console.error(
       `[Billing alert email] Failed to send notification: ${(err as any)?.message ?? String(err)}`,
     );
+    throw err;
   }
 }
 

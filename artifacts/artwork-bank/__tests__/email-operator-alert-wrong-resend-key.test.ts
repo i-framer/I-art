@@ -216,27 +216,25 @@ describe("sendDriftFailureEmail — wrong Resend API key", () => {
 // ── sendOrphanSweepErrorNotification ──────────────────────────────────────────
 
 describe("sendOrphanSweepErrorNotification — wrong Resend API key", () => {
-  it("resolves to void without throwing when Resend returns 401", async () => {
+  it("re-throws the transport error so callers are not silently misled (Resend 401)", async () => {
     mockResend401();
-    const result = await sendOrphanSweepErrorNotification({
-      errors: 3,
-      failedPaths: ["a/b/c.jpg"],
-    });
-    expect(result).toBeUndefined();
+    await expect(
+      sendOrphanSweepErrorNotification({ errors: 3, failedPaths: ["a/b/c.jpg"] }),
+    ).rejects.toThrow();
   });
 
-  it("resolves to void without throwing when Resend returns 422", async () => {
+  it("re-throws the transport error so callers are not silently misled (Resend 422)", async () => {
     mockResend422();
-    const result = await sendOrphanSweepErrorNotification({
-      errors: 1,
-      failedPaths: [],
-    });
-    expect(result).toBeUndefined();
+    await expect(
+      sendOrphanSweepErrorNotification({ errors: 1, failedPaths: [] }),
+    ).rejects.toThrow();
   });
 
-  it("logs the failure via console.error when Resend returns 401", async () => {
+  it("logs the failure via console.error before re-throwing when Resend returns 401", async () => {
     mockResend401();
-    await sendOrphanSweepErrorNotification({ errors: 2, failedPaths: ["x.jpg"] });
+    await expect(
+      sendOrphanSweepErrorNotification({ errors: 2, failedPaths: ["x.jpg"] }),
+    ).rejects.toThrow();
     expect(consoleSpy).toHaveBeenCalledOnce();
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining("[Orphan sweep email] Failed to send operator notification:"),
@@ -244,9 +242,11 @@ describe("sendOrphanSweepErrorNotification — wrong Resend API key", () => {
     );
   });
 
-  it("logs the failure via console.error when Resend returns 422", async () => {
+  it("logs the failure via console.error before re-throwing when Resend returns 422", async () => {
     mockResend422();
-    await sendOrphanSweepErrorNotification({ errors: 1, failedPaths: ["y.png"] });
+    await expect(
+      sendOrphanSweepErrorNotification({ errors: 1, failedPaths: ["y.png"] }),
+    ).rejects.toThrow();
     expect(consoleSpy).toHaveBeenCalledOnce();
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining("[Orphan sweep email] Failed to send operator notification:"),
@@ -256,7 +256,7 @@ describe("sendOrphanSweepErrorNotification — wrong Resend API key", () => {
 
   it("attempted delivery via Resend when key is present (even if wrong)", async () => {
     mockResend401();
-    await sendOrphanSweepErrorNotification({ errors: 1, failedPaths: ["y.png"] });
+    await sendOrphanSweepErrorNotification({ errors: 1, failedPaths: ["y.png"] }).catch(() => {});
     expect(mockFetch).toHaveBeenCalledOnce();
     expect(mockFetch).toHaveBeenCalledWith(
       "https://api.resend.com/emails",
@@ -266,7 +266,7 @@ describe("sendOrphanSweepErrorNotification — wrong Resend API key", () => {
 
   it("does not fall through to SMTP when Resend key is present", async () => {
     mockResend401();
-    await sendOrphanSweepErrorNotification({ errors: 1, failedPaths: [] });
+    await sendOrphanSweepErrorNotification({ errors: 1, failedPaths: [] }).catch(() => {});
     expect(mockSendMail).not.toHaveBeenCalled();
   });
 });
@@ -280,21 +280,19 @@ const BILLING_BASE = {
 };
 
 describe("sendBillingAlertNotification — wrong Resend API key", () => {
-  it("resolves to void without throwing when Resend returns 401", async () => {
+  it("re-throws the transport error so callers are not silently misled (Resend 401)", async () => {
     mockResend401();
-    const result = await sendBillingAlertNotification(BILLING_BASE);
-    expect(result).toBeUndefined();
+    await expect(sendBillingAlertNotification(BILLING_BASE)).rejects.toThrow();
   });
 
-  it("resolves to void without throwing when Resend returns 422", async () => {
+  it("re-throws the transport error so callers are not silently misled (Resend 422)", async () => {
     mockResend422();
-    const result = await sendBillingAlertNotification(BILLING_BASE);
-    expect(result).toBeUndefined();
+    await expect(sendBillingAlertNotification(BILLING_BASE)).rejects.toThrow();
   });
 
-  it("logs the failure via console.error when Resend returns 401", async () => {
+  it("logs the failure via console.error before re-throwing when Resend returns 401", async () => {
     mockResend401();
-    await sendBillingAlertNotification(BILLING_BASE);
+    await expect(sendBillingAlertNotification(BILLING_BASE)).rejects.toThrow();
     expect(consoleSpy).toHaveBeenCalledOnce();
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining("[Billing alert email] Failed to send notification:"),
@@ -304,9 +302,9 @@ describe("sendBillingAlertNotification — wrong Resend API key", () => {
     expect(loggedMsg).toContain("Resend error 401");
   });
 
-  it("logs the failure via console.error when Resend returns 422", async () => {
+  it("logs the failure via console.error before re-throwing when Resend returns 422", async () => {
     mockResend422();
-    await sendBillingAlertNotification(BILLING_BASE);
+    await expect(sendBillingAlertNotification(BILLING_BASE)).rejects.toThrow();
     expect(consoleSpy).toHaveBeenCalledOnce();
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining("[Billing alert email] Failed to send notification:"),
@@ -317,7 +315,7 @@ describe("sendBillingAlertNotification — wrong Resend API key", () => {
 
   it("attempted delivery via Resend when key is present (even if wrong)", async () => {
     mockResend401();
-    await sendBillingAlertNotification(BILLING_BASE);
+    await sendBillingAlertNotification(BILLING_BASE).catch(() => {});
     expect(mockFetch).toHaveBeenCalledOnce();
     expect(mockFetch).toHaveBeenCalledWith(
       "https://api.resend.com/emails",
@@ -327,7 +325,7 @@ describe("sendBillingAlertNotification — wrong Resend API key", () => {
 
   it("does not fall through to SMTP when Resend key is present", async () => {
     mockResend401();
-    await sendBillingAlertNotification(BILLING_BASE);
+    await sendBillingAlertNotification(BILLING_BASE).catch(() => {});
     expect(mockSendMail).not.toHaveBeenCalled();
   });
 });
