@@ -115,10 +115,15 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
     })),
   );
 
-  // Payment availability: tenant must have a connected Stripe account and
-  // the platform's Stripe credentials must be configured.
+  // Payment availability: tenant must have a connected Stripe account, charges
+  // must be enabled on that account (stripeChargesEnabled is null when we have
+  // never received an account.updated webhook — give benefit of the doubt and
+  // let the checkout route decide; only block when explicitly false), and the
+  // platform's Stripe credentials must be configured.
   const paymentsAvailable =
-    Boolean(tenant.stripeAccountId) && (await isStripeConfigured());
+    Boolean(tenant.stripeAccountId) &&
+    tenant.stripeChargesEnabled !== false &&
+    (await isStripeConfigured());
 
   const isSold = artwork.status === "SOLD";
   const isReserved = artwork.status === "RESERVED";
@@ -208,7 +213,7 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
             ) : !paymentsAvailable ? (
               <div className="w-full rounded-xl bg-stone-50 border border-stone-200 px-4 py-4 text-center">
                 <p className="text-sm font-medium text-stone-700">
-                  Online payments are currently unavailable for this gallery.
+                  Gallery not yet accepting payments.
                 </p>
                 {tenant.contactEmail ? (
                   <>
