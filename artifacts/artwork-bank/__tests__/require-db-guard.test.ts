@@ -2204,3 +2204,90 @@ describe("require-db.js — decimal MAX_SAFE_INTEGER REQUIRE_DB_PSQL_TIMEOUT_MS"
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — decimal MAX_SAFE_INTEGER-1 REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // '9007199254740990' is exactly Number.MAX_SAFE_INTEGER - 1 (2^53 - 2), one
+  // step below the upper boundary of the safe-integer range.  It rounds out the
+  // boundary coverage alongside the MAX_SAFE_INTEGER test above, confirming the
+  // guard has no off-by-one error in either direction.
+  //
+  // Number('9007199254740990') evaluates to 9007199254740990 which:
+  //   - passes the isNaN guard (it is a valid number)
+  //   - passes the <= 0 guard (it is positive)
+  //   - passes the !Number.isSafeInteger guard (Number.isSafeInteger returns true)
+  //   - is strictly less than Number.MAX_SAFE_INTEGER (confirmed by canary below)
+  //
+  // The guard must ACCEPT this value and allow the psql probe to proceed
+  // (exit 0 with 'dev database confirmed').
+
+  const MAX_SAFE_INTEGER_MINUS_ONE_INPUT = "9007199254740990"; // Number.MAX_SAFE_INTEGER - 1
+  const nodeVersion = process.version;
+
+  // ── Pure-JS canaries — confirm Number() and isSafeInteger behave as expected ─
+
+  it("pure-JS canary: Number('9007199254740990') < Number.MAX_SAFE_INTEGER", () => {
+    // Guard: if this canary fails, the Node.js version has a regression in
+    // Number() parsing for large integer literals.
+    const parsed = Number(MAX_SAFE_INTEGER_MINUS_ONE_INPUT);
+    if (parsed >= Number.MAX_SAFE_INTEGER) {
+      throw new Error(
+        `Number('${MAX_SAFE_INTEGER_MINUS_ONE_INPUT}') === ${parsed} on Node.js ${nodeVersion}, ` +
+        `expected a value strictly less than Number.MAX_SAFE_INTEGER (${Number.MAX_SAFE_INTEGER}). ` +
+        `A Node.js major upgrade may have changed large-integer parsing.`
+      );
+    }
+    expect(parsed).toBe(Number.MAX_SAFE_INTEGER - 1);
+  });
+
+  it("pure-JS canary: Number.isSafeInteger(Number('9007199254740990')) returns true", () => {
+    // Guard: if this canary fails, the Node.js version has a regression in
+    // Number.isSafeInteger for the value one below the MAX_SAFE_INTEGER boundary.
+    const parsed = Number(MAX_SAFE_INTEGER_MINUS_ONE_INPUT);
+    const safe = Number.isSafeInteger(parsed);
+    if (!safe) {
+      throw new Error(
+        `Number.isSafeInteger(${parsed}) returned false on Node.js ${nodeVersion}. ` +
+        `Expected true because ${parsed} === Number.MAX_SAFE_INTEGER - 1 (2^53 - 2). ` +
+        `A Node.js major upgrade may have changed the isSafeInteger boundary.`
+      );
+    }
+    expect(safe).toBe(true);
+  });
+
+  // ── Subprocess tests — exercise the actual guard on this Node binary ───────
+
+  it(`exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS is '${MAX_SAFE_INTEGER_MINUS_ONE_INPUT}' (MAX_SAFE_INTEGER-1)`, () => {
+    // Number('9007199254740990') === Number.MAX_SAFE_INTEGER - 1.  It passes all
+    // three guards (isNaN, <= 0, isSafeInteger) and is a valid timeout value.
+    // The guard must NOT reject it — this test confirms the guard accepts the
+    // value one step below the upper boundary without an off-by-one error.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: MAX_SAFE_INTEGER_MINUS_ONE_INPUT,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.signal).toBeNull();
+  });
+
+  it(`output contains 'dev database confirmed' for '${MAX_SAFE_INTEGER_MINUS_ONE_INPUT}' (MAX_SAFE_INTEGER-1 accepted)`, () => {
+    // Confirm the guard prints the success message — not an error — when
+    // REQUIRE_DB_PSQL_TIMEOUT_MS is Number.MAX_SAFE_INTEGER - 1.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: MAX_SAFE_INTEGER_MINUS_ONE_INPUT,
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+    expect(result.signal).toBeNull();
+  });
+});
