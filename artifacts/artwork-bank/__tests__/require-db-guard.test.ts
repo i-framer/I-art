@@ -949,6 +949,71 @@ describe("require-db.js — whitespace-padded REQUIRE_DB_PSQL_TIMEOUT_MS", () =>
       expect(result.signal).toBeNull();
     }
   });
+
+  // Unicode whitespace surrounding a valid digit string — Number() trims these
+  // too, so Number("\u2009500\u2009") === 500, which passes all guards and
+  // allows the psql probe to proceed normally.  These tests document that the
+  // guard intentionally accepts such values rather than rejecting them.
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS is thin-space-padded ('\\u2009500\\u2009')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\u2009500\u2009",
+    });
+
+    // Number("\u2009500\u2009") === 500 — thin spaces trimmed to a valid positive integer.
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS is hair-space-padded ('\\u200A500\\u200A')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\u200A500\u200A",
+    });
+
+    // Number("\u200A500\u200A") === 500 — hair spaces trimmed to a valid positive integer.
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS is ideographic-space-padded ('\\u3000500\\u3000')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\u3000500\u3000",
+    });
+
+    // Number("\u3000500\u3000") === 500 — ideographic spaces trimmed to a valid positive integer.
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS is BOM-padded ('\\uFEFF500\\uFEFF')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\uFEFF500\uFEFF",
+    });
+
+    // Number("\uFEFF500\uFEFF") === 500 — BOM characters trimmed to a valid positive integer.
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
