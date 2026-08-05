@@ -3816,3 +3816,56 @@ describe("require-db.js — oversized binary literal REQUIRE_DB_PSQL_TIMEOUT_MS 
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — oversized octal literal REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // '0o' + '7'.repeat(19) evaluates to a number far beyond Number.MAX_SAFE_INTEGER
+  // (2^53 − 1).  Number.isSafeInteger() returns false for such values, so the
+  // guard must reject them with a 'whole number / integer' error rather than
+  // silently passing an imprecise value to spawnSync's timeout option.
+  //
+  // This suite specifically covers the octal (0o…) notation code path.  The
+  // same !Number.isSafeInteger guard that blocks oversized binary literals also
+  // applies here, but without dedicated tests a future regex or parsing change
+  // could silently break octal detection.
+
+  const OVERSIZED_OCTAL = "0o" + "7".repeat(19);
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is a 19-digit all-sevens octal literal", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: OVERSIZED_OCTAL,
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number / integer' error for the oversized octal literal", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: OVERSIZED_OCTAL,
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+  });
+
+  it("signal is null for the oversized octal literal (guard exits cleanly, not via uncaught exception)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: OVERSIZED_OCTAL,
+    });
+
+    expect(result.signal).toBeNull();
+  });
+});
