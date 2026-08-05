@@ -3923,3 +3923,102 @@ describe("require-db.js — oversized hex literal REQUIRE_DB_PSQL_TIMEOUT_MS", (
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — oversized scientific-notation REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // Scientific-notation strings like '1e16' or '9.1e15' parse to values beyond
+  // Number.MAX_SAFE_INTEGER (9_007_199_254_740_991 ≈ 9.007×10¹⁵).  Passing
+  // such a value to spawnSync's timeout option would silently pass an imprecise
+  // integer, causing the probe to run for an unexpectedly long (or infinite)
+  // duration.
+  //
+  // The same !Number.isSafeInteger guard that blocks oversized binary, octal,
+  // and hex literals also applies to scientific-notation strings.  This suite
+  // provides explicit coverage so a future parsing change cannot silently break
+  // the scientific-notation code path.
+  //
+  // Note: Number.MAX_SAFE_INTEGER ≈ 9.007×10¹⁵, so:
+  //   - '1e16'  → 10_000_000_000_000_000 > MAX_SAFE_INTEGER → blocked ✓
+  //   - '9.1e15'→  9_100_000_000_000_000 > MAX_SAFE_INTEGER → blocked ✓
+  //   - '1e20'  → 100_000_000_000_000_000_000 > MAX_SAFE_INTEGER → blocked ✓
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e16' (exceeds MAX_SAFE_INTEGER)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e16",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number / integer' error for '1e16' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e16",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '9.1e15' (exceeds MAX_SAFE_INTEGER)", () => {
+    // Number("9.1e15") === 9_100_000_000_000_000, which is > MAX_SAFE_INTEGER.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "9.1e15",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number / integer' error for '9.1e15' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "9.1e15",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e20' (far beyond MAX_SAFE_INTEGER)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e20",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number / integer' error for '1e20' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e20",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
