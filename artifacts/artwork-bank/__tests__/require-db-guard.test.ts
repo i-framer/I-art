@@ -1449,3 +1449,136 @@ describe("require-db.js — whitespace-only REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — values that look numeric but exceed safe-integer range", () => {
+  // These values parse successfully as JavaScript numbers but are NOT safe
+  // integers, so they must be rejected by the !Number.isSafeInteger() guard:
+  //
+  //   "1e308"            → Number("1e308") === Infinity   (not a safe integer)
+  //   "9007199254740993" → Number.MAX_SAFE_INTEGER + 1    (precision lost; not safe)
+  //
+  // The guard must exit 1 with a clear error rather than silently passing an
+  // unsafe value to spawnSync's timeout option.  These subprocess-based tests
+  // verify that behaviour on the *active* Node binary (process.execPath) rather
+  // than relying solely on a pure-JS canary that only exercises Number() directly.
+
+  const nodeVersion = process.version; // e.g. "v22.4.1"
+
+  // ── Pure-JS canary — verifies guard preconditions on this Node binary ────────
+  // These assertions run in the same V8 instance as the rest of the suite and
+  // confirm that Number() still parses these strings the way the guard expects.
+  // If a future Node.js major changes the parsing behaviour the canary fails
+  // immediately with a message that names the version, making the root cause obvious.
+
+  it(`Number('1e308') is not a safe integer on Node.js ${nodeVersion} (canary)`, () => {
+    // 1e308 is a very large but finite double (Number.MAX_VALUE ≈ 1.8e308).
+    // It is positive, non-NaN, and passes the <= 0 check, but it is not a safe
+    // integer — Number.isSafeInteger(1e308) === false — so the guard must reject it.
+    const parsed = Number("1e308");
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      throw new Error(
+        `Number('1e308') === ${parsed} on Node.js ${nodeVersion}. ` +
+        `Expected a large positive finite number that passes the NaN/<=0 checks ` +
+        `but fails isSafeInteger. ` +
+        `A Node.js upgrade may have changed how Number() handles this string. ` +
+        `Update the guard in scripts/require-db.js if the parsing behaviour changed.`
+      );
+    }
+    if (Number.isSafeInteger(parsed)) {
+      throw new Error(
+        `Number('1e308') === ${parsed} is unexpectedly a safe integer on Node.js ${nodeVersion}. ` +
+        `Expected it NOT to be safe (it far exceeds Number.MAX_SAFE_INTEGER ≈ 9e15). ` +
+        `A Node.js upgrade may have changed Number()/isSafeInteger() behaviour. ` +
+        `Update the guard in scripts/require-db.js if the semantics changed.`
+      );
+    }
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+    // Confirm it is positive and finite — the guard's <= 0 and isNaN branches do not fire,
+    // so rejection is driven purely by !isSafeInteger.
+    expect(parsed).toBeGreaterThan(0);
+    expect(Number.isFinite(parsed) || parsed === Infinity).toBe(true);
+  });
+
+  it(`Number('9007199254740993') is not a safe integer on Node.js ${nodeVersion} (canary)`, () => {
+    // 9007199254740993 === Number.MAX_SAFE_INTEGER + 1.  JavaScript floats
+    // cannot represent this value exactly — it rounds to MAX_SAFE_INTEGER,
+    // which means two distinct integers map to the same double, making it
+    // unsafe for arithmetic use.
+    const parsed = Number("9007199254740993");
+    if (Number.isSafeInteger(parsed)) {
+      throw new Error(
+        `Number('9007199254740993') returned a value that isSafeInteger on Node.js ${nodeVersion}. ` +
+        `Expected it NOT to be safe (it is MAX_SAFE_INTEGER + 1). ` +
+        `A Node.js upgrade may have changed Number()/isSafeInteger() behaviour for this value. ` +
+        `Update the guard in scripts/require-db.js if the semantics changed.`
+      );
+    }
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  // ── Subprocess tests — exercise the actual guard path on this Node binary ────
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e308' (parses to Infinity)", () => {
+    // Number("1e308") === Infinity — blocked by the !Number.isSafeInteger guard
+    // in scripts/require-db.js.  Uses the real Node binary (process.execPath)
+    // so it validates the guard on the currently active Node version.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e308",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it("prints a clear error and does not crash when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e308'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e308",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    // The guard's isSafeInteger branch says "not a whole number" / "integer"
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '9007199254740993' (MAX_SAFE_INTEGER + 1)", () => {
+    // 9007199254740993 exceeds Number.MAX_SAFE_INTEGER — !Number.isSafeInteger()
+    // returns true, so the guard must exit 1.  Uses the real Node binary
+    // (process.execPath) to validate on the currently active Node version.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "9007199254740993",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it("prints a clear error and does not crash when REQUIRE_DB_PSQL_TIMEOUT_MS is '9007199254740993'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "9007199254740993",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    // The guard's isSafeInteger branch says "not a whole number" / "integer"
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
