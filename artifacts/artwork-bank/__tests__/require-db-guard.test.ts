@@ -3760,3 +3760,59 @@ describe("require-db.js — binary literal REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
     expect(output).toContain("dev database confirmed");
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — oversized binary literal REQUIRE_DB_PSQL_TIMEOUT_MS (exceeds MAX_SAFE_INTEGER)", () => {
+  // Binary literals that exceed Number.MAX_SAFE_INTEGER (2^53 - 1) parse to a
+  // value where Number.isSafeInteger returns false.  For example,
+  // '0b' + '1'.repeat(54) represents 2^54 - 1 = 18 014 398 509 481 983, which
+  // is larger than MAX_SAFE_INTEGER.  The !isSafeInteger guard in require-db.js
+  // must catch this and exit 1 with a clear "whole number / integer" error
+  // message before spawnSync is called.
+  //
+  // This code path was previously tested only for hex and decimal overflows.
+  // These tests pin the binary-notation branch so a future regex or parsing
+  // change cannot silently break it.
+
+  // '0b' + '1'.repeat(54) === 2^54 - 1.  Number.isSafeInteger returns false
+  // because 2^54 - 1 > Number.MAX_SAFE_INTEGER (2^53 - 1).
+  const OVERSIZED_BINARY = "0b" + "1".repeat(54);
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is a 54-bit all-ones binary literal", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: OVERSIZED_BINARY,
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number / integer' error for the oversized binary literal", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: OVERSIZED_BINARY,
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+  });
+
+  it("signal is null for the oversized binary literal (guard exits cleanly, not via uncaught exception)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: OVERSIZED_BINARY,
+    });
+
+    expect(result.signal).toBeNull();
+  });
+});
