@@ -2118,3 +2118,89 @@ describe("require-db.js — decimal MAX_SAFE_INTEGER+1 REQUIRE_DB_PSQL_TIMEOUT_M
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — decimal MAX_SAFE_INTEGER REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // '9007199254740991' is exactly Number.MAX_SAFE_INTEGER (2^53 - 1), expressed
+  // as a plain decimal string.  This is the upper boundary of the safe-integer
+  // range, and the mirror of the MAX_SAFE_INTEGER+1 test above.
+  //
+  // Number('9007199254740991') evaluates to 9007199254740991 which:
+  //   - passes the isNaN guard (it is a valid number)
+  //   - passes the <= 0 guard (it is positive)
+  //   - passes the !Number.isSafeInteger guard (Number.isSafeInteger returns true)
+  //
+  // The guard must ACCEPT this value and allow the psql probe to proceed
+  // (exit 0 with 'dev database confirmed').  An off-by-one error that treats
+  // MAX_SAFE_INTEGER itself as unsafe would cause a false rejection here.
+
+  const MAX_SAFE_INTEGER_INPUT = "9007199254740991"; // Number.MAX_SAFE_INTEGER
+  const nodeVersion = process.version;
+
+  // ── Pure-JS canaries — confirm Number() and isSafeInteger behave as expected ─
+
+  it("pure-JS canary: Number('9007199254740991') === Number.MAX_SAFE_INTEGER", () => {
+    // Guard: if this canary fails, the Node.js version has a regression in
+    // Number() parsing for large integer literals.
+    const parsed = Number(MAX_SAFE_INTEGER_INPUT);
+    if (parsed !== Number.MAX_SAFE_INTEGER) {
+      throw new Error(
+        `Number('${MAX_SAFE_INTEGER_INPUT}') === ${parsed} on Node.js ${nodeVersion}, ` +
+        `expected ${Number.MAX_SAFE_INTEGER} (Number.MAX_SAFE_INTEGER). ` +
+        `A Node.js major upgrade may have changed large-integer parsing.`
+      );
+    }
+    expect(parsed).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("pure-JS canary: Number.isSafeInteger(Number('9007199254740991')) returns true", () => {
+    // Guard: if this canary fails, the Node.js version has a regression in
+    // Number.isSafeInteger for the exact MAX_SAFE_INTEGER boundary.
+    const parsed = Number(MAX_SAFE_INTEGER_INPUT);
+    const safe = Number.isSafeInteger(parsed);
+    if (!safe) {
+      throw new Error(
+        `Number.isSafeInteger(${parsed}) returned false on Node.js ${nodeVersion}. ` +
+        `Expected true because ${parsed} === Number.MAX_SAFE_INTEGER (2^53 - 1). ` +
+        `A Node.js major upgrade may have changed the isSafeInteger boundary.`
+      );
+    }
+    expect(safe).toBe(true);
+  });
+
+  // ── Subprocess tests — exercise the actual guard on this Node binary ───────
+
+  it(`exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS is '${MAX_SAFE_INTEGER_INPUT}' (decimal MAX_SAFE_INTEGER)`, () => {
+    // Number('9007199254740991') === Number.MAX_SAFE_INTEGER.  It passes all
+    // three guards (isNaN, <= 0, isSafeInteger) and is a valid timeout value.
+    // The guard must NOT reject it — this test confirms the guard accepts the
+    // exact upper boundary without an off-by-one error.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: MAX_SAFE_INTEGER_INPUT,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.signal).toBeNull();
+  });
+
+  it(`output contains 'dev database confirmed' for '${MAX_SAFE_INTEGER_INPUT}' (MAX_SAFE_INTEGER accepted)`, () => {
+    // Confirm the guard prints the success message — not an error — when
+    // REQUIRE_DB_PSQL_TIMEOUT_MS is exactly Number.MAX_SAFE_INTEGER.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: MAX_SAFE_INTEGER_INPUT,
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+    expect(result.signal).toBeNull();
+  });
+});
