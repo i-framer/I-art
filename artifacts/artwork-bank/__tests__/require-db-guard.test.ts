@@ -560,6 +560,36 @@ describe("require-db.js — zero or negative REQUIRE_DB_PSQL_TIMEOUT_MS", () => 
     expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
     expect(result.signal).toBeNull();
   });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0o0' (octal zero)", () => {
+    // Number("0o0") === 0 — octal literal notation for zero, caught by the
+    // same <= 0 guard that rejects the plain "0" string.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o0",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for '0o0' mentioning the valid range and does not crash", () => {
+    // Number("0o0") === 0 — the guard must reject it with the same
+    // "positive integer / not meaningful" message used for plain "0".
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o0",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
