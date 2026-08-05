@@ -674,3 +674,37 @@ describe("require-db.js — fractional REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
     expect(result.status).toBe(0);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — Infinity REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // Number.isSafeInteger(Infinity) returns false, so "Infinity" is caught by
+  // the same !Number.isSafeInteger guard that catches fractional values.
+  // Explicit coverage makes it clear this edge case is intentional and guarded.
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is 'Infinity'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "Infinity",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints an error mentioning whole number / integer when 'Infinity' is passed", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "Infinity",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
