@@ -277,3 +277,34 @@ describe("require-db.js — psql unavailable", () => {
     expect(output).toMatch(/psql|probe/i);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — completely empty environment object", () => {
+  // Some container runtimes (sandboxed processes, certain CI setups) start a
+  // child process with a completely clean environment — no PATH, no DATABASE_URL,
+  // no inherited variables at all.  This suite exercises that extreme case.
+  //
+  // We use process.execPath (the absolute path to the running node binary) so
+  // the absence of PATH does not prevent node from being launched.  The script
+  // itself receives an env object with no keys whatsoever.
+
+  it("exits 1 when the entire environment object is empty", () => {
+    const result = spawnSync(process.execPath, [SCRIPT], {
+      env: {} as NodeJS.ProcessEnv,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints the DATABASE_URL-is-not-set message, confirming Check 1 fires before the psql probe", () => {
+    const result = spawnSync(process.execPath, [SCRIPT], {
+      env: {} as NodeJS.ProcessEnv,
+      encoding: "utf8",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("DATABASE_URL is not set");
+  });
+});
