@@ -2588,3 +2588,120 @@ describe("require-db.js — MAX_SAFE_INTEGER+3 supplied in scientific notation",
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — scientific notation that underflows to zero (e.g. '1e-10')", () => {
+  // Scientific-notation strings like '1e-10' parse via Number() to a tiny
+  // positive fraction (0.0000000001).  This value passes the isNaN check and
+  // the <= 0 check (it is strictly positive), but it is not a whole number so
+  // Number.isSafeInteger returns false.  The guard must reject these values
+  // with a clear "not a whole number" message rather than passing a sub-
+  // millisecond fraction to spawnSync's timeout option.
+  //
+  // Values exercised:
+  //   '1e-10'  → 0.0000000001  (positive near-zero fraction)
+  //   '5e-3'   → 0.005         (positive small fraction)
+  //   '1.5e-2' → 0.015         (positive small fraction, also has a decimal point)
+
+  // ── Pure-JS canary ─────────────────────────────────────────────────────────
+  // These assertions run in-process (no subprocess, no fake psql) and confirm
+  // that the JavaScript runtime itself treats these strings as non-safe-integers.
+  // If a future engine change makes Number.isSafeInteger return true for a
+  // tiny fraction, this canary fails immediately with a clear message.
+
+  it("canary: Number.isSafeInteger(Number('1e-10')) is false", () => {
+    const parsed = Number("1e-10");
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  it("canary: Number.isSafeInteger(Number('5e-3')) is false", () => {
+    const parsed = Number("5e-3");
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  it("canary: Number.isSafeInteger(Number('1.5e-2')) is false", () => {
+    const parsed = Number("1.5e-2");
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  // ── Subprocess tests ───────────────────────────────────────────────────────
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e-10'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e-10",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number' / 'integer' error for '1e-10' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e-10",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '5e-3'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "5e-3",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number' / 'integer' error for '5e-3' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "5e-3",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '1.5e-2'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1.5e-2",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number' / 'integer' error for '1.5e-2' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1.5e-2",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
