@@ -2291,3 +2291,95 @@ describe("require-db.js — decimal MAX_SAFE_INTEGER-1 REQUIRE_DB_PSQL_TIMEOUT_M
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — decimal MAX_SAFE_INTEGER+2 REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // '9007199254740993' is Number.MAX_SAFE_INTEGER + 2 (2^53 + 1), expressed as
+  // a plain decimal string.  This is two steps above the upper boundary of the
+  // safe-integer range, confirming the guard's rejection is symmetric across
+  // the fence-post region and not limited to the single adjacent value.
+  //
+  // Number('9007199254740993') evaluates to 9007199254740992 in JavaScript
+  // (the value rounds to 2^53 because IEEE-754 double precision cannot
+  // distinguish 2^53 from 2^53+1), which:
+  //   - passes the isNaN guard (it is a valid number)
+  //   - passes the <= 0 guard (it is positive)
+  //   - is caught by the !Number.isSafeInteger guard (Number.isSafeInteger
+  //     returns false for any value > Number.MAX_SAFE_INTEGER)
+  //
+  // The guard must REJECT this value and exit 1 with a message matching
+  // /whole number|integer/i — the same branch that fires for MAX_SAFE_INTEGER+1.
+
+  const MAX_SAFE_INTEGER_PLUS_TWO_INPUT = "9007199254740993"; // Number.MAX_SAFE_INTEGER + 2
+  const nodeVersion = process.version;
+
+  // ── Pure-JS canaries — confirm Number() and isSafeInteger behave as expected ─
+
+  it("pure-JS canary: Number('9007199254740993') > Number.MAX_SAFE_INTEGER", () => {
+    // Guard: if this canary fails, the Node.js version has a regression in
+    // Number() parsing for large integer literals near the safe-integer boundary.
+    const parsed = Number(MAX_SAFE_INTEGER_PLUS_TWO_INPUT);
+    if (parsed <= Number.MAX_SAFE_INTEGER) {
+      throw new Error(
+        `Number('${MAX_SAFE_INTEGER_PLUS_TWO_INPUT}') === ${parsed} on Node.js ${nodeVersion}, ` +
+        `but expected a value strictly greater than Number.MAX_SAFE_INTEGER (${Number.MAX_SAFE_INTEGER}). ` +
+        `A Node.js major upgrade may have changed large-integer parsing near the safe-integer boundary.`
+      );
+    }
+    expect(parsed).toBeGreaterThan(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("pure-JS canary: Number.isSafeInteger(Number('9007199254740993')) returns false", () => {
+    // Guard: confirms isSafeInteger correctly rejects values above MAX_SAFE_INTEGER.
+    // Number('9007199254740993') rounds to 9007199254740992 (2^53) in IEEE-754,
+    // which is still outside the safe range.
+    const parsed = Number(MAX_SAFE_INTEGER_PLUS_TWO_INPUT);
+    const safe = Number.isSafeInteger(parsed);
+    if (safe) {
+      throw new Error(
+        `Number.isSafeInteger(${parsed}) returned true on Node.js ${nodeVersion}. ` +
+        `Expected false — MAX_SAFE_INTEGER+2 must never be a safe integer. ` +
+        `A Node.js major upgrade may have changed the isSafeInteger boundary.`
+      );
+    }
+    expect(safe).toBe(false);
+  });
+
+  // ── Subprocess tests — exercise the actual guard on this Node binary ───────
+
+  it(`exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '${MAX_SAFE_INTEGER_PLUS_TWO_INPUT}' (decimal MAX_SAFE_INTEGER+2)`, () => {
+    // Number('9007199254740993') rounds to 2^53 which is > MAX_SAFE_INTEGER.
+    // It passes the isNaN check (it is a number) and the <= 0 check (it is
+    // positive), then is caught by the !Number.isSafeInteger branch in
+    // scripts/require-db.js — confirming the guard rejects two steps above the
+    // boundary the same way it rejects one step above.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: MAX_SAFE_INTEGER_PLUS_TWO_INPUT,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it(`prints a 'whole number' / 'integer' error for '${MAX_SAFE_INTEGER_PLUS_TWO_INPUT}' (isSafeInteger branch)`, () => {
+    // The !isSafeInteger branch in require-db.js emits a message matching
+    // /whole number|integer/i — the same branch that fires for MAX_SAFE_INTEGER+1,
+    // confirming the guard's rejection is symmetric two steps above the boundary.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: MAX_SAFE_INTEGER_PLUS_TWO_INPUT,
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
