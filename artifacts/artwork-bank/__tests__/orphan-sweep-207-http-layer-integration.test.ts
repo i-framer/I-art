@@ -126,6 +126,10 @@ async function createTenant(): Promise<string> {
 /**
  * Insert an artwork_image row referencing a non-existent artwork, bypassing
  * the FK constraint so the row is a genuine orphan.
+ *
+ * DISABLE and ENABLE run inside a single transaction so the pair is atomic
+ * from other sessions' perspective — no concurrent test can interleave an
+ * ENABLE between our DISABLE and INSERT.
  */
 async function insertOrphanImageRow(
   tenantId: string,
@@ -134,17 +138,16 @@ async function insertOrphanImageRow(
   const id = uid();
   const objectPath = `/objects/uploads/${id}`;
 
-  await db.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
-  try {
-    await db.execute(
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
+    await tx.execute(
       sql`INSERT INTO artwork_image
             (id, artwork_id, tenant_id, object_path, filename, sort_order, is_primary)
           VALUES
             (${id}, ${ghostArtworkId}, ${tenantId}, ${objectPath}, ${"http-layer-orphan.jpg"}, 0, false)`,
     );
-  } finally {
-    await db.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
-  }
+    await tx.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
+  });
 
   insertedOrphanImageIds.push(id);
   return { id, objectPath };
@@ -155,7 +158,9 @@ async function insertOrphanImageRow(
 beforeEach(async () => {
   createdTenantIds.length = 0;
   insertedOrphanImageIds.length = 0;
-  vi.mocked(deleteObject).mockClear();
+  // mockReset clears call tracking AND the once-implementation queue so a
+  // once-rejection from a failing test cannot leak into the next test.
+  vi.mocked(deleteObject).mockReset();
   vi.mocked(deleteObject).mockResolvedValue(undefined);
   sendOrphanSweepSlackNotification.mockClear();
   sendOrphanSweepSlackNotification.mockRejectedValue(
@@ -204,9 +209,11 @@ describeIntegration(
       );
 
       // Make the storage deletion fail so errors > 0 and notifications fire.
-      vi.mocked(deleteObject).mockRejectedValueOnce(
-        new Error("simulated storage failure"),
-      );
+      // Path-keyed implementation: always applies to our specific row regardless
+      // of other orphan rows in the DB from other test files that ran earlier.
+      vi.mocked(deleteObject).mockImplementation(async (path: string) => {
+        if (path === objectPath) throw new Error("simulated storage failure");
+      });
 
       // Act: issue a genuine HTTP request via fetch() — not a direct handler call.
       // The request traverses a real TCP socket; the status in the response is
@@ -331,17 +338,21 @@ describeIntegration(
       // Arrange: a genuine orphan row so the sweep has real work to do.
       const tenantId = await createTenant();
       const ghostArtworkId = uid();
-      const { id: orphanId } = await insertOrphanImageRow(
-        tenantId,
-        ghostArtworkId,
-      );
+      const { id: orphanId, objectPath: orphanObjectPath } =
+        await insertOrphanImageRow(tenantId, ghostArtworkId);
 
       // Simulate the "already cleaned up" race: deleteObject throws a 404-style
       // error matching the /does not exist/i branch in orphan-image-sweep.ts.
       // The sweep treats this as a successful deletion (deleted++, errors stays 0).
-      vi.mocked(deleteObject).mockRejectedValueOnce(
-        Object.assign(new Error("The object does not exist"), { status: 404 }),
-      );
+      // Path-keyed implementation: always applies to our specific row regardless
+      // of other orphan rows in the DB from other test files that ran earlier.
+      vi.mocked(deleteObject).mockImplementation(async (path: string) => {
+        if (path === orphanObjectPath) {
+          throw Object.assign(new Error("The object does not exist"), {
+            status: 404,
+          });
+        }
+      });
 
       // Notifications must NOT fire because errors === 0.
       sendOrphanSweepSlackNotification.mockResolvedValue({ ok: true });
@@ -423,9 +434,9 @@ describeIntegration(
       // get a 404-style "already gone" response.  Both paths count as deleted++;
       // errors stays at 0, so the sweep must return HTTP 200 (not 207).
       //
-      // Both rows are inserted inside a SINGLE DISABLE/ENABLE TRIGGER ALL block
-      // to minimise the exclusive DDL lock window and reduce interference with
-      // other concurrently running integration test files.
+      // Both rows are inserted inside a SINGLE transaction-wrapped
+      // DISABLE/ENABLE TRIGGER ALL block so the operation is atomic from
+      // other sessions' perspective and the lock window is as tight as possible.
       const tenantId = await createTenant();
       const ghostArtworkId = uid();
 
@@ -434,18 +445,17 @@ describeIntegration(
       const objectPath1 = `/objects/uploads/${id1}`;
       const objectPath2 = `/objects/uploads/${id2}`;
 
-      await db.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
-      try {
-        await db.execute(
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
+        await tx.execute(
           sql`INSERT INTO artwork_image
                 (id, artwork_id, tenant_id, object_path, filename, sort_order, is_primary)
               VALUES
                 (${id1}, ${ghostArtworkId}, ${tenantId}, ${objectPath1}, ${"http-layer-mixed-1.jpg"}, 0, false),
                 (${id2}, ${ghostArtworkId}, ${tenantId}, ${objectPath2}, ${"http-layer-mixed-2.jpg"}, 1, false)`,
         );
-      } finally {
-        await db.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
-      }
+        await tx.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
+      });
       insertedOrphanImageIds.push(id1, id2);
 
       // Use a path-based mock so behaviour is deterministic regardless of how

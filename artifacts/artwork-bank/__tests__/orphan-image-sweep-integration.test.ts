@@ -71,24 +71,26 @@ async function createArtwork(tenantId: string) {
  *
  * This simulates the orphan scenario (artwork deleted before the fix) by
  * bypassing the FK constraint for the duration of the insert.  We do this
- * by temporarily disabling constraint triggers on the table — the test DB
- * user owns the table so this is permitted.
+ * by temporarily disabling constraint triggers on the table inside an
+ * explicit transaction so the DISABLE and ENABLE are atomic from other
+ * sessions' perspective — no other session can interleave an ENABLE between
+ * our DISABLE and INSERT, which was the race that required
+ * --no-file-parallelism.
  */
 async function insertOrphanImageRow(tenantId: string, ghostArtworkId: string) {
   const id = uid();
   const objectPath = `/objects/uploads/${id}`;
 
-  await db.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
-  try {
-    await db.execute(
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
+    await tx.execute(
       sql`INSERT INTO artwork_image
             (id, artwork_id, tenant_id, object_path, filename, sort_order, is_primary)
           VALUES
             (${id}, ${ghostArtworkId}, ${tenantId}, ${objectPath}, ${"orphan-test.jpg"}, 0, false)`,
     );
-  } finally {
-    await db.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
-  }
+    await tx.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
+  });
 
   insertedOrphanImageIds.push(id);
   return { id, objectPath };
@@ -100,7 +102,10 @@ beforeEach(() => {
   createdTenantIds.length = 0;
   createdArtworkIds.length = 0;
   insertedOrphanImageIds.length = 0;
-  vi.mocked(deleteObject).mockClear();
+  // mockReset clears call tracking AND the once-implementation queue so a
+  // once-rejection from a failing test cannot leak into the next test.
+  vi.mocked(deleteObject).mockReset();
+  vi.mocked(deleteObject).mockResolvedValue(undefined);
 });
 
 afterEach(async () => {
@@ -293,8 +298,13 @@ describeIntegration("sweepOrphanedImageFiles() — integration (real DB)", () =>
 
     // Simulate a 404 error leaking out of deleteObject (e.g. Vercel Blob or a
     // future backend that doesn't swallow 404 internally).
+    // Use a path-keyed implementation so the rejection is always applied to
+    // this specific row regardless of how many other orphan rows exist in the
+    // DB when the sweep runs (e.g. from other test files that ran earlier).
     const notFoundError = new Error("object not found (404)");
-    vi.mocked(deleteObject).mockRejectedValueOnce(notFoundError);
+    vi.mocked(deleteObject).mockImplementation(async (path: string) => {
+      if (path === objectPath) throw notFoundError;
+    });
 
     const result = await sweepOrphanedImageFiles();
 
@@ -337,7 +347,11 @@ describeIntegration("sweepOrphanedImageFiles() — integration (real DB)", () =>
       ghostArtworkId,
     );
 
-    vi.mocked(deleteObject).mockRejectedValueOnce(new BlobNotFoundError());
+    // Path-keyed implementation: always applies to our specific row regardless
+    // of other orphan rows in the DB from other test files.
+    vi.mocked(deleteObject).mockImplementation(async (path: string) => {
+      if (path === objectPath) throw new BlobNotFoundError();
+    });
 
     const result = await sweepOrphanedImageFiles();
 
@@ -376,7 +390,11 @@ describeIntegration("sweepOrphanedImageFiles() — integration (real DB)", () =>
       ghostArtworkId,
     );
 
-    vi.mocked(deleteObject).mockRejectedValueOnce(new BlobStoreNotFoundError());
+    // Path-keyed implementation: always applies to our specific row regardless
+    // of other orphan rows in the DB from other test files.
+    vi.mocked(deleteObject).mockImplementation(async (path: string) => {
+      if (path === objectPath) throw new BlobStoreNotFoundError();
+    });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const result = await sweepOrphanedImageFiles();
@@ -412,10 +430,11 @@ describeIntegration("sweepOrphanedImageFiles() — integration (real DB)", () =>
       ghostArtworkId,
     );
 
-    // Make deleteObject throw for this specific path
-    vi.mocked(deleteObject).mockRejectedValueOnce(
-      new Error("simulated storage failure"),
-    );
+    // Path-keyed implementation: always applies to our specific row regardless
+    // of other orphan rows in the DB from other test files.
+    vi.mocked(deleteObject).mockImplementation(async (path: string) => {
+      if (path === objectPath) throw new Error("simulated storage failure");
+    });
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const result = await sweepOrphanedImageFiles();

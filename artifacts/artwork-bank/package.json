@@ -8,7 +8,7 @@
     "build:no-db": "BUILD_DIR=.next-ci rm -rf .next-ci && BUILD_DIR=.next-ci env -u DATABASE_URL -u SESSION_SECRET next build",
     "start": "next start --port $PORT",
     "typecheck": "rm -rf .next/types && tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --no-file-parallelism",
     "test:integration": "node scripts/require-db.js && vitest run --reporter=verbose --no-file-parallelism integration",
     "db:seed": "tsx scripts/seed.ts",
     "smoke:billing-alert": "tsx scripts/smoke-billing-alert.ts",

@@ -80,22 +80,25 @@ async function createTenant() {
 /**
  * Insert an artwork_image row referencing a non-existent artwork, bypassing
  * the FK constraint so the row is a genuine orphan.
+ *
+ * DISABLE and ENABLE run inside a single transaction so the pair is atomic
+ * from other sessions' perspective — no concurrent test can interleave an
+ * ENABLE between our DISABLE and INSERT.
  */
 async function insertOrphanImageRow(tenantId: string, ghostArtworkId: string) {
   const id = uid();
   const objectPath = `/objects/uploads/${id}`;
 
-  await db.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
-  try {
-    await db.execute(
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
+    await tx.execute(
       sql`INSERT INTO artwork_image
             (id, artwork_id, tenant_id, object_path, filename, sort_order, is_primary)
           VALUES
             (${id}, ${ghostArtworkId}, ${tenantId}, ${objectPath}, ${"dual-notify-orphan.jpg"}, 0, false)`,
     );
-  } finally {
-    await db.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
-  }
+    await tx.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
+  });
 
   insertedOrphanImageIds.push(id);
   return { id, objectPath };
@@ -113,7 +116,10 @@ function makeRequest(): Request {
 beforeEach(() => {
   createdTenantIds.length = 0;
   insertedOrphanImageIds.length = 0;
-  vi.mocked(deleteObject).mockClear();
+  // mockReset clears call tracking AND the once-implementation queue so a
+  // once-rejection from a failing test cannot leak into the next test.
+  vi.mocked(deleteObject).mockReset();
+  vi.mocked(deleteObject).mockResolvedValue(undefined);
   // Clear call counts and reset the throwing behaviour for each test.
   sendOrphanSweepSlackNotification.mockClear();
   sendOrphanSweepSlackNotification.mockRejectedValue(
@@ -164,9 +170,11 @@ describeIntegration(
 
       // Make deleteObject throw for this row so the sweep records an error and
       // triggers the notification path that exercises both channels.
-      vi.mocked(deleteObject).mockRejectedValueOnce(
-        new Error("simulated storage failure"),
-      );
+      // Path-keyed implementation: always applies to our specific row regardless
+      // of other orphan rows in the DB from other test files that ran earlier.
+      vi.mocked(deleteObject).mockImplementation(async (path: string) => {
+        if (path === objectPath) throw new Error("simulated storage failure");
+      });
 
       // Act: run the real route (real DB query, stubbed notifications)
       const res = await GET(makeRequest());
