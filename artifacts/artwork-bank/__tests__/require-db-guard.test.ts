@@ -1209,4 +1209,112 @@ describe("require-db.js — whitespace-only REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
     expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
     expect(result.signal).toBeNull();
   });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is thin-space-only ('\\u2009')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\u2009",
+    });
+
+    // Number("\u2009") === 0 — thin space is trimmed by Number(), same branch as "\u00A0" and "\u2003".
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for thin-space-only ('\\u2009') mentioning the valid range", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\u2009",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is hair-space-only ('\\u200A')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\u200A",
+    });
+
+    // Number("\u200A") === 0 — hair space is trimmed by Number(), same branch as "\u2009".
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for hair-space-only ('\\u200A') mentioning the valid range", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\u200A",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is ideographic-space-only ('\\u3000')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\u3000",
+    });
+
+    // Number("\u3000") === 0 — ideographic space is trimmed by Number(), same branch as "\u200A".
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for ideographic-space-only ('\\u3000') mentioning the valid range", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\u3000",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is BOM/zero-width-no-break-space-only ('\\uFEFF')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\uFEFF",
+    });
+
+    // Number("\uFEFF") === 0 — BOM (zero-width no-break space) is trimmed by Number(), same branch as "\u3000".
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for BOM/zero-width-no-break-space-only ('\\uFEFF') mentioning the valid range", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\uFEFF",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
 });
