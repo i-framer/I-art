@@ -3703,3 +3703,60 @@ describe("require-db.js — non-zero octal REQUIRE_DB_PSQL_TIMEOUT_MS values are
     expect(output).toContain("dev database confirmed");
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — binary literal REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // JavaScript's Number() understands binary literal notation, so
+  // Number("0b1") === 1 and Number("0b11101000") === 232.  Both are positive
+  // safe integers and are therefore valid timeout values.  A future
+  // literal-rejection regex could silently break these, so they are pinned
+  // here alongside the hex and octal cases.
+
+  it("does not produce a validation error message for '0b1'", () => {
+    // Number("0b1") === 1 — smallest positive binary literal; must pass all
+    // three guards (isNaN, <= 0, !isSafeInteger) without triggering an error.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b1",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    // None of the three validation error patterns must appear.
+    expect(output).not.toMatch(/non-numeric|not.*number|must be.*number|numeric/i);
+    expect(output).not.toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(output).not.toMatch(/whole number|integer|fractional/i);
+  });
+
+  it("signal is null for '0b1' (guard exits cleanly, not via uncaught exception)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b1",
+    });
+
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 0 and outputs 'dev database confirmed' for '0b11101000' (232 ms)", () => {
+    // Number("0b11101000") === 232 — a non-trivial binary timeout value that is
+    // a positive safe integer and must be accepted by all three guards so the
+    // psql probe runs normally.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b11101000",
+    });
+
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+});
