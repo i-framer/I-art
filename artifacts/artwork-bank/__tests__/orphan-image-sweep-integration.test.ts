@@ -81,15 +81,22 @@ async function insertOrphanImageRow(tenantId: string, ghostArtworkId: string) {
   const id = uid();
   const objectPath = `/objects/uploads/${id}`;
 
+  // SET LOCAL session_replication_role = 'replica' disables FK trigger firing
+  // for the duration of this transaction so we can insert a row whose
+  // artwork_id references a non-existent artwork without touching system
+  // triggers.  SET LOCAL is transaction-scoped: as soon as the transaction
+  // commits or rolls back, the setting reverts to 'origin' on this connection,
+  // so no other concurrent session can observe the replication-role change.
+  // This is the parallel-safe alternative to the session-level
+  // DISABLE TRIGGER ALL that required --no-file-parallelism.
   await db.transaction(async (tx) => {
-    await tx.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
+    await tx.execute(sql`SET LOCAL session_replication_role = 'replica'`);
     await tx.execute(
       sql`INSERT INTO artwork_image
             (id, artwork_id, tenant_id, object_path, filename, sort_order, is_primary)
           VALUES
             (${id}, ${ghostArtworkId}, ${tenantId}, ${objectPath}, ${"orphan-test.jpg"}, 0, false)`,
     );
-    await tx.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
   });
 
   insertedOrphanImageIds.push(id);

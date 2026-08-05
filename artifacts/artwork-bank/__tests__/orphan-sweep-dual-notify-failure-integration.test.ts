@@ -81,23 +81,24 @@ async function createTenant() {
  * Insert an artwork_image row referencing a non-existent artwork, bypassing
  * the FK constraint so the row is a genuine orphan.
  *
- * DISABLE and ENABLE run inside a single transaction so the pair is atomic
- * from other sessions' perspective — no concurrent test can interleave an
- * ENABLE between our DISABLE and INSERT.
+ * SET LOCAL session_replication_role = 'replica' disables FK trigger firing
+ * for the duration of this transaction so we can insert a row whose
+ * artwork_id references a non-existent artwork.  SET LOCAL is
+ * transaction-scoped: the setting reverts on commit/rollback, so no other
+ * concurrent session can observe the replication-role change.
  */
 async function insertOrphanImageRow(tenantId: string, ghostArtworkId: string) {
   const id = uid();
   const objectPath = `/objects/uploads/${id}`;
 
   await db.transaction(async (tx) => {
-    await tx.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
+    await tx.execute(sql`SET LOCAL session_replication_role = 'replica'`);
     await tx.execute(
       sql`INSERT INTO artwork_image
             (id, artwork_id, tenant_id, object_path, filename, sort_order, is_primary)
           VALUES
             (${id}, ${ghostArtworkId}, ${tenantId}, ${objectPath}, ${"dual-notify-orphan.jpg"}, 0, false)`,
     );
-    await tx.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
   });
 
   insertedOrphanImageIds.push(id);

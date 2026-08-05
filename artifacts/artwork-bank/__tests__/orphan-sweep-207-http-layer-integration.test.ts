@@ -127,9 +127,11 @@ async function createTenant(): Promise<string> {
  * Insert an artwork_image row referencing a non-existent artwork, bypassing
  * the FK constraint so the row is a genuine orphan.
  *
- * DISABLE and ENABLE run inside a single transaction so the pair is atomic
- * from other sessions' perspective — no concurrent test can interleave an
- * ENABLE between our DISABLE and INSERT.
+ * SET LOCAL session_replication_role = 'replica' disables FK trigger firing
+ * for the duration of this transaction so we can insert a row whose
+ * artwork_id references a non-existent artwork.  SET LOCAL is
+ * transaction-scoped: the setting reverts on commit/rollback, so no other
+ * concurrent session can observe the replication-role change.
  */
 async function insertOrphanImageRow(
   tenantId: string,
@@ -139,14 +141,13 @@ async function insertOrphanImageRow(
   const objectPath = `/objects/uploads/${id}`;
 
   await db.transaction(async (tx) => {
-    await tx.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
+    await tx.execute(sql`SET LOCAL session_replication_role = 'replica'`);
     await tx.execute(
       sql`INSERT INTO artwork_image
             (id, artwork_id, tenant_id, object_path, filename, sort_order, is_primary)
           VALUES
             (${id}, ${ghostArtworkId}, ${tenantId}, ${objectPath}, ${"http-layer-orphan.jpg"}, 0, false)`,
     );
-    await tx.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
   });
 
   insertedOrphanImageIds.push(id);
@@ -434,9 +435,9 @@ describeIntegration(
       // get a 404-style "already gone" response.  Both paths count as deleted++;
       // errors stays at 0, so the sweep must return HTTP 200 (not 207).
       //
-      // Both rows are inserted inside a SINGLE transaction-wrapped
-      // DISABLE/ENABLE TRIGGER ALL block so the operation is atomic from
-      // other sessions' perspective and the lock window is as tight as possible.
+      // Both rows are inserted inside a single transaction with
+      // SET LOCAL session_replication_role = 'replica' so the FK bypass is
+      // atomic and transaction-scoped, safe under parallel test execution.
       const tenantId = await createTenant();
       const ghostArtworkId = uid();
 
@@ -446,7 +447,7 @@ describeIntegration(
       const objectPath2 = `/objects/uploads/${id2}`;
 
       await db.transaction(async (tx) => {
-        await tx.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
+        await tx.execute(sql`SET LOCAL session_replication_role = 'replica'`);
         await tx.execute(
           sql`INSERT INTO artwork_image
                 (id, artwork_id, tenant_id, object_path, filename, sort_order, is_primary)
@@ -454,7 +455,6 @@ describeIntegration(
                 (${id1}, ${ghostArtworkId}, ${tenantId}, ${objectPath1}, ${"http-layer-mixed-1.jpg"}, 0, false),
                 (${id2}, ${ghostArtworkId}, ${tenantId}, ${objectPath2}, ${"http-layer-mixed-2.jpg"}, 1, false)`,
         );
-        await tx.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
       });
       insertedOrphanImageIds.push(id1, id2);
 
