@@ -2913,3 +2913,131 @@ describe("require-db.js — hexadecimal REQUIRE_DB_PSQL_TIMEOUT_MS values exceed
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — octal strings that exceed MAX_SAFE_INTEGER", () => {
+  // JavaScript's Number() parses octal literals like '0o400000000000000000'
+  // (the 0o prefix is valid in Number() just as 0x is for hex).  Large octal
+  // values overflow MAX_SAFE_INTEGER exactly like large decimal, scientific-
+  // notation, and hexadecimal values do.  The !Number.isSafeInteger guard
+  // in the script must catch them and exit 1 with a clear error.
+  //
+  // Key values:
+  //   0o400000000000000000 = 9007199254740992 = Number.MAX_SAFE_INTEGER + 1
+  //   0o400000000000000001 ≈ MAX_SAFE_INTEGER + 2 (rounds to MAX_SAFE_INTEGER+2)
+  //   0o777777777777777777 = 18446744073709551615 — far beyond MAX_SAFE_INTEGER
+  //
+  // These pure-JS canary assertions run in the same V8 instance as the suite
+  // and confirm the JavaScript semantics the subprocess tests rely on.
+
+  // ── Pure-JS canaries ────────────────────────────────────────────────────────
+
+  it("canary: Number('0o400000000000000000') is not a safe integer (MAX_SAFE_INTEGER+1 in octal)", () => {
+    // 0o400000000000000000 = 8^17 * 4 = 2^53 = 9007199254740992 = MAX_SAFE_INTEGER + 1
+    const parsed = Number("0o400000000000000000");
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  it("canary: Number('0o400000000000000002') is not a safe integer (MAX_SAFE_INTEGER+2 in octal)", () => {
+    // 0o400000000000000002 = 9007199254740994 — two beyond MAX_SAFE_INTEGER
+    const parsed = Number("0o400000000000000002");
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  it("canary: Number('0o777777777777777777') is not a safe integer (large octal)", () => {
+    // 0o777777777777777777 = 18446744073709551615 — far beyond MAX_SAFE_INTEGER
+    const parsed = Number("0o777777777777777777");
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  it("canary: Number('0o377777777777777777') IS a safe integer (exactly MAX_SAFE_INTEGER in octal)", () => {
+    // 0o377777777777777777 = 9007199254740991 = Number.MAX_SAFE_INTEGER — boundary check
+    const parsed = Number("0o377777777777777777");
+    expect(Number.isSafeInteger(parsed)).toBe(true);
+  });
+
+  // ── Subprocess: '0o400000000000000000' (MAX_SAFE_INTEGER+1) ─────────────────
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0o400000000000000000'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o400000000000000000",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number' / 'integer' error for '0o400000000000000000' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o400000000000000000",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+
+  // ── Subprocess: '0o400000000000000002' (MAX_SAFE_INTEGER+2) ─────────────────
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0o400000000000000002'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o400000000000000002",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number' / 'integer' error for '0o400000000000000002' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o400000000000000002",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+
+  // ── Subprocess: '0o777777777777777777' (large octal) ────────────────────────
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0o777777777777777777'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o777777777777777777",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number' / 'integer' error for '0o777777777777777777' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o777777777777777777",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
