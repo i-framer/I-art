@@ -877,3 +877,76 @@ describe("require-db.js — additional non-numeric string edge cases for REQUIRE
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — whitespace-padded REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // JavaScript's Number() trims surrounding whitespace before parsing, so
+  // Number(" 500"), Number("500 "), and Number(" 500 ") all evaluate to 500.
+  // The guard relies on Number() for parsing and therefore accepts these
+  // whitespace-padded values as valid — they pass the isNaN, <= 0, and
+  // isSafeInteger checks and the psql probe proceeds normally.
+  //
+  // These tests document that intentional behaviour: leading/trailing
+  // whitespace does not cause an exit 1 error and does not reach spawnSync
+  // as a NaN or otherwise corrupt value.
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS has a leading space (' 500')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: " 500",
+    });
+
+    // Number(" 500") === 500 — trimmed to a valid positive integer.
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS has a trailing space ('500 ')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "500 ",
+    });
+
+    // Number("500 ") === 500 — trimmed to a valid positive integer.
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS has both leading and trailing spaces (' 500 ')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: " 500 ",
+    });
+
+    // Number(" 500 ") === 500 — trimmed to a valid positive integer.
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+
+  it("does not crash (signal is null) for any of the whitespace-padded inputs", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+    const inputs = [" 500", "500 ", " 500 "];
+
+    for (const val of inputs) {
+      const result = runGuard({
+        DATABASE_URL: "postgres://user:pass@localhost/devdb",
+        PATH: `${fakeBinDir}:${process.env.PATH}`,
+        REQUIRE_DB_PSQL_TIMEOUT_MS: val,
+      });
+      expect(result.signal).toBeNull();
+    }
+  });
+});
