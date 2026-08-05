@@ -416,6 +416,94 @@ describe("require-db.js — non-numeric REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
 
 // ──────────────────────────────────────────────────────────────────────────────
 
+describe("require-db.js — zero or negative REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // A value of 0 or a negative number is never a valid timeout: spawnSync with
+  // timeout=0 may kill the child immediately (or ignore the timeout depending
+  // on the Node version), and a negative value is never meaningful.  The guard
+  // must reject these values with a clear error rather than passing them to
+  // spawnSync.
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is 0", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for 0 mentioning the valid range", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is -1", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "-1",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for -1 mentioning the valid range", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "-1",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is -500", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "-500",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for -500 mentioning the valid range", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "-500",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 describe("require-db.js — psql probe runs correctly without Node env baggage", () => {
   // This suite confirms that Check 2 (the psql probe) functions correctly when
   // Node-specific environment variables such as NODE_PATH, NODE_OPTIONS,

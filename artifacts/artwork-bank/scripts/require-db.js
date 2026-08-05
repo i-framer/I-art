@@ -84,6 +84,19 @@ if (process.env.REQUIRE_DB_PSQL_TIMEOUT_MS !== undefined) {
     );
     process.exit(1);
   }
+  if (parsed <= 0) {
+    process.stderr.write(
+      "\n" +
+      "ERROR: REQUIRE_DB_PSQL_TIMEOUT_MS is set to " +
+      JSON.stringify(process.env.REQUIRE_DB_PSQL_TIMEOUT_MS) + ", which is not a valid timeout.\n" +
+      "\n" +
+      "This variable must be a positive integer (milliseconds), e.g. 15000.\n" +
+      "A value of 0 or a negative number is not meaningful as a timeout.\n" +
+      "Unset it to use the default (15 000 ms), or set it to a positive number.\n" +
+      "\n"
+    );
+    process.exit(1);
+  }
   psqlTimeoutMs = parsed;
 }
 
