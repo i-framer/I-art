@@ -311,6 +311,51 @@ describe("require-db.js — completely empty environment object", () => {
 
 // ──────────────────────────────────────────────────────────────────────────────
 
+describe("require-db.js — psql probe times out in a stripped env (no Node vars)", () => {
+  // This suite confirms the ETIMEDOUT branch fires correctly when the child
+  // process environment contains only DATABASE_URL, a PATH pointing at a
+  // sleeping fake psql, and REQUIRE_DB_PSQL_TIMEOUT_MS — no NODE_PATH,
+  // NODE_OPTIONS, NODE_ENV, npm_*, or any other inherited Node internals.
+  // It exercises the full spawnSync timeout mechanism, not a monkey-patched stub.
+
+  it("exits 1 when psql hangs and spawnSync times out in a stripped env", () => {
+    const fakeBinDir = makeFakePsqlDir("sleep 10");
+
+    const minimalEnv = {
+      DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "500",
+    } as unknown as NodeJS.ProcessEnv;
+
+    const result = spawnSync(process.execPath, [SCRIPT], {
+      env: minimalEnv,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+  }, 10_000);
+
+  it("prints a message containing 'timed out' when psql hangs in a stripped env", () => {
+    const fakeBinDir = makeFakePsqlDir("sleep 10");
+
+    const minimalEnv = {
+      DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "500",
+    } as unknown as NodeJS.ProcessEnv;
+
+    const result = spawnSync(process.execPath, [SCRIPT], {
+      env: minimalEnv,
+      encoding: "utf8",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/timed out/i);
+  }, 10_000);
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 describe("require-db.js — psql probe runs correctly without Node env baggage", () => {
   // This suite confirms that Check 2 (the psql probe) functions correctly when
   // Node-specific environment variables such as NODE_PATH, NODE_OPTIONS,
