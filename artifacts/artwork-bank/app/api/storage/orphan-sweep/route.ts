@@ -70,11 +70,22 @@ async function runSweep(request: Request) {
     // When errors occurred, notify the operator via Slack and/or email so they
     // don't have to spot the failure from logs or the HTTP 207 response.
     if (result.errors > 0) {
-      const slackResult = await sendOrphanSweepSlackNotification({
-        errors: result.errors,
-        failedPaths: result.failedPaths,
-      });
-      const slackFailure = slackResult.ok ? undefined : slackResult.error;
+      // Both Slack and email notifications are best-effort: a throw from either
+      // must never change the HTTP status or mask the sweep result.
+      let slackFailure: string | undefined;
+      try {
+        const slackResult = await sendOrphanSweepSlackNotification({
+          errors: result.errors,
+          failedPaths: result.failedPaths,
+        });
+        slackFailure = slackResult.ok ? undefined : slackResult.error;
+      } catch (slackErr) {
+        slackFailure = slackErr instanceof Error ? slackErr.message : String(slackErr);
+        console.error(
+          "[orphan-sweep] Slack notification threw (sweep result unaffected):",
+          slackFailure,
+        );
+      }
       // Fire email regardless of Slack outcome; include Slack failure info if present.
       // sendOrphanSweepErrorNotification re-throws on transport failure — catch
       // here so a notification error never masks the sweep result or changes the

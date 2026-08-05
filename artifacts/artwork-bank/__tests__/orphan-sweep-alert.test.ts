@@ -216,6 +216,33 @@ describe("orphan-sweep route — operator alert on errors (Task #205)", () => {
     expect(res.body).toEqual(sweepResult);
   });
 
+  it("still returns 207 with correct sweep body when sendOrphanSweepSlackNotification throws", async () => {
+    const sweepResult = {
+      orphaned: 3,
+      deleted: 1,
+      errors: 2,
+      failedPaths: ["/objects/uploads/c.jpg", "/objects/uploads/d.jpg"],
+    };
+    sweepOrphanedImageFiles.mockResolvedValue(sweepResult);
+    sendOrphanSweepSlackNotification.mockRejectedValue(
+      new Error("Network timeout"),
+    );
+
+    const res = await GET(makeRequest());
+
+    // HTTP status must be 207, not 500 — a Slack throw must not bubble up
+    expect(res.status).toBe(207);
+    // The response body must carry the original sweep counts unchanged
+    expect(res.body).toEqual(sweepResult);
+    // Email should still be attempted even when Slack threw
+    expect(sendOrphanSweepErrorNotification).toHaveBeenCalledOnce();
+    expect(sendOrphanSweepErrorNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        slackFailure: "Network timeout",
+      }),
+    );
+  });
+
   it("still returns 207 with correct sweep body when both Slack returns { ok: false } AND email throws", async () => {
     const sweepResult = {
       orphaned: 3,
