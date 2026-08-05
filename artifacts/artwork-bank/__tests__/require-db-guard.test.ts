@@ -563,7 +563,7 @@ describe("require-db.js — zero or negative REQUIRE_DB_PSQL_TIMEOUT_MS", () => 
 
   it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0o0' (octal zero)", () => {
     // Number("0o0") === 0 — octal literal notation for zero, caught by the
-    // same <= 0 guard that rejects the plain "0" string.
+    // same <= 0 guard that rejects the plain "0", "0b0", and "0x0" strings.
     const fakeBinDir = makeFakePsqlDir("exit 0");
 
     const result = runGuard({
