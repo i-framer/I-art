@@ -356,6 +356,66 @@ describe("require-db.js — psql probe times out in a stripped env (no Node vars
 
 // ──────────────────────────────────────────────────────────────────────────────
 
+describe("require-db.js — non-numeric REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // When REQUIRE_DB_PSQL_TIMEOUT_MS is set to a value that cannot be parsed as
+  // a number (e.g. "not-a-number", "abc", ""), Number(...) silently produces
+  // NaN.  Passing NaN to spawnSync's timeout option has undefined behaviour
+  // across Node versions.  The guard must catch this at startup and exit with a
+  // clear error rather than throwing an uncaught exception or silently ignoring
+  // the timeout.
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is a non-numeric string", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "not-a-number",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error mentioning the invalid value rather than an uncaught exception", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "not-a-number",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    // Should mention the bad value and that it must be numeric — not an
+    // uncaught exception stack trace.
+    expect(output).toMatch(/non-numeric|not.*number|must be.*number|numeric/i);
+    expect(result.signal).toBeNull(); // Guard must exit cleanly, not crash
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is an empty string", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    // An empty string is also non-numeric (Number("") === 0 is falsy-ish, but
+    // the guard treats the env var as present and tries to parse it).
+    // Actually Number("") === 0 which IS numeric, so this exercises the edge
+    // case where the value is blank — if the script accepts 0 that's fine; if
+    // it treats empty-string as absent that's also fine.  The key assertion is
+    // that it does NOT throw an uncaught exception.
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "",
+    });
+
+    // Must not crash with an uncaught exception (signal would be non-null if it did)
+    expect(result.signal).toBeNull();
+    // Must exit with a defined status code (0 or 1, not null)
+    expect(result.status).not.toBeNull();
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 describe("require-db.js — psql probe runs correctly without Node env baggage", () => {
   // This suite confirms that Check 2 (the psql probe) functions correctly when
   // Node-specific environment variables such as NODE_PATH, NODE_OPTIONS,

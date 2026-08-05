@@ -65,6 +65,28 @@ process.stdout.write("✓ DATABASE_URL is set — proceeding with integration te
 // If psql is not on PATH we skip the probe rather than blocking the run — the
 // tests themselves will surface a clearer error in that case.
 
+// Validate REQUIRE_DB_PSQL_TIMEOUT_MS before use — Number("abc") silently
+// produces NaN and spawnSync behaviour with a NaN timeout is undefined across
+// Node versions.  Catching it here produces a clear message instead of an
+// uncaught exception or a silently ignored timeout.
+let psqlTimeoutMs = 15_000;
+if (process.env.REQUIRE_DB_PSQL_TIMEOUT_MS !== undefined) {
+  const parsed = Number(process.env.REQUIRE_DB_PSQL_TIMEOUT_MS);
+  if (Number.isNaN(parsed)) {
+    process.stderr.write(
+      "\n" +
+      "ERROR: REQUIRE_DB_PSQL_TIMEOUT_MS is set to a non-numeric value: " +
+      JSON.stringify(process.env.REQUIRE_DB_PSQL_TIMEOUT_MS) + "\n" +
+      "\n" +
+      "This variable must be a positive integer (milliseconds), e.g. 15000.\n" +
+      "Unset it to use the default (15 000 ms), or set it to a valid number.\n" +
+      "\n"
+    );
+    process.exit(1);
+  }
+  psqlTimeoutMs = parsed;
+}
+
 const probeSQL =
   "BEGIN; SET LOCAL session_replication_role = 'replica'; ROLLBACK;";
 
@@ -78,9 +100,7 @@ const result = spawnSync(
   ],
   {
     encoding: "utf8",
-    timeout: process.env.REQUIRE_DB_PSQL_TIMEOUT_MS
-      ? Number(process.env.REQUIRE_DB_PSQL_TIMEOUT_MS)
-      : 15_000,
+    timeout: psqlTimeoutMs,
   }
 );
 
