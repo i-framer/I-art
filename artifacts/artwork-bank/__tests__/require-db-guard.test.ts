@@ -1755,3 +1755,93 @@ describe("require-db.js — '+1e309' (positive-Infinity via numeric overflow) RE
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — hex-notation MAX_SAFE_INTEGER+1 REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // JavaScript's Number() parses hex strings, so Number('0x20000000000001')
+  // evaluates to 9007199254740993 — which is MAX_SAFE_INTEGER + 1.
+  // Number.isSafeInteger returns false for this value even though it is a
+  // positive integer in the mathematical sense, because it cannot be
+  // represented exactly in IEEE-754 double precision.
+  //
+  // The guard must reject it via the !Number.isSafeInteger check rather than
+  // silently passing an unsafe integer to spawnSync's timeout option.
+  //
+  // A pure-JS canary (no subprocess) verifies the active Node binary's
+  // Number() and Number.isSafeInteger() behaviour for this hex literal,
+  // making any future Node version regression immediately obvious.
+
+  const nodeVersion = process.version;
+  const HEX_INPUT = "0x20000000000001"; // MAX_SAFE_INTEGER + 1 in hex
+
+  // ── Pure-JS canary ────────────────────────────────────────────────────────
+
+  it(`Number('${HEX_INPUT}') > Number.MAX_SAFE_INTEGER on Node.js ${nodeVersion} (canary)`, () => {
+    // Confirms that the active Node binary parses this hex string to a value
+    // strictly greater than MAX_SAFE_INTEGER, which is the precondition for
+    // the isSafeInteger guard firing for this input.
+    const parsed = Number(HEX_INPUT);
+    if (parsed <= Number.MAX_SAFE_INTEGER) {
+      throw new Error(
+        `Number('${HEX_INPUT}') returned ${parsed} on Node.js ${nodeVersion}, ` +
+          `expected a value > Number.MAX_SAFE_INTEGER (${Number.MAX_SAFE_INTEGER}). ` +
+          `A Node.js upgrade may have changed how hex-notation parsing is handled. ` +
+          `Update the guard in scripts/require-db.js and this test suite if the semantics changed.`
+      );
+    }
+    expect(parsed).toBeGreaterThan(Number.MAX_SAFE_INTEGER);
+  });
+
+  it(`Number.isSafeInteger(Number('${HEX_INPUT}')) === false on Node.js ${nodeVersion} (canary)`, () => {
+    // Confirms the isSafeInteger check rejects this value, which is the branch
+    // in scripts/require-db.js that this input must hit.
+    const parsed = Number(HEX_INPUT);
+    if (Number.isSafeInteger(parsed)) {
+      throw new Error(
+        `Number.isSafeInteger(Number('${HEX_INPUT}')) returned true on Node.js ${nodeVersion}. ` +
+          `Expected false — MAX_SAFE_INTEGER+1 must never be a safe integer. ` +
+          `A Node.js upgrade may have changed Number()/isSafeInteger() semantics. ` +
+          `Update the guard in scripts/require-db.js if the semantics changed.`
+      );
+    }
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  // ── Subprocess tests — exercise the actual guard on this Node binary ───────
+
+  it(`exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '${HEX_INPUT}' (MAX_SAFE_INTEGER+1 in hex)`, () => {
+    // Number('0x20000000000001') === 9007199254740993 > MAX_SAFE_INTEGER.
+    // It passes the isNaN check (it is a number) and the <= 0 check (it is
+    // positive), then is caught by the !Number.isSafeInteger branch in
+    // scripts/require-db.js.  Uses the real Node binary (process.execPath) to
+    // validate the guard fires correctly on the currently active Node version.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: HEX_INPUT,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it(`prints a 'whole number' / 'integer' error for '${HEX_INPUT}' (isSafeInteger branch)`, () => {
+    // The !isSafeInteger branch in require-db.js emits a message matching
+    // /whole number|integer/i — the same branch that fires for 1e308 and
+    // +1e309, confirming the guard is notation-agnostic.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: HEX_INPUT,
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
