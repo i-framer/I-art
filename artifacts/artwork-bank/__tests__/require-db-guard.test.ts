@@ -1670,3 +1670,88 @@ describe("require-db.js — negative-Infinity overflow: '-1e309' as REQUIRE_DB_P
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — '+1e309' (positive-Infinity via numeric overflow) REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // Number('+1e309') overflows IEEE-754 double precision and evaluates to
+  // +Infinity.  Unlike '-1e309' (which is -Infinity and is caught by the
+  // `parsed <= 0` branch), +Infinity is positive so it passes the <= 0 check.
+  // It is then caught by the `!Number.isSafeInteger(parsed)` branch, which
+  // emits a "whole number / integer" error message.
+  //
+  // This is the symmetric positive-overflow counterpart to the '-1e309' suite
+  // above.  It exercises a different string representation than 'Infinity' or
+  // '1e308', confirming the !isSafeInteger guard fires for the specific string
+  // '+1e309' on the active Node binary.
+
+  const nodeVersion = process.version; // e.g. "v22.4.1"
+
+  // ── Pure-JS canaries — no subprocess, no fake psql ───────────────────────
+
+  it(`Number('+1e309') === Infinity on Node.js ${nodeVersion} (canary)`, () => {
+    // Confirm the numeric overflow behaviour that the guard relies on.
+    // If a future Node.js major changes how '+1e309' is parsed, this canary
+    // fails with a clear message rather than silently invalidating the test.
+    const parsed = Number("+1e309");
+    if (parsed !== Infinity) {
+      throw new Error(
+        `Number('+1e309') === ${parsed} on Node.js ${nodeVersion}, expected Infinity. ` +
+          `A Node.js upgrade may have changed how exponential-notation overflow is handled. ` +
+          `Update the guard in scripts/require-db.js and this test suite if the semantics changed.`
+      );
+    }
+    expect(parsed).toBe(Infinity);
+  });
+
+  it(`Number.isSafeInteger(Number('+1e309')) === false on Node.js ${nodeVersion} (canary)`, () => {
+    // +Infinity is not a safe integer — this confirms the !isSafeInteger branch
+    // in scripts/require-db.js would fire for this input, not the <= 0 branch.
+    const parsed = Number("+1e309");
+    if (Number.isSafeInteger(parsed)) {
+      throw new Error(
+        `Number.isSafeInteger(Number('+1e309')) returned true on Node.js ${nodeVersion}. ` +
+          `Expected false — +Infinity must never be a safe integer. ` +
+          `A Node.js upgrade may have changed Number()/isSafeInteger() semantics. ` +
+          `Update the guard in scripts/require-db.js if the semantics changed.`
+      );
+    }
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  // ── Subprocess tests — exercise the actual guard on this Node binary ─────────
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '+1e309' (parses to +Infinity)", () => {
+    // Number('+1e309') === +Infinity — positive, so it passes the `<= 0` check,
+    // then is caught by the `!Number.isSafeInteger` branch in scripts/require-db.js.
+    // Uses the real Node binary (process.execPath) to validate the guard fires
+    // correctly on the currently active Node version.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "+1e309",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it("prints a 'whole number' / 'integer' error for '+1e309' (isSafeInteger branch)", () => {
+    // The !isSafeInteger branch in require-db.js emits a message matching
+    // /whole number|integer/i.  This is distinct from the <= 0 branch message
+    // (/positive integer|not.*valid|not meaningful/i) that fires for '-1e309'.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "+1e309",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
