@@ -1936,3 +1936,94 @@ describe("require-db.js — octal-notation MAX_SAFE_INTEGER overflow REQUIRE_DB_
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — binary-notation REQUIRE_DB_PSQL_TIMEOUT_MS exceeding MAX_SAFE_INTEGER", () => {
+  // JavaScript's Number() accepts binary literals like '0b101' (= 5).
+  // A sufficiently long binary string such as
+  // '0b100000000000000000000000000000000000000000000000000001'
+  // evaluates to 2^53 + 1 = 9007199254740993, which is greater than
+  // Number.MAX_SAFE_INTEGER (2^53 - 1 = 9007199254740991).  A value that large
+  // cannot be safely represented as an integer and must be rejected by the
+  // !Number.isSafeInteger guard in scripts/require-db.js.
+  //
+  // This suite completes notation coverage: decimal, exponential, hex, octal,
+  // and binary are all now exercised.
+
+  // 2^53 + 1 — one bit beyond the safe-integer boundary.
+  // Count: '0b1' + 52 zeros + '1' = binary representation of 9007199254740993.
+  const BINARY_INPUT = "0b100000000000000000000000000000000000000000000000000001";
+  const nodeVersion = process.version;
+
+  // ── Pure-JS canaries — confirm Number() and isSafeInteger behave as expected ─
+
+  it(`Number('${BINARY_INPUT}') > Number.MAX_SAFE_INTEGER on Node.js ${nodeVersion} (canary)`, () => {
+    // Confirms JavaScript's Number() parses the binary string to a value that
+    // exceeds MAX_SAFE_INTEGER.  If a future Node.js version changes binary
+    // literal parsing this canary fails with a clear diagnostic.
+    const parsed = Number(BINARY_INPUT);
+    if (parsed <= Number.MAX_SAFE_INTEGER) {
+      throw new Error(
+        `Number('${BINARY_INPUT}') === ${parsed} on Node.js ${nodeVersion}, ` +
+          `but expected a value greater than Number.MAX_SAFE_INTEGER (${Number.MAX_SAFE_INTEGER}). ` +
+          `A Node.js upgrade may have changed how binary-notation parsing is handled. ` +
+          `Update the guard in scripts/require-db.js and this test suite if the semantics changed.`
+      );
+    }
+    expect(parsed).toBeGreaterThan(Number.MAX_SAFE_INTEGER);
+  });
+
+  it(`Number.isSafeInteger(Number('${BINARY_INPUT}')) === false on Node.js ${nodeVersion} (canary)`, () => {
+    // Confirms the isSafeInteger check rejects this value, which is the branch
+    // in scripts/require-db.js that this input must hit.
+    const parsed = Number(BINARY_INPUT);
+    if (Number.isSafeInteger(parsed)) {
+      throw new Error(
+        `Number.isSafeInteger(Number('${BINARY_INPUT}')) returned true on Node.js ${nodeVersion}. ` +
+          `Expected false — a value exceeding MAX_SAFE_INTEGER must never be a safe integer. ` +
+          `A Node.js upgrade may have changed Number()/isSafeInteger() semantics. ` +
+          `Update the guard in scripts/require-db.js if the semantics changed.`
+      );
+    }
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  // ── Subprocess tests — exercise the actual guard on this Node binary ───────
+
+  it(`exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '${BINARY_INPUT}' (binary exceeding MAX_SAFE_INTEGER)`, () => {
+    // Number('0b100000000000000000000000000000000000000000000000000001') > MAX_SAFE_INTEGER.
+    // It passes the isNaN check (it is a number) and the <= 0 check (it is
+    // positive), then is caught by the !Number.isSafeInteger branch in
+    // scripts/require-db.js.  Uses the real Node binary (process.execPath) to
+    // validate the guard fires correctly on the currently active Node version.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: BINARY_INPUT,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it(`prints a 'whole number' / 'integer' error for '${BINARY_INPUT}' (isSafeInteger branch)`, () => {
+    // The !isSafeInteger branch in require-db.js emits a message matching
+    // /whole number|integer/i — the same branch that fires for 1e308, +1e309,
+    // hex-notation overflow, and octal-notation overflow, confirming the guard
+    // is notation-agnostic.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: BINARY_INPUT,
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
