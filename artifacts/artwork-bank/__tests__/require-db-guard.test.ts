@@ -308,3 +308,77 @@ describe("require-db.js — completely empty environment object", () => {
     expect(output).toContain("DATABASE_URL is not set");
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — psql probe runs correctly without Node env baggage", () => {
+  // This suite confirms that Check 2 (the psql probe) functions correctly when
+  // Node-specific environment variables such as NODE_PATH, NODE_OPTIONS,
+  // NODE_ENV, npm_*, etc. are completely absent from the child process
+  // environment.  Only DATABASE_URL and a PATH pointing at a known fake psql
+  // binary are supplied — no inherited Node internals at all.
+  //
+  // We use process.execPath (absolute path to the running node binary) so the
+  // PATH override does not accidentally hide node itself.
+
+  it("exits 0 when the minimal env contains DATABASE_URL + a fake psql that succeeds", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    // Build an environment with ONLY the two entries the guard script needs —
+    // no NODE_PATH, no NODE_OPTIONS, no npm_* vars, no inherited Node env.
+    const minimalEnv = {
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+    } as unknown as NodeJS.ProcessEnv;
+
+    const result = spawnSync(process.execPath, [SCRIPT], {
+      env: minimalEnv,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+
+  it("exits 1 with a 'permission denied' message when the minimal env hits the prod-DB guard", () => {
+    const fakeBinDir = makeFakePsqlDir(
+      `echo "ERROR:  permission denied to set parameter session_replication_role" >&2\nexit 1`
+    );
+
+    const minimalEnv = {
+      DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+    } as unknown as NodeJS.ProcessEnv;
+
+    const result = spawnSync(process.execPath, [SCRIPT], {
+      env: minimalEnv,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("PROD_DATABASE_URL");
+  });
+
+  it("exits 1 with a 'probe failed' message when the minimal env hits a generic connection error", () => {
+    const fakeBinDir = makeFakePsqlDir(
+      `echo "could not connect to server: Connection refused" >&2\nexit 1`
+    );
+
+    const minimalEnv = {
+      DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      PATH: `${fakeBinDir}:${process.env.PATH ?? ""}`,
+    } as unknown as NodeJS.ProcessEnv;
+
+    const result = spawnSync(process.execPath, [SCRIPT], {
+      env: minimalEnv,
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/probe failed/i);
+    expect(output).toMatch(/reachable/i);
+  });
+});
