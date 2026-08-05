@@ -3625,3 +3625,81 @@ describe("require-db.js — non-zero hex REQUIRE_DB_PSQL_TIMEOUT_MS values are a
     expect(output).toContain("dev database confirmed");
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — non-zero octal REQUIRE_DB_PSQL_TIMEOUT_MS values are accepted", () => {
+  // Number('0o7') === 7, Number('0o177') === 127.
+  //
+  // JavaScript's Number() accepts octal literal notation (0o…) just as it
+  // accepts hex (0x…) and binary (0b…).  A future regex-based octal/hex
+  // rejection added to the guard could silently break these valid inputs.
+  // These tests pin the behaviour so any such regression is caught immediately.
+  //
+  // '0o7' (7 ms) is the minimal non-trivial octal value — it clears every
+  // validation gate (isNaN, <= 0, !isSafeInteger) and the fake psql exits 0,
+  // so the guard must also exit 0 and produce no validation error message.
+  //
+  // '0o177' (127 ms) is a realistic non-trivial value (no single octal digit
+  // covers 15 000 ms) used to confirm the happy-path output end-to-end.
+
+  it("does not print a validation error for '0o7' (octal 7 ms) — value passes all guards", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o7",
+    });
+
+    // Number("0o7") === 7 — positive safe integer. The guard must NOT reject it
+    // with any of the three validation error messages.
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).not.toMatch(/non-numeric|not.*number|must be.*number|numeric/i);
+    expect(output).not.toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(output).not.toMatch(/whole number|integer|fractional/i);
+  });
+
+  it("exits cleanly (signal === null) for '0o7' — guard does not crash on an octal value", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o7",
+    });
+
+    // Whether the probe times out or succeeds, the guard must exit with a
+    // defined status code and never crash (signal must remain null).
+    expect(result.signal).toBeNull();
+    expect(result.status).not.toBeNull();
+  });
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0o177' (octal 127 ms)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o177",
+    });
+
+    // Number("0o177") === 127 — positive safe integer and a plausible timeout
+    // value.  The fake psql exits 0, so the guard must also exit 0.
+    expect(result.status).toBe(0);
+    expect(result.signal).toBeNull();
+  });
+
+  it("confirms 'dev database confirmed' output for '0o177'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o177",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+});
