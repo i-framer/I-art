@@ -122,6 +122,40 @@ describe("require-db.js — psql probe succeeds (happy path)", () => {
 
 // ──────────────────────────────────────────────────────────────────────────────
 
+describe("require-db.js — psql probe times out (ETIMEDOUT)", () => {
+  const STUB = path.resolve(
+    __dirname,
+    "helpers/require-db-etimedout-stub.js"
+  );
+
+  it("exits 1 when spawnSync returns an ETIMEDOUT error", () => {
+    const result = spawnSync(process.execPath, [STUB], {
+      env: {
+        ...process.env,
+        DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a message containing 'timed out' so the developer knows the cause", () => {
+    const result = spawnSync(process.execPath, [STUB], {
+      env: {
+        ...process.env,
+        DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      },
+      encoding: "utf8",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/timed out/i);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 describe("require-db.js — psql unavailable", () => {
   it("exits 1 when psql is not found on PATH", () => {
     // Use an empty temp dir that has no psql binary
