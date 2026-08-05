@@ -3393,3 +3393,64 @@ describe("require-db.js — octal and hexadecimal REQUIRE_DB_PSQL_TIMEOUT_MS str
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — octal/hex zero REQUIRE_DB_PSQL_TIMEOUT_MS ('0o0', '0x0')", () => {
+  // Number("0o0") === 0 and Number("0x0") === 0 — both parse to zero via
+  // JavaScript's Number() and must be caught by the same `<= 0` guard that
+  // catches the plain string "0".  Without explicit coverage a refactor could
+  // accidentally let these through and pass 0 as spawnSync's timeout.
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0o0' (octal zero)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o0",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints the 'positive integer / not meaningful' error for '0o0' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o0",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0x0' (hex zero)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0x0",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints the 'positive integer / not meaningful' error for '0x0' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0x0",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
+});
