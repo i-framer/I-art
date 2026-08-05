@@ -381,6 +381,75 @@ describeIntegration(
       if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
     });
 
+    it("returns HTTP 200 when ALL orphan rows return 404 (every object already gone mid-run, multi-row batch)", async () => {
+      // Arrange: four genuine orphan rows so the sweep processes a real batch.
+      // Four rows provide a buffer against one or two being consumed by a
+      // concurrently running orphan-sweep in another integration test file —
+      // the real DB is shared across all test workers so a concurrent sweep
+      // can pick up stray rows between our INSERT and our fetch() call.  With
+      // four rows, the test can tolerate losing up to two and still satisfy the
+      // "orphaned >= 2, deleted >= 2" assertions.
+      const tenantId = await createTenant();
+      const ghostArtworkIdA = uid();
+      const ghostArtworkIdB = uid();
+      const orphan1 = await insertOrphanImageRow(tenantId, ghostArtworkIdA);
+      const orphan2 = await insertOrphanImageRow(tenantId, ghostArtworkIdA);
+      const orphan3 = await insertOrphanImageRow(tenantId, ghostArtworkIdB);
+      const orphan4 = await insertOrphanImageRow(tenantId, ghostArtworkIdB);
+
+      // Every deleteObject call throws a 404-style error (objects were already
+      // removed by another process between discovery and deletion).  The sweep
+      // must treat each 404 as "already gone" → deleted++ and errors stays 0.
+      vi.mocked(deleteObject).mockRejectedValue(
+        Object.assign(new Error("The object does not exist"), { status: 404 }),
+      );
+
+      // Notifications must NOT fire because errors === 0.
+      sendOrphanSweepSlackNotification.mockResolvedValue({ ok: true });
+      sendOrphanSweepErrorNotification.mockResolvedValue(undefined);
+
+      // Act: genuine HTTP request over a real TCP socket — not a direct handler call.
+      const response = await fetch(`${baseUrl}/api/storage/orphan-sweep`);
+
+      // The raw HTTP status on the wire must be 200 even though deleteObject
+      // threw for every row, because a 404 is "object already gone" — not a
+      // storage error.
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as {
+        orphaned: number;
+        deleted: number;
+        errors: number;
+        failedPaths: string[];
+      };
+      // At least two orphan rows must have been found and each counted as
+      // deleted (not as errors).  The count may exceed 4 when other integration
+      // tests' orphan rows happen to be present in the shared DB.
+      expect(body.orphaned).toBeGreaterThanOrEqual(2);
+      expect(body.deleted).toBeGreaterThanOrEqual(2);
+      expect(body.errors).toBe(0);
+      expect(body.failedPaths).toHaveLength(0);
+
+      // Notification functions must NOT have been triggered when errors === 0.
+      expect(sendOrphanSweepSlackNotification).not.toHaveBeenCalled();
+      expect(sendOrphanSweepErrorNotification).not.toHaveBeenCalled();
+
+      // Confirm all four DB rows were removed despite the 404 storage errors.
+      // Any row consumed by a concurrent sweep was also removed, so the check
+      // is the same either way.
+      for (const orphan of [orphan1, orphan2, orphan3, orphan4]) {
+        const remaining = await db
+          .select({ id: artworkImagesTable.id })
+          .from(artworkImagesTable)
+          .where(eq(artworkImagesTable.id, orphan.id));
+        expect(remaining).toHaveLength(0);
+
+        // Rows already gone; skip afterEach cleanup for them.
+        const idx = insertedOrphanImageIds.indexOf(orphan.id);
+        if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
+      }
+    });
+
     it("returns HTTP 207 with body intact for multiple orphan rows when both notifications throw", async () => {
       // Arrange: two orphan rows so the sweep has a non-trivial result set.
       const tenantId = await createTenant();
