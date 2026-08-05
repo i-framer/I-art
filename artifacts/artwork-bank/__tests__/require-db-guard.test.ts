@@ -3272,3 +3272,124 @@ describe("require-db.js — binary REQUIRE_DB_PSQL_TIMEOUT_MS values below MAX_S
     expect(output).toContain("dev database confirmed");
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — octal and hexadecimal REQUIRE_DB_PSQL_TIMEOUT_MS strings", () => {
+  // JavaScript's Number() parses octal ('0o…') and hexadecimal ('0x…') string
+  // literals the same way it parses binary ('0b…') literals.  Without explicit
+  // coverage a refactor of the validation branch could accidentally break these
+  // forms and only surface it on binary inputs.
+  //
+  // Both '0o350' (octal for 232) and '0xe8' (hex for 232) are positive safe
+  // integers and must therefore pass all guards, reach spawnSync with timeout=232,
+  // and exit 0 when the fake psql succeeds.
+
+  // ── Pure-JS canary: Number.isSafeInteger must return true for each value ──
+
+  it("Number.isSafeInteger(Number('0o350')) is true — canary for octal parsing", () => {
+    const parsed = Number("0o350"); // 0o350 === 232
+    if (!Number.isSafeInteger(parsed)) {
+      throw new Error(
+        `Number.isSafeInteger(Number('0o350')) returned false on Node.js ${process.version}. ` +
+        `Got ${parsed}. ` +
+        `A Node.js major upgrade may have changed how Number() handles octal literals. ` +
+        `The guard in scripts/require-db.js relies on isSafeInteger to accept valid octal strings.`
+      );
+    }
+    expect(Number.isSafeInteger(parsed)).toBe(true);
+    expect(parsed).toBe(232);
+  });
+
+  it("Number.isSafeInteger(Number('0xe8')) is true — canary for hexadecimal parsing", () => {
+    const parsed = Number("0xe8"); // 0xe8 === 232
+    if (!Number.isSafeInteger(parsed)) {
+      throw new Error(
+        `Number.isSafeInteger(Number('0xe8')) returned false on Node.js ${process.version}. ` +
+        `Got ${parsed}. ` +
+        `A Node.js major upgrade may have changed how Number() handles hexadecimal literals. ` +
+        `The guard in scripts/require-db.js relies on isSafeInteger to accept valid hex strings.`
+      );
+    }
+    expect(Number.isSafeInteger(parsed)).toBe(true);
+    expect(parsed).toBe(232);
+  });
+
+  // ── Subprocess tests: octal '0o350' ──────────────────────────────────────
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0o350' (= 232) and fake psql succeeds", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o350", // Number("0o350") === 232
+    });
+
+    expect(result.status).toBe(0);
+  });
+
+  it("prints 'dev database confirmed' when REQUIRE_DB_PSQL_TIMEOUT_MS is '0o350' and fake psql succeeds", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o350", // 232 ms
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+
+  it("does not crash (signal is null) when REQUIRE_DB_PSQL_TIMEOUT_MS is '0o350'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0o350",
+    });
+
+    expect(result.signal).toBeNull();
+  });
+
+  // ── Subprocess tests: hexadecimal '0xe8' ─────────────────────────────────
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0xe8' (= 232) and fake psql succeeds", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0xe8", // Number("0xe8") === 232
+    });
+
+    expect(result.status).toBe(0);
+  });
+
+  it("prints 'dev database confirmed' when REQUIRE_DB_PSQL_TIMEOUT_MS is '0xe8' and fake psql succeeds", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0xe8", // 232 ms
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+
+  it("does not crash (signal is null) when REQUIRE_DB_PSQL_TIMEOUT_MS is '0xe8'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0xe8",
+    });
+
+    expect(result.signal).toBeNull();
+  });
+});
