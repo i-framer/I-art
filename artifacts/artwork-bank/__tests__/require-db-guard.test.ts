@@ -3544,3 +3544,84 @@ describe("require-db.js — octal/hex zero REQUIRE_DB_PSQL_TIMEOUT_MS ('0o0', '0
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — non-zero hex REQUIRE_DB_PSQL_TIMEOUT_MS values are accepted", () => {
+  // Number('0x1') === 1, Number('0x3A98') === 15000.
+  // Both are positive safe integers, so they must pass through all three
+  // validation guards (isNaN, <= 0, !isSafeInteger) without being rejected.
+  // A future refactor that introduces a hex-rejection regex would break these
+  // inputs silently; these tests act as a regression net.
+  //
+  // Note on '0x1' (1 ms): the value clears every validation gate in the guard,
+  // but 1 ms is shorter than a subprocess can start — spawnSync fires ETIMEDOUT
+  // before the shell launches the fake psql.  The test therefore confirms:
+  //   (a) the guard does NOT exit with a validation-error message, and
+  //   (b) the process exits cleanly (signal === null, no uncaught exception).
+  //
+  // '0x3A98' (15 000 ms) is a realistic timeout value, so those tests confirm
+  // the guard exits 0 and the psql probe succeeds end-to-end.
+
+  it("does not print a validation error for '0x1' (hex 1 ms) — value passes all guards", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0x1",
+    });
+
+    // Number("0x1") === 1 — positive safe integer. The guard must NOT reject it
+    // with any of the three validation messages.  (The probe itself may still
+    // timeout because 1 ms is shorter than a subprocess can start, but that is
+    // a probe failure, not a validation failure.)
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).not.toMatch(/non-numeric|not.*number|must be.*number|numeric/i);
+    expect(output).not.toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(output).not.toMatch(/whole number|integer|fractional/i);
+  });
+
+  it("exits cleanly (signal === null) for '0x1' — guard does not crash on a hex value", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0x1",
+    });
+
+    // Whether the probe times out or succeeds, the guard must exit with a
+    // defined status code and never crash (signal must remain null).
+    expect(result.signal).toBeNull();
+    expect(result.status).not.toBeNull();
+  });
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0x3A98' (hex 15000 ms)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0x3A98",
+    });
+
+    // Number("0x3A98") === 15000 — positive safe integer and a realistic
+    // timeout value.  The fake psql exits 0, so the guard must also exit 0.
+    expect(result.status).toBe(0);
+    expect(result.signal).toBeNull();
+  });
+
+  it("confirms 'dev database confirmed' output for '0x3A98'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0x3A98",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+});
