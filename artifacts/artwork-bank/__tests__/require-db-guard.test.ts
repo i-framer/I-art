@@ -3172,3 +3172,103 @@ describe("require-db.js — binary REQUIRE_DB_PSQL_TIMEOUT_MS values exceeding M
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — binary REQUIRE_DB_PSQL_TIMEOUT_MS values below MAX_SAFE_INTEGER (accepted)", () => {
+  // Task 449 confirmed that binary strings whose value exceeds Number.MAX_SAFE_INTEGER
+  // are rejected by the !Number.isSafeInteger guard.  This suite exercises the
+  // complementary path: small, positive binary literals like '0b1' (= 1) and
+  // '0b11101000' (= 232) that parse to safe integers and must therefore be
+  // ACCEPTED — the guard must exit 0 when the fake psql also succeeds.
+  //
+  // JavaScript's Number() parses "0b…" binary literals natively, so
+  // Number("0b11101000") === 232.  Number.isSafeInteger(232) is true, the value
+  // is > 0, and it passes every validation guard in the script.  If a future
+  // change to the binary-parsing branch accidentally rejected these values this
+  // suite would catch it immediately.
+
+  // ── Pure-JS canary: confirm the JS engine agrees these are safe integers ──
+
+  it("Number.isSafeInteger(Number('0b1')) is true — canary for the binary-parsing branch", () => {
+    const parsed = Number("0b1");
+    expect(parsed).toBe(1);
+    expect(Number.isSafeInteger(parsed)).toBe(true);
+  });
+
+  it("Number.isSafeInteger(Number('0b11101000')) is true — canary for the binary-parsing branch", () => {
+    const parsed = Number("0b11101000");
+    expect(parsed).toBe(232);
+    expect(Number.isSafeInteger(parsed)).toBe(true);
+  });
+
+  it("Number.isSafeInteger(Number('0b1111101000')) is true — 1000 in binary is a safe integer", () => {
+    const parsed = Number("0b1111101000");
+    expect(parsed).toBe(1000);
+    expect(Number.isSafeInteger(parsed)).toBe(true);
+  });
+
+  // ── Subprocess tests: guard exits 0 for small binary literals ────────────
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0b11101000' (= 232) and fake psql succeeds", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b11101000", // Number("0b11101000") === 232
+    });
+
+    expect(result.status).toBe(0);
+  });
+
+  it("prints 'dev database confirmed' when REQUIRE_DB_PSQL_TIMEOUT_MS is '0b11101000' and fake psql succeeds", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b11101000", // 232 ms — a valid positive integer
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+
+  it("does not crash (signal is null) when REQUIRE_DB_PSQL_TIMEOUT_MS is '0b11101000'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b11101000",
+    });
+
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 0 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0b1111101000' (= 1000) and fake psql succeeds", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b1111101000", // Number("0b1111101000") === 1000
+    });
+
+    expect(result.status).toBe(0);
+  });
+
+  it("prints 'dev database confirmed' when REQUIRE_DB_PSQL_TIMEOUT_MS is '0b1111101000' and fake psql succeeds", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b1111101000", // 1000 ms
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  });
+});
