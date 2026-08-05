@@ -1582,3 +1582,91 @@ describe("require-db.js — values that look numeric but exceed safe-integer ran
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — negative-Infinity overflow: '-1e309' as REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // Number('-1e309') produces -Infinity on every IEEE-754 double-precision
+  // implementation — the exponent underflows the negative end of the range.
+  // Unlike '-Infinity' (the literal string) or '1e308' (large but positive
+  // finite), '-1e309' is the canonical *numeric-string* route to -Infinity.
+  //
+  // Guard path taken:
+  //   1. Number.isNaN(-Infinity) === false  → NaN check passes, not rejected here
+  //   2. -Infinity <= 0 === true            → caught by the "positive integer" branch
+  //   3. Number.isSafeInteger is never reached
+  //
+  // These tests confirm the correct branch fires and that Number.isSafeInteger
+  // is irrelevant for this input (the <= 0 check fires first).
+
+  const nodeVersion = process.version; // e.g. "v22.4.1"
+
+  // ── Pure-JS canary — verifies -1e309 behaviour on the active Node binary ────
+  // Runs in the same V8 instance as the rest of the suite.  If a future
+  // Node.js major changes how Number() handles this string the canary fails
+  // immediately with a message that names the version.
+
+  it(`Number('-1e309') === -Infinity on Node.js ${nodeVersion} (canary)`, () => {
+    const parsed = Number("-1e309");
+    if (parsed !== -Infinity) {
+      throw new Error(
+        `Number('-1e309') === ${parsed} on Node.js ${nodeVersion}. ` +
+        `Expected -Infinity (negative exponent overflow). ` +
+        `A Node.js upgrade may have changed how Number() handles this string. ` +
+        `Update the guard in scripts/require-db.js if the parsing behaviour changed.`
+      );
+    }
+    expect(parsed).toBe(-Infinity);
+  });
+
+  it(`Number.isSafeInteger(Number('-1e309')) === false on Node.js ${nodeVersion} (canary)`, () => {
+    // -Infinity is not a safe integer — this is a secondary confirmation that
+    // the guard's isSafeInteger branch would also have rejected it, even though
+    // the <= 0 branch fires first in practice.
+    const parsed = Number("-1e309");
+    if (Number.isSafeInteger(parsed)) {
+      throw new Error(
+        `Number.isSafeInteger(Number('-1e309')) returned true on Node.js ${nodeVersion}. ` +
+        `Expected false — -Infinity must never be a safe integer. ` +
+        `A Node.js upgrade may have changed Number()/isSafeInteger() semantics. ` +
+        `Update the guard in scripts/require-db.js if the semantics changed.`
+      );
+    }
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  // ── Subprocess tests — exercise the actual guard on this Node binary ─────────
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '-1e309' (parses to -Infinity)", () => {
+    // Number('-1e309') === -Infinity — caught by the `parsed <= 0` branch in
+    // scripts/require-db.js.  Uses the real Node binary (process.execPath) to
+    // validate the guard fires correctly on the currently active Node version.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "-1e309",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it("prints a 'positive integer' / 'not valid' / 'not meaningful' error for '-1e309'", () => {
+    // The <= 0 branch in require-db.js emits a message matching
+    // /positive integer|not.*valid|not meaningful/i.  The isSafeInteger branch
+    // is never reached for this input.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "-1e309",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
+});
