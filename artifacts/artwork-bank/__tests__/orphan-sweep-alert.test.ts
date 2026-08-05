@@ -215,4 +215,29 @@ describe("orphan-sweep route — operator alert on errors (Task #205)", () => {
     // The response body must carry the original sweep counts
     expect(res.body).toEqual(sweepResult);
   });
+
+  it("still returns 207 with correct sweep body when both Slack returns { ok: false } AND email throws", async () => {
+    const sweepResult = {
+      orphaned: 3,
+      deleted: 1,
+      errors: 2,
+      failedPaths: ["/objects/uploads/a.jpg", "/objects/uploads/b.jpg"],
+    };
+    sweepOrphanedImageFiles.mockResolvedValue(sweepResult);
+    sendOrphanSweepSlackNotification.mockResolvedValue({
+      ok: false,
+      error: "slack_not_configured",
+    });
+    sendOrphanSweepErrorNotification.mockRejectedValue(
+      new Error("SMTP connection refused"),
+    );
+
+    const res = await GET(makeRequest());
+
+    // HTTP status must be 207, not 500 — dual notification failure must not
+    // change the response code or mask the sweep result.
+    expect(res.status).toBe(207);
+    // The body must carry the original sweep counts unchanged.
+    expect(res.body).toEqual(sweepResult);
+  });
 });
