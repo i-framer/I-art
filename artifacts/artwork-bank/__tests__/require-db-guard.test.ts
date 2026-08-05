@@ -3869,3 +3869,57 @@ describe("require-db.js — oversized octal literal REQUIRE_DB_PSQL_TIMEOUT_MS",
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — oversized hex literal REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // '0x' + 'f'.repeat(14) evaluates to 0xffffffffffffff = 72057594037927935,
+  // which is far beyond Number.MAX_SAFE_INTEGER (2^53 − 1 = 9007199254740991).
+  // Number.isSafeInteger() returns false for such values, so the guard must
+  // reject them with a 'whole number / integer' error rather than silently
+  // passing an imprecise value to spawnSync's timeout option.
+  //
+  // This suite specifically covers the hex (0x…) notation code path.  The
+  // same !Number.isSafeInteger guard that blocks oversized binary and octal
+  // literals also applies here, but without dedicated tests a future regex
+  // or parsing change could silently break hex detection.
+
+  const OVERSIZED_HEX = "0x" + "f".repeat(14);
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is a 14-digit all-f hex literal", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: OVERSIZED_HEX,
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number / integer' error for the oversized hex literal", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: OVERSIZED_HEX,
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+  });
+
+  it("signal is null for the oversized hex literal (guard exits cleanly, not via uncaught exception)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: OVERSIZED_HEX,
+    });
+
+    expect(result.signal).toBeNull();
+  });
+});
