@@ -2705,3 +2705,87 @@ describe("require-db.js — scientific notation that underflows to zero (e.g. '1
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — large scientific notation that overflows to Infinity", () => {
+  // Scientific-notation strings with very large exponents parse via Number() to
+  // Infinity.  Number.isSafeInteger(Infinity) is false, so the !isSafeInteger
+  // branch fires — the same branch that catches fractional and literal-Infinity
+  // values.  These tests close the upper end of the scientific-notation range;
+  // the mirror of the underflow case (1e-10) already covered in the
+  // "small-magnitude / underflow" suite.
+  //
+  // Pure-JS canary tests run in the same V8 instance to confirm the JS
+  // semantics before the subprocess assertions run.
+
+  // ── Canary: pure-JS assertion that these values overflow to Infinity ────────
+
+  it("canary: Number('1e999') === Infinity (pure-JS, no subprocess)", () => {
+    const parsed = Number("1e999");
+    expect(parsed).toBe(Infinity);
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  it("canary: Number('2e400') === Infinity (pure-JS, no subprocess)", () => {
+    const parsed = Number("2e400");
+    expect(parsed).toBe(Infinity);
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  // ── Subprocess: '1e999' ─────────────────────────────────────────────────────
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e999'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e999",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number' / 'integer' error for '1e999' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e999",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+
+  // ── Subprocess: '2e400' ─────────────────────────────────────────────────────
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '2e400'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "2e400",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number' / 'integer' error for '2e400' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "2e400",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
