@@ -760,3 +760,120 @@ describe("require-db.js — Infinity REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — additional non-numeric string edge cases for REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // Explicit coverage for string values that Number() silently mishandles:
+  //   "NaN"   → Number("NaN")   === NaN       — caught by isNaN guard
+  //   "abc"   → Number("abc")   === NaN       — caught by isNaN guard
+  //   "1.5"   → Number("1.5")   === 1.5       — caught by !isSafeInteger guard
+  //   "1e308" → Number("1e308") === Infinity  — caught by !isSafeInteger guard
+  // Each must exit 1 with a clear error, not crash or silently proceed.
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is 'NaN'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "NaN",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a non-numeric error and does not crash when REQUIRE_DB_PSQL_TIMEOUT_MS is 'NaN'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "NaN",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/non-numeric|not.*number|must be.*number|numeric/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is 'abc'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "abc",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a non-numeric error and does not crash when REQUIRE_DB_PSQL_TIMEOUT_MS is 'abc'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "abc",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/non-numeric|not.*number|must be.*number|numeric/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '1.5'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1.5",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a whole-number error and does not crash when REQUIRE_DB_PSQL_TIMEOUT_MS is '1.5'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1.5",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer|fractional/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e308'", () => {
+    // Number("1e308") === Infinity, which is not a safe integer.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e308",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a whole-number error and does not crash when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e308'", () => {
+    // Number("1e308") === Infinity — blocked by the !Number.isSafeInteger guard.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e308",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
