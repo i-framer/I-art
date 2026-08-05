@@ -242,6 +242,37 @@ describeIntegration(
       if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
     });
 
+    it("returns HTTP 200 to a real fetch() client when the sweep finds zero orphans", async () => {
+      // Arrange: no orphan rows are inserted for this tenant, so the sweep
+      // should find nothing (or find rows from other tests that deleteObject
+      // successfully cleans up — errors stay at 0 either way because
+      // deleteObject is mocked to resolve).
+      // Notifications must NOT be called when errors === 0.
+      sendOrphanSweepSlackNotification.mockResolvedValue({ ok: true });
+      sendOrphanSweepErrorNotification.mockResolvedValue(undefined);
+
+      // Act: issue a genuine HTTP request via fetch().
+      const response = await fetch(`${baseUrl}/api/storage/orphan-sweep`);
+
+      // The raw HTTP status on the wire must be 200.  Any middleware silently
+      // remapping 200 would surface here but not in a direct handler call.
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as {
+        orphaned: number;
+        deleted: number;
+        errors: number;
+        failedPaths: string[];
+      };
+      // Clean sweep: no storage errors.
+      expect(body.errors).toBe(0);
+      expect(body.failedPaths).toHaveLength(0);
+
+      // Notification functions must NOT have been triggered when errors === 0.
+      expect(sendOrphanSweepSlackNotification).not.toHaveBeenCalled();
+      expect(sendOrphanSweepErrorNotification).not.toHaveBeenCalled();
+    });
+
     it("returns HTTP 207 with body intact for multiple orphan rows when both notifications throw", async () => {
       // Arrange: two orphan rows so the sweep has a non-trivial result set.
       const tenantId = await createTenant();
