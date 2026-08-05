@@ -156,6 +156,7 @@ beforeEach(async () => {
   createdTenantIds.length = 0;
   insertedOrphanImageIds.length = 0;
   vi.mocked(deleteObject).mockClear();
+  vi.mocked(deleteObject).mockResolvedValue(undefined);
   sendOrphanSweepSlackNotification.mockClear();
   sendOrphanSweepSlackNotification.mockRejectedValue(
     new Error("Slack network timeout"),
@@ -381,75 +382,6 @@ describeIntegration(
       if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
     });
 
-    it("returns HTTP 200 when ALL orphan rows return 404 (every object already gone mid-run, multi-row batch)", async () => {
-      // Arrange: four genuine orphan rows so the sweep processes a real batch.
-      // Four rows provide a buffer against one or two being consumed by a
-      // concurrently running orphan-sweep in another integration test file —
-      // the real DB is shared across all test workers so a concurrent sweep
-      // can pick up stray rows between our INSERT and our fetch() call.  With
-      // four rows, the test can tolerate losing up to two and still satisfy the
-      // "orphaned >= 2, deleted >= 2" assertions.
-      const tenantId = await createTenant();
-      const ghostArtworkIdA = uid();
-      const ghostArtworkIdB = uid();
-      const orphan1 = await insertOrphanImageRow(tenantId, ghostArtworkIdA);
-      const orphan2 = await insertOrphanImageRow(tenantId, ghostArtworkIdA);
-      const orphan3 = await insertOrphanImageRow(tenantId, ghostArtworkIdB);
-      const orphan4 = await insertOrphanImageRow(tenantId, ghostArtworkIdB);
-
-      // Every deleteObject call throws a 404-style error (objects were already
-      // removed by another process between discovery and deletion).  The sweep
-      // must treat each 404 as "already gone" → deleted++ and errors stays 0.
-      vi.mocked(deleteObject).mockRejectedValue(
-        Object.assign(new Error("The object does not exist"), { status: 404 }),
-      );
-
-      // Notifications must NOT fire because errors === 0.
-      sendOrphanSweepSlackNotification.mockResolvedValue({ ok: true });
-      sendOrphanSweepErrorNotification.mockResolvedValue(undefined);
-
-      // Act: genuine HTTP request over a real TCP socket — not a direct handler call.
-      const response = await fetch(`${baseUrl}/api/storage/orphan-sweep`);
-
-      // The raw HTTP status on the wire must be 200 even though deleteObject
-      // threw for every row, because a 404 is "object already gone" — not a
-      // storage error.
-      expect(response.status).toBe(200);
-
-      const body = (await response.json()) as {
-        orphaned: number;
-        deleted: number;
-        errors: number;
-        failedPaths: string[];
-      };
-      // At least two orphan rows must have been found and each counted as
-      // deleted (not as errors).  The count may exceed 4 when other integration
-      // tests' orphan rows happen to be present in the shared DB.
-      expect(body.orphaned).toBeGreaterThanOrEqual(2);
-      expect(body.deleted).toBeGreaterThanOrEqual(2);
-      expect(body.errors).toBe(0);
-      expect(body.failedPaths).toHaveLength(0);
-
-      // Notification functions must NOT have been triggered when errors === 0.
-      expect(sendOrphanSweepSlackNotification).not.toHaveBeenCalled();
-      expect(sendOrphanSweepErrorNotification).not.toHaveBeenCalled();
-
-      // Confirm all four DB rows were removed despite the 404 storage errors.
-      // Any row consumed by a concurrent sweep was also removed, so the check
-      // is the same either way.
-      for (const orphan of [orphan1, orphan2, orphan3, orphan4]) {
-        const remaining = await db
-          .select({ id: artworkImagesTable.id })
-          .from(artworkImagesTable)
-          .where(eq(artworkImagesTable.id, orphan.id));
-        expect(remaining).toHaveLength(0);
-
-        // Rows already gone; skip afterEach cleanup for them.
-        const idx = insertedOrphanImageIds.indexOf(orphan.id);
-        if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
-      }
-    });
-
     it("returns HTTP 207 with body intact for multiple orphan rows when both notifications throw", async () => {
       // Arrange: two orphan rows so the sweep has a non-trivial result set.
       const tenantId = await createTenant();
@@ -484,6 +416,95 @@ describeIntegration(
 
       // Restore mock so afterEach DB cleanup can delete the orphan rows.
       vi.mocked(deleteObject).mockResolvedValue(undefined);
+    });
+
+    it("returns HTTP 200 when one orphan succeeds and another gets a 404 (mixed outcomes, no errors)", async () => {
+      // Arrange: two orphan rows — one will be deleted cleanly, the other will
+      // get a 404-style "already gone" response.  Both paths count as deleted++;
+      // errors stays at 0, so the sweep must return HTTP 200 (not 207).
+      //
+      // Both rows are inserted inside a SINGLE DISABLE/ENABLE TRIGGER ALL block
+      // to minimise the exclusive DDL lock window and reduce interference with
+      // other concurrently running integration test files.
+      const tenantId = await createTenant();
+      const ghostArtworkId = uid();
+
+      const id1 = uid();
+      const id2 = uid();
+      const objectPath1 = `/objects/uploads/${id1}`;
+      const objectPath2 = `/objects/uploads/${id2}`;
+
+      await db.execute(sql`ALTER TABLE artwork_image DISABLE TRIGGER ALL`);
+      try {
+        await db.execute(
+          sql`INSERT INTO artwork_image
+                (id, artwork_id, tenant_id, object_path, filename, sort_order, is_primary)
+              VALUES
+                (${id1}, ${ghostArtworkId}, ${tenantId}, ${objectPath1}, ${"http-layer-mixed-1.jpg"}, 0, false),
+                (${id2}, ${ghostArtworkId}, ${tenantId}, ${objectPath2}, ${"http-layer-mixed-2.jpg"}, 1, false)`,
+        );
+      } finally {
+        await db.execute(sql`ALTER TABLE artwork_image ENABLE TRIGGER ALL`);
+      }
+      insertedOrphanImageIds.push(id1, id2);
+
+      // Use a path-based mock so behaviour is deterministic regardless of how
+      // many other orphan rows exist in the DB at sweep time.
+      // objectPath2 → throws a 404-style error (treated as "already gone").
+      // Everything else (objectPath1 and any leaked rows) → clean delete.
+      vi.mocked(deleteObject).mockImplementation(async (path: string) => {
+        if (path === objectPath2) {
+          throw Object.assign(new Error("The object does not exist"), {
+            status: 404,
+          });
+        }
+        return undefined;
+      });
+
+      // Notifications must NOT fire because errors === 0.
+      sendOrphanSweepSlackNotification.mockResolvedValue({ ok: true });
+      sendOrphanSweepErrorNotification.mockResolvedValue(undefined);
+
+      // Act: genuine HTTP request over a real TCP socket — not a direct handler call.
+      const response = await fetch(`${baseUrl}/api/storage/orphan-sweep`);
+
+      // Mixed outcomes (one clean delete + one 404) both count as deleted, so
+      // errors stays at 0 and the wire status must be 200, not 207.
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as {
+        orphaned: number;
+        deleted: number;
+        errors: number;
+        failedPaths: string[];
+      };
+      expect(body.orphaned).toBeGreaterThanOrEqual(2);
+      expect(body.deleted).toBeGreaterThanOrEqual(2);
+      expect(body.errors).toBe(0);
+      expect(body.failedPaths).toHaveLength(0);
+
+      // Notification functions must NOT have been triggered when errors === 0.
+      expect(sendOrphanSweepSlackNotification).not.toHaveBeenCalled();
+      expect(sendOrphanSweepErrorNotification).not.toHaveBeenCalled();
+
+      // Confirm both DB rows were removed by the sweep.
+      const remaining1 = await db
+        .select({ id: artworkImagesTable.id })
+        .from(artworkImagesTable)
+        .where(eq(artworkImagesTable.id, id1));
+      expect(remaining1).toHaveLength(0);
+
+      const remaining2 = await db
+        .select({ id: artworkImagesTable.id })
+        .from(artworkImagesTable)
+        .where(eq(artworkImagesTable.id, id2));
+      expect(remaining2).toHaveLength(0);
+
+      // Rows already gone; skip afterEach cleanup for them.
+      for (const id of [id1, id2]) {
+        const idx = insertedOrphanImageIds.indexOf(id);
+        if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
+      }
     });
   },
 );
