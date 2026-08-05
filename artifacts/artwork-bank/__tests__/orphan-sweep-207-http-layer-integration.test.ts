@@ -326,6 +326,61 @@ describeIntegration(
       if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
     });
 
+    it("returns HTTP 200 when deleteObject throws a 404-style error (object already gone between discovery and deletion)", async () => {
+      // Arrange: a genuine orphan row so the sweep has real work to do.
+      const tenantId = await createTenant();
+      const ghostArtworkId = uid();
+      const { id: orphanId } = await insertOrphanImageRow(
+        tenantId,
+        ghostArtworkId,
+      );
+
+      // Simulate the "already cleaned up" race: deleteObject throws a 404-style
+      // error matching the /does not exist/i branch in orphan-image-sweep.ts.
+      // The sweep treats this as a successful deletion (deleted++, errors stays 0).
+      vi.mocked(deleteObject).mockRejectedValueOnce(
+        Object.assign(new Error("The object does not exist"), { status: 404 }),
+      );
+
+      // Notifications must NOT fire because errors === 0.
+      sendOrphanSweepSlackNotification.mockResolvedValue({ ok: true });
+      sendOrphanSweepErrorNotification.mockResolvedValue(undefined);
+
+      // Act: genuine HTTP request over a real TCP socket — not a direct handler call.
+      const response = await fetch(`${baseUrl}/api/storage/orphan-sweep`);
+
+      // The raw HTTP status on the wire must be 200 even though deleteObject threw,
+      // because a 404 is treated as "object already gone" — not a storage error.
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as {
+        orphaned: number;
+        deleted: number;
+        errors: number;
+        failedPaths: string[];
+      };
+      // The orphan was found and counted as deleted (not as an error).
+      expect(body.orphaned).toBeGreaterThanOrEqual(1);
+      expect(body.deleted).toBeGreaterThanOrEqual(1);
+      expect(body.errors).toBe(0);
+      expect(body.failedPaths).toHaveLength(0);
+
+      // Notification functions must NOT have been triggered when errors === 0.
+      expect(sendOrphanSweepSlackNotification).not.toHaveBeenCalled();
+      expect(sendOrphanSweepErrorNotification).not.toHaveBeenCalled();
+
+      // Confirm the DB row was removed despite the 404 storage error.
+      const remaining = await db
+        .select({ id: artworkImagesTable.id })
+        .from(artworkImagesTable)
+        .where(eq(artworkImagesTable.id, orphanId));
+      expect(remaining).toHaveLength(0);
+
+      // Row already gone; skip afterEach cleanup for it.
+      const idx = insertedOrphanImageIds.indexOf(orphanId);
+      if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
+    });
+
     it("returns HTTP 207 with body intact for multiple orphan rows when both notifications throw", async () => {
       // Arrange: two orphan rows so the sweep has a non-trivial result set.
       const tenantId = await createTenant();
