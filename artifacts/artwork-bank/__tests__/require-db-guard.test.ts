@@ -1125,4 +1125,31 @@ describe("require-db.js — whitespace-only REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
     expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
     expect(result.signal).toBeNull();
   });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is carriage-return-only ('\\r')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\r",
+    });
+
+    // Number("\r") === 0 — caught by the <= 0 guard, same branch as "\n", "\t", "\f", and "\v".
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for carriage-return-only ('\\r') mentioning the valid range", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\r",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
 });
