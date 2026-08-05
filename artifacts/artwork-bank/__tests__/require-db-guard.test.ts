@@ -1017,4 +1017,58 @@ describe("require-db.js — whitespace-only REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
     expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
     expect(result.signal).toBeNull();
   });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is newline-only ('\\n')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\n",
+    });
+
+    // Number("\n") === 0 — caught by the <= 0 guard, same branch as "   " and "\t".
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for newline-only ('\\n') mentioning the valid range", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\n",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is CRLF-only ('\\r\\n')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\r\n",
+    });
+
+    // Number("\r\n") === 0 — caught by the <= 0 guard, same branch as "\n".
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for CRLF-only ('\\r\\n') mentioning the valid range", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\r\n",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
 });
