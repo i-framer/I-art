@@ -1845,3 +1845,94 @@ describe("require-db.js — hex-notation MAX_SAFE_INTEGER+1 REQUIRE_DB_PSQL_TIME
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — octal-notation MAX_SAFE_INTEGER overflow REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // JavaScript's Number() parses octal strings with the 0o prefix, so
+  // Number('0o400000000000000001') evaluates to a value that exceeds
+  // Number.MAX_SAFE_INTEGER (9007199254740991).  Even though the value is a
+  // positive integer in the mathematical sense, Number.isSafeInteger returns
+  // false for it because IEEE-754 double precision cannot represent integers
+  // of that magnitude exactly.
+  //
+  // The guard must reject it via the !Number.isSafeInteger check rather than
+  // silently passing an unsafe integer to spawnSync's timeout option.
+  //
+  // A pure-JS canary (no subprocess) verifies the active Node binary's
+  // Number() and Number.isSafeInteger() behaviour for this octal literal,
+  // making any future Node version regression immediately obvious.
+
+  const nodeVersion = process.version;
+  const OCTAL_INPUT = "0o400000000000000001"; // exceeds MAX_SAFE_INTEGER
+
+  // ── Pure-JS canary ────────────────────────────────────────────────────────
+
+  it(`Number('${OCTAL_INPUT}') > Number.MAX_SAFE_INTEGER on Node.js ${nodeVersion} (canary)`, () => {
+    // Confirms that the active Node binary parses this octal string to a value
+    // strictly greater than MAX_SAFE_INTEGER, which is the precondition for
+    // the isSafeInteger guard firing for this input.
+    const parsed = Number(OCTAL_INPUT);
+    if (parsed <= Number.MAX_SAFE_INTEGER) {
+      throw new Error(
+        `Number('${OCTAL_INPUT}') returned ${parsed} on Node.js ${nodeVersion}, ` +
+          `expected a value > Number.MAX_SAFE_INTEGER (${Number.MAX_SAFE_INTEGER}). ` +
+          `A Node.js upgrade may have changed how octal-notation parsing is handled. ` +
+          `Update the guard in scripts/require-db.js and this test suite if the semantics changed.`
+      );
+    }
+    expect(parsed).toBeGreaterThan(Number.MAX_SAFE_INTEGER);
+  });
+
+  it(`Number.isSafeInteger(Number('${OCTAL_INPUT}')) === false on Node.js ${nodeVersion} (canary)`, () => {
+    // Confirms the isSafeInteger check rejects this value, which is the branch
+    // in scripts/require-db.js that this input must hit.
+    const parsed = Number(OCTAL_INPUT);
+    if (Number.isSafeInteger(parsed)) {
+      throw new Error(
+        `Number.isSafeInteger(Number('${OCTAL_INPUT}')) returned true on Node.js ${nodeVersion}. ` +
+          `Expected false — a value exceeding MAX_SAFE_INTEGER must never be a safe integer. ` +
+          `A Node.js upgrade may have changed Number()/isSafeInteger() semantics. ` +
+          `Update the guard in scripts/require-db.js if the semantics changed.`
+      );
+    }
+    expect(Number.isSafeInteger(parsed)).toBe(false);
+  });
+
+  // ── Subprocess tests — exercise the actual guard on this Node binary ───────
+
+  it(`exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '${OCTAL_INPUT}' (octal exceeding MAX_SAFE_INTEGER)`, () => {
+    // Number('0o400000000000000001') > MAX_SAFE_INTEGER.  It passes the isNaN
+    // check (it is a number) and the <= 0 check (it is positive), then is
+    // caught by the !Number.isSafeInteger branch in scripts/require-db.js.
+    // Uses the real Node binary (process.execPath) to validate the guard fires
+    // correctly on the currently active Node version.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: OCTAL_INPUT,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it(`prints a 'whole number' / 'integer' error for '${OCTAL_INPUT}' (isSafeInteger branch)`, () => {
+    // The !isSafeInteger branch in require-db.js emits a message matching
+    // /whole number|integer/i — the same branch that fires for 1e308, +1e309,
+    // and hex-notation overflow, confirming the guard is notation-agnostic.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: OCTAL_INPUT,
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
