@@ -2478,3 +2478,113 @@ describe("require-db.js — decimal MAX_SAFE_INTEGER+3 REQUIRE_DB_PSQL_TIMEOUT_M
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — MAX_SAFE_INTEGER+3 supplied in scientific notation", () => {
+  // '9.007199254740994e15' is the scientific-notation representation of
+  // 9007199254740994 (Number.MAX_SAFE_INTEGER + 3).  Number() parses it to the
+  // same float as the decimal form, so it must hit the same
+  // !Number.isSafeInteger branch and exit 1.
+  //
+  // This closes the gap where a mis-configured REQUIRE_DB_PSQL_TIMEOUT_MS
+  // supplied in scientific notation (e.g. from a shell expansion or copy-paste)
+  // could slip past the guard undetected.
+
+  // ── Pure-JS canaries — confirm Number() and isSafeInteger behave as expected ─
+
+  it("pure-JS canary: Number('9.007199254740994e15') > Number.MAX_SAFE_INTEGER", () => {
+    // If this canary fails, the Node.js version has a regression in Number()
+    // parsing for scientific-notation strings near the safe-integer boundary.
+    const parsed = Number("9.007199254740994e15");
+    if (parsed <= Number.MAX_SAFE_INTEGER) {
+      throw new Error(
+        `Number('9.007199254740994e15') === ${parsed} on Node.js ${process.version}, ` +
+        `but expected a value strictly greater than Number.MAX_SAFE_INTEGER (${Number.MAX_SAFE_INTEGER}). ` +
+        `A Node.js major upgrade may have changed large-integer parsing near the safe-integer boundary.`
+      );
+    }
+    expect(parsed).toBeGreaterThan(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("pure-JS canary: Number.isSafeInteger(Number('9.007199254740994e15')) returns false", () => {
+    // Confirms isSafeInteger correctly rejects the scientific-notation value.
+    // '9.007199254740994e15' evaluates to the same float as 9007199254740994
+    // (MAX_SAFE_INTEGER+3), which is above the safe range.
+    const parsed = Number("9.007199254740994e15");
+    const safe = Number.isSafeInteger(parsed);
+    if (safe) {
+      throw new Error(
+        `Number.isSafeInteger(${parsed}) returned true on Node.js ${process.version}. ` +
+        `Expected false — MAX_SAFE_INTEGER+3 must never be a safe integer, ` +
+        `whether supplied as decimal or scientific notation.`
+      );
+    }
+    expect(safe).toBe(false);
+  });
+
+  // ── Subprocess tests — exercise the actual guard on this Node binary ───────
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '9.007199254740994e15' (scientific notation, MAX_SAFE_INTEGER+3)", () => {
+    // Number('9.007199254740994e15') > MAX_SAFE_INTEGER.  It passes the isNaN
+    // check (it is a valid number) and the <= 0 check (it is positive), then is
+    // caught by the !Number.isSafeInteger branch — the same branch that blocks
+    // the plain decimal form '9007199254740994'.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "9.007199254740994e15",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it("prints a 'whole number' / 'integer' error for '9.007199254740994e15' (isSafeInteger branch)", () => {
+    // The !isSafeInteger branch emits a message matching /whole number|integer/i.
+    // Confirms the scientific-notation form triggers the same guard path as the
+    // plain decimal form.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "9.007199254740994e15",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '9.007199254740994E15' (uppercase E scientific notation)", () => {
+    // Number() accepts both 'e' and 'E' as the exponent separator.
+    // Both forms must be rejected by the !isSafeInteger guard.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "9.007199254740994E15",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it("prints a 'whole number' / 'integer' error for '9.007199254740994E15' (uppercase E)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "9.007199254740994E15",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
