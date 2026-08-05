@@ -273,6 +273,59 @@ describeIntegration(
       expect(sendOrphanSweepErrorNotification).not.toHaveBeenCalled();
     });
 
+    it("returns HTTP 200 to a real fetch() client when orphan rows exist but deleteObject succeeds", async () => {
+      // Arrange: insert a genuine orphan row so the sweep has real work to do.
+      // deleteObject is already mocked to resolve successfully (default mock),
+      // so the sweep should delete the row cleanly with errors === 0.
+      const tenantId = await createTenant();
+      const ghostArtworkId = uid();
+      const { id: orphanId } = await insertOrphanImageRow(
+        tenantId,
+        ghostArtworkId,
+      );
+
+      // Ensure deleteObject resolves (clean deletion, no storage error).
+      vi.mocked(deleteObject).mockResolvedValue(undefined);
+      // Notifications must NOT be called when errors === 0.
+      sendOrphanSweepSlackNotification.mockResolvedValue({ ok: true });
+      sendOrphanSweepErrorNotification.mockResolvedValue(undefined);
+
+      // Act: genuine HTTP request over a real TCP socket — not a direct handler call.
+      const response = await fetch(`${baseUrl}/api/storage/orphan-sweep`);
+
+      // The raw HTTP status on the wire must be 200 even though real orphan rows
+      // were present and processed.  The 200 path is reached after a clean
+      // deletion, not just on an empty sweep.
+      expect(response.status).toBe(200);
+
+      const body = (await response.json()) as {
+        orphaned: number;
+        deleted: number;
+        errors: number;
+        failedPaths: string[];
+      };
+      // At least our one orphan row was found and deleted successfully.
+      expect(body.orphaned).toBeGreaterThanOrEqual(1);
+      expect(body.deleted).toBeGreaterThanOrEqual(1);
+      expect(body.errors).toBe(0);
+      expect(body.failedPaths).toHaveLength(0);
+
+      // Notification functions must NOT have been triggered when errors === 0.
+      expect(sendOrphanSweepSlackNotification).not.toHaveBeenCalled();
+      expect(sendOrphanSweepErrorNotification).not.toHaveBeenCalled();
+
+      // Confirm the DB row was actually removed by the sweep.
+      const remaining = await db
+        .select({ id: artworkImagesTable.id })
+        .from(artworkImagesTable)
+        .where(eq(artworkImagesTable.id, orphanId));
+      expect(remaining).toHaveLength(0);
+
+      // Row already gone; skip afterEach cleanup for it.
+      const idx = insertedOrphanImageIds.indexOf(orphanId);
+      if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
+    });
+
     it("returns HTTP 207 with body intact for multiple orphan rows when both notifications throw", async () => {
       // Arrange: two orphan rows so the sweep has a non-trivial result set.
       const tenantId = await createTenant();
