@@ -4022,3 +4022,73 @@ describe("require-db.js — oversized scientific-notation REQUIRE_DB_PSQL_TIMEOU
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — small-but-safe scientific-notation REQUIRE_DB_PSQL_TIMEOUT_MS (happy path)", () => {
+  // Scientific-notation strings whose numeric value is a positive safe integer
+  // (e.g. '1e3' === 1000, '5e4' === 50000, '1e4' === 10000) must be accepted
+  // by the guard and allowed through to the psql probe normally.
+  //
+  // These tests guard against an accidental tightening of the isSafeInteger
+  // check that would block valid inputs — for example, a naive string-level
+  // check for the letter 'e' rather than testing the *numeric value*.
+  //
+  // Number.isSafeInteger(Number("1e3")) === true  (1000 is a safe integer)
+  // Number.isSafeInteger(Number("5e4")) === true  (50000 is a safe integer)
+  // Number.isSafeInteger(Number("1e4")) === true  (10000 is a safe integer)
+  //
+  // Contrast with '1e308' (Infinity) and '9e15' (> MAX_SAFE_INTEGER) which are
+  // correctly blocked — covered by the oversized-scientific-notation suite.
+
+  it("exits 0 and prints 'dev database confirmed' when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e3'", () => {
+    // Number("1e3") === 1000 — a positive safe integer, so the guard must
+    // accept it and let the psql probe proceed.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e3",
+    });
+
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 0 and prints 'dev database confirmed' when REQUIRE_DB_PSQL_TIMEOUT_MS is '5e4'", () => {
+    // Number("5e4") === 50000 — a positive safe integer, so the guard must
+    // accept it and let the psql probe proceed.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "5e4",
+    });
+
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 0 and prints 'dev database confirmed' when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e4'", () => {
+    // Number("1e4") === 10000 — a positive safe integer, so the guard must
+    // accept it and let the psql probe proceed.
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e4",
+    });
+
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+    expect(result.signal).toBeNull();
+  });
+});
