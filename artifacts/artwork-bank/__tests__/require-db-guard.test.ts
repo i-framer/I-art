@@ -575,3 +575,102 @@ describe("require-db.js — psql probe runs correctly without Node env baggage",
     expect(output).toMatch(/reachable/i);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — fractional REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // Node's spawnSync silently truncates or rounds fractional timeout values
+  // depending on the version, which can cause subtle timing differences.
+  // The guard must reject fractional values with a clear error so the valid
+  // range (positive whole-number milliseconds) is fully explicit.
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '1.5'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1.5",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for '1.5' saying the value must be a whole number", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1.5",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer|fractional/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '100.9'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "100.9",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for '100.9' saying the value must be a whole number", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "100.9",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer|fractional/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0.1'", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0.1",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for '0.1' saying the value must be a whole number", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0.1",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer|fractional/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("accepts a whole-number string like '15000' without error", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "15000",
+    });
+
+    expect(result.status).toBe(0);
+  });
+});

@@ -97,6 +97,20 @@ if (process.env.REQUIRE_DB_PSQL_TIMEOUT_MS !== undefined) {
     );
     process.exit(1);
   }
+  if (!Number.isSafeInteger(parsed)) {
+    process.stderr.write(
+      "\n" +
+      "ERROR: REQUIRE_DB_PSQL_TIMEOUT_MS is set to " +
+      JSON.stringify(process.env.REQUIRE_DB_PSQL_TIMEOUT_MS) + ", which is not a whole number.\n" +
+      "\n" +
+      "This variable must be a positive integer (milliseconds), e.g. 15000.\n" +
+      "Fractional values (e.g. 1.5, 100.7) are not allowed — the timeout must be\n" +
+      "a whole number of milliseconds to avoid silent truncation by spawnSync.\n" +
+      "Unset it to use the default (15 000 ms), or set it to a whole number.\n" +
+      "\n"
+    );
+    process.exit(1);
+  }
   psqlTimeoutMs = parsed;
 }
 
