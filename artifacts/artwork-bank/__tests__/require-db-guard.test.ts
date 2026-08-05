@@ -950,3 +950,71 @@ describe("require-db.js — whitespace-padded REQUIRE_DB_PSQL_TIMEOUT_MS", () =>
     }
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — whitespace-only REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
+  // JavaScript's Number() trims surrounding whitespace before parsing, so
+  // Number("   ") === 0 and Number("\t") === 0.  A value of 0 is not a valid
+  // positive timeout and is caught by the `<= 0` guard — the guard exits 1
+  // with a clear error before spawnSync is ever called.
+  //
+  // This is distinct from the whitespace-padded-valid-number cases above
+  // (" 500", "500 ") where whitespace surrounds a non-zero digit string.
+  // Here the entire value is whitespace, so the result after trimming is the
+  // empty string which Number() converts to 0.
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is spaces-only ('   ')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "   ",
+    });
+
+    // Number("   ") === 0 — caught by the <= 0 guard.
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for spaces-only ('   ') mentioning the valid range", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "   ",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is tab-only ('\\t')", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\t",
+    });
+
+    // Number("\t") === 0 — caught by the <= 0 guard.
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a clear error for tab-only ('\\t') mentioning the valid range", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "\t",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/positive integer|not.*valid|not meaningful/i);
+    expect(result.signal).toBeNull();
+  });
+});
