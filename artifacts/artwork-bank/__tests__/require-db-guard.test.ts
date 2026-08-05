@@ -1018,6 +1018,72 @@ describe("require-db.js — whitespace-padded REQUIRE_DB_PSQL_TIMEOUT_MS", () =>
 
 // ──────────────────────────────────────────────────────────────────────────────
 
+describe("require-db.js — Node.js Unicode-whitespace canary", () => {
+  // The whitespace-padded tests above rely on JavaScript's Number() trimming
+  // Unicode whitespace before parsing, e.g. Number("\u2009500\u2009") === 500.
+  // This behaviour is specified by ECMAScript (StringToNumber uses the same
+  // TrimString operation as trim()), but if a future Node.js major breaks that
+  // contract the guard would silently start rejecting valid inputs.
+  //
+  // These assertions are intentionally pure-JS — no subprocess, no fake psql.
+  // They run in the same V8 instance as the rest of the suite, so any
+  // regression in Number()'s whitespace-trimming becomes an immediate failure
+  // with a message that names the Node.js version, making the root cause obvious.
+
+  const nodeVersion = process.version; // e.g. "v22.4.1"
+
+  const unicodePaddedCases: Array<[string, string]> = [
+    [" 500 ",         "ASCII space (U+0020)"],
+    ["\t500\t",       "ASCII tab (U+0009)"],
+    ["\u00A0500\u00A0", "non-breaking space (U+00A0)"],
+    ["\u2009500\u2009", "thin space (U+2009)"],
+    ["\u200A500\u200A", "hair space (U+200A)"],
+    ["\u3000500\u3000", "ideographic space (U+3000)"],
+    ["\uFEFF500\uFEFF", "BOM / zero-width no-break space (U+FEFF)"],
+  ];
+
+  it.each(unicodePaddedCases)(
+    "Number(%j) === 500 on Node.js %s — regression canary for Unicode whitespace trimming",
+    (input, label) => {
+      const parsed = Number(input);
+      if (parsed !== 500) {
+        throw new Error(
+          `Number() did not trim ${label} padding on Node.js ${nodeVersion}. ` +
+          `Got ${parsed} instead of 500. ` +
+          `A Node.js major upgrade may have changed how Number() handles this code-point. ` +
+          `Check the ECMAScript StringToNumber / TrimString behaviour in Node.js ${nodeVersion}.`
+        );
+      }
+      expect(parsed).toBe(500);
+    }
+  );
+
+  it("Number() trims all tested Unicode whitespace variants consistently on this Node.js version", () => {
+    const failures: string[] = [];
+
+    for (const [input, label] of unicodePaddedCases) {
+      const parsed = Number(input);
+      if (parsed !== 500) {
+        failures.push(`  ${label}: Number(${JSON.stringify(input)}) === ${parsed} (expected 500)`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(
+        `Unicode whitespace trimming regression detected on Node.js ${nodeVersion}.\n` +
+        `The following inputs were NOT trimmed correctly by Number():\n` +
+        failures.join("\n") + "\n\n" +
+        `This means the guard in scripts/require-db.js would misparse ` +
+        `REQUIRE_DB_PSQL_TIMEOUT_MS values padded with these code-points. ` +
+        `Verify whether the ECMAScript spec changed in Node.js ${nodeVersion} ` +
+        `and update the guard if needed.`
+      );
+    }
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 describe("require-db.js — whitespace-only REQUIRE_DB_PSQL_TIMEOUT_MS", () => {
   // JavaScript's Number() trims surrounding whitespace before parsing, so
   // Number("   ") === 0 and Number("\t") === 0.  A value of 0 is not a valid
