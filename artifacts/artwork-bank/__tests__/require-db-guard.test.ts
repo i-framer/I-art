@@ -3041,3 +3041,134 @@ describe("require-db.js — octal strings that exceed MAX_SAFE_INTEGER", () => {
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — binary REQUIRE_DB_PSQL_TIMEOUT_MS values exceeding MAX_SAFE_INTEGER", () => {
+  // JavaScript's Number() parses binary literals such as
+  // '0b100000000000000000000000000000000000000000000000000000' (2^53 —
+  // one beyond Number.MAX_SAFE_INTEGER = 2^53 - 1).  The !isSafeInteger
+  // branch should catch them, but there was no explicit test confirming it.
+  // These tests close the remaining numeric-literal-format coverage gap
+  // alongside the existing decimal, scientific-notation, hex, and octal suites.
+  //
+  // Canary values (all confirmed > MAX_SAFE_INTEGER):
+  //
+  //   '0b100000000000000000000000000000000000000000000000000000'
+  //     = 0b1 followed by 53 zeros = 2^53 = 9007199254740992 = MAX_SAFE_INTEGER+1
+  //
+  //   '0b1000000000000000000000000000000000000000000000000000000'
+  //     = 0b1 followed by 54 zeros = 2^54 = 18014398509481984
+  //
+  //   '0b111111111111111111111111111111111111111111111111111111'
+  //     = 54 ones in binary = 2^54 - 1 (exact IEEE 754 representation is
+  //     18014398509481984 due to float precision, but isSafeInteger is false)
+
+  // ── Pure-JS canaries ────────────────────────────────────────────────────────
+  // These run in the same V8 instance as the rest of the suite.  A failure here
+  // means the Node.js version no longer parses binary literals the way ECMAScript
+  // specifies, which would invalidate the subprocess assertions below.
+
+  it("canary: Number.isSafeInteger returns false for 2^53 (MAX_SAFE_INTEGER + 1)", () => {
+    // '0b' + '1' + '0'.repeat(53) — 1 followed by 53 zeros
+    const value = Number("0b100000000000000000000000000000000000000000000000000000");
+    expect(value).toBe(Math.pow(2, 53));
+    expect(Number.isSafeInteger(value)).toBe(false);
+  });
+
+  it("canary: Number.isSafeInteger returns false for 2^54 (binary literal, 1 followed by 54 zeros)", () => {
+    const value = Number("0b1000000000000000000000000000000000000000000000000000000");
+    expect(value).toBe(Math.pow(2, 54));
+    expect(Number.isSafeInteger(value)).toBe(false);
+  });
+
+  it("canary: Number.isSafeInteger returns false for 54 binary ones (beyond MAX_SAFE_INTEGER)", () => {
+    // 54 ones in binary exceeds MAX_SAFE_INTEGER; IEEE 754 cannot represent the
+    // exact value so Number() rounds it, but isSafeInteger is still false.
+    const value = Number("0b111111111111111111111111111111111111111111111111111111");
+    expect(value).toBeGreaterThan(Number.MAX_SAFE_INTEGER);
+    expect(Number.isSafeInteger(value)).toBe(false);
+  });
+
+  // ── Subprocess tests ────────────────────────────────────────────────────────
+  // Each value is passed to the guard as REQUIRE_DB_PSQL_TIMEOUT_MS.  The guard
+  // must exit 1 (not 0) and print a message matching /whole number|integer/i.
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0b100000000000000000000000000000000000000000000000000000' (2^53)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b100000000000000000000000000000000000000000000000000000",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number' / 'integer' error for '0b100000000000000000000000000000000000000000000000000000' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b100000000000000000000000000000000000000000000000000000",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0b1000000000000000000000000000000000000000000000000000000' (2^54)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b1000000000000000000000000000000000000000000000000000000",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number' / 'integer' error for '0b1000000000000000000000000000000000000000000000000000000' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b1000000000000000000000000000000000000000000000000000000",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+
+  it("exits 1 when REQUIRE_DB_PSQL_TIMEOUT_MS is '0b111111111111111111111111111111111111111111111111111111' (54 ones, > MAX_SAFE_INTEGER)", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b111111111111111111111111111111111111111111111111111111",
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a 'whole number' / 'integer' error for '0b111111111111111111111111111111111111111111111111111111' and does not crash", () => {
+    const fakeBinDir = makeFakePsqlDir("exit 0");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "0b111111111111111111111111111111111111111111111111111111",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/whole number|integer/i);
+    expect(result.signal).toBeNull();
+  });
+});
