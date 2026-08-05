@@ -259,4 +259,21 @@ describe("require-db.js — psql unavailable", () => {
     // Script should explain that psql is unavailable or probe failed
     expect(output).toMatch(/psql|probe/i);
   });
+
+  it("exits 1 when PATH is completely absent (undefined) from the environment", () => {
+    // Distinct from the empty-string case: here PATH is deleted entirely from
+    // the env object so spawnSync never receives the variable at all.  On some
+    // minimal container runtimes the variable is missing rather than empty.
+    // Node's spawnSync omits env keys whose value is undefined, which is the
+    // same OS-level effect as the variable not existing in the process env.
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      PATH: undefined,
+    });
+
+    expect(result.status).toBe(1);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    // Script should explain that psql is unavailable or probe failed
+    expect(output).toMatch(/psql|probe/i);
+  });
 });
