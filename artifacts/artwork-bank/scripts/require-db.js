@@ -76,7 +76,12 @@ const result = spawnSync(
     "-v", "ON_ERROR_STOP=1",
     "-c", probeSQL,
   ],
-  { encoding: "utf8", timeout: 15_000 }
+  {
+    encoding: "utf8",
+    timeout: process.env.REQUIRE_DB_PSQL_TIMEOUT_MS
+      ? Number(process.env.REQUIRE_DB_PSQL_TIMEOUT_MS)
+      : 15_000,
+  }
 );
 
 if (result.error) {

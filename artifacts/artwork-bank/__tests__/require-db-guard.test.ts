@@ -122,6 +122,42 @@ describe("require-db.js — psql probe succeeds (happy path)", () => {
 
 // ──────────────────────────────────────────────────────────────────────────────
 
+describe("require-db.js — psql probe times out via real spawnSync timeout", () => {
+  // This suite exercises the ETIMEDOUT branch through the *real* spawnSync
+  // timeout mechanism, not a monkey-patched stub.  A fake psql shell script
+  // sleeps longer than the test-controlled REQUIRE_DB_PSQL_TIMEOUT_MS value so
+  // Node's spawnSync fires its built-in timeout and sets result.error.code to
+  // ETIMEDOUT.  This catches regressions in the timeout wiring itself.
+
+  it("exits 1 when psql hangs and spawnSync times out", () => {
+    // Fake psql that sleeps for 10 s — well beyond the 500 ms test timeout.
+    const fakeBinDir = makeFakePsqlDir("sleep 10");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "500",
+    });
+
+    expect(result.status).toBe(1);
+  }, 10_000);
+
+  it("prints a message containing 'timed out' when psql hangs past the timeout", () => {
+    const fakeBinDir = makeFakePsqlDir("sleep 10");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "500",
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/timed out/i);
+  }, 10_000);
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 describe("require-db.js — psql probe times out (ETIMEDOUT)", () => {
   const STUB = path.resolve(
     __dirname,
