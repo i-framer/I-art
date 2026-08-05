@@ -156,6 +156,40 @@ describe("require-db.js — psql probe times out (ETIMEDOUT)", () => {
 
 // ──────────────────────────────────────────────────────────────────────────────
 
+describe("require-db.js — psql probe fails with a generic connection error", () => {
+  it("exits 1 when psql exits non-zero with a generic error (not permission denied)", () => {
+    // Simulate a connection error that does NOT contain "permission denied to
+    // set parameter session_replication_role" — e.g. the database is unreachable.
+    const fakeBinDir = makeFakePsqlDir(
+      `echo "could not connect to server: Connection refused" >&2\nexit 1`
+    );
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+    });
+
+    expect(result.status).toBe(1);
+  });
+
+  it("prints a message containing 'probe failed' and 'reachable' so the developer knows the cause", () => {
+    const fakeBinDir = makeFakePsqlDir(
+      `echo "could not connect to server: Connection refused" >&2\nexit 1`
+    );
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+    });
+
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/probe failed/i);
+    expect(output).toMatch(/reachable/i);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 describe("require-db.js — psql unavailable", () => {
   it("exits 1 when psql is not found on PATH", () => {
     // Use an empty temp dir that has no psql binary
