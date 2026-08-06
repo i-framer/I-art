@@ -1,12 +1,16 @@
 import { redirect, notFound } from "next/navigation";
+import { Suspense } from "react";
 import { asc, desc, isNull } from "drizzle-orm";
 import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
 import { getSession } from "@/lib/auth";
 import { isPlatformAdmin, tenantBillingStatus } from "@/lib/platform-admin";
 import { setBillingExempt } from "./actions";
-import { ShieldCheck, CreditCard, CheckCircle2, AlertCircle } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { BillingAlerts } from "./_components/BillingAlerts";
-import { getStripeEnvironmentDiagnostic } from "@/lib/stripe";
+import {
+  StripeEnvironmentPanel,
+  StripeEnvironmentPanelSkeleton,
+} from "./_components/StripeEnvironmentPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -25,26 +29,27 @@ export default async function PlatformAdminPage() {
   // 404 (not 403) so the page's existence isn't advertised to tenant admins
   if (!isPlatformAdmin(session.email)) notFound();
 
-  const unresolvedAlerts = await db
-    .select()
-    .from(stripeAlertsTable)
-    .where(isNull(stripeAlertsTable.dismissedAt))
-    .orderBy(desc(stripeAlertsTable.createdAt));
-
-  const stripeEnv = await getStripeEnvironmentDiagnostic();
-
-  const tenants = await db.query.tenantsTable.findMany({
-    orderBy: [asc(tenantsTable.businessName)],
-    columns: {
-      id: true,
-      businessName: true,
-      slug: true,
-      type: true,
-      contactEmail: true,
-      subscriptionStatus: true,
-      billingExempt: true,
-    },
-  });
+  // Fetch DB data in parallel — Stripe diagnostic is streamed in separately
+  // via Suspense so Stripe latency never blocks the tenant table.
+  const [unresolvedAlerts, tenants] = await Promise.all([
+    db
+      .select()
+      .from(stripeAlertsTable)
+      .where(isNull(stripeAlertsTable.dismissedAt))
+      .orderBy(desc(stripeAlertsTable.createdAt)),
+    db.query.tenantsTable.findMany({
+      orderBy: [asc(tenantsTable.businessName)],
+      columns: {
+        id: true,
+        businessName: true,
+        slug: true,
+        type: true,
+        contactEmail: true,
+        subscriptionStatus: true,
+        billingExempt: true,
+      },
+    }),
+  ]);
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -66,108 +71,10 @@ export default async function PlatformAdminPage() {
           subscription paywall.
         </p>
 
-        {/* ── Stripe environment ──────────────────────────────────────────── */}
-        <div className="mb-8 rounded-xl border border-stone-200 bg-white p-5 shadow-sm">
-          <div className="mb-3 flex items-center gap-2">
-            <CreditCard className="h-4 w-4 text-stone-500" />
-            <h2 className="text-sm font-semibold text-stone-900">
-              Stripe environment
-            </h2>
-            {stripeEnv.status === "ok" && (
-              <span
-                className={`ml-auto inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                  stripeEnv.livemode
-                    ? "bg-emerald-100 text-emerald-800"
-                    : "bg-amber-100 text-amber-800"
-                }`}
-              >
-                {stripeEnv.livemode ? "Live mode" : "Test mode"}
-              </span>
-            )}
-          </div>
-
-          {stripeEnv.status === "not_configured" && (
-            <p className="text-sm text-stone-600">
-              Stripe isn&apos;t configured yet — no secret key was found.{" "}
-              <span className="text-stone-500">{stripeEnv.message}</span>
-            </p>
-          )}
-          {stripeEnv.status === "invalid_key" && (
-            <p className="text-sm text-red-700">
-              The configured Stripe key doesn&apos;t work.{" "}
-              <span className="text-red-600">{stripeEnv.message}</span>
-            </p>
-          )}
-          {stripeEnv.status === "unreachable" && (
-            <p className="text-sm text-amber-700">
-              Couldn&apos;t reach Stripe just now — this may be temporary and
-              doesn&apos;t necessarily mean the key is wrong.{" "}
-              <span className="text-amber-600">{stripeEnv.message}</span>
-            </p>
-          )}
-          {stripeEnv.status === "ok" && (
-            <div className="space-y-3">
-              <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
-                <dt className="text-stone-500">Account ID</dt>
-                <dd className="font-mono text-stone-900">
-                  {stripeEnv.accountId}
-                </dd>
-                <dt className="text-stone-500">Account name</dt>
-                <dd className="text-stone-900">
-                  {stripeEnv.accountName ?? (
-                    <span className="text-stone-400">— not set —</span>
-                  )}
-                </dd>
-                <dt className="text-stone-500">Connect</dt>
-                <dd>
-                  {stripeEnv.connectStatus === "enabled" ? (
-                    <span className="inline-flex items-center gap-1.5 text-emerald-700">
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      Enabled
-                    </span>
-                  ) : stripeEnv.connectStatus === "disabled" ? (
-                    <span className="inline-flex items-center gap-1.5 text-red-700">
-                      <AlertCircle className="h-3.5 w-3.5" />
-                      Not enabled
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 text-stone-500">
-                      <AlertCircle className="h-3.5 w-3.5" />
-                      Can&apos;t confirm
-                    </span>
-                  )}
-                </dd>
-              </dl>
-              {stripeEnv.connectStatus === "unknown" && (
-                <p className="rounded-lg bg-stone-50 border border-stone-200 px-3 py-2.5 text-xs text-stone-600 leading-relaxed">
-                  Stripe didn&apos;t report Connect as disabled, but there are no
-                  connected accounts yet, so it can&apos;t be confirmed as
-                  enabled either. To check, open the Stripe dashboard for the
-                  exact account shown above (
-                  <span className="font-mono">{stripeEnv.accountId}</span>
-                  {stripeEnv.livemode ? ", live mode" : ", test mode"}) and look
-                  under Settings → Connect.
-                </p>
-              )}
-              {stripeEnv.connectStatus === "disabled" && (
-                <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-xs text-red-700 leading-relaxed">
-                  Stripe Connect isn&apos;t enabled for this account. In the
-                  Stripe dashboard, make sure you&apos;re signed into the exact
-                  account/sandbox shown above (
-                  <span className="font-mono">{stripeEnv.accountId}</span>
-                  {stripeEnv.livemode ? ", live mode" : ", test mode"}), then
-                  enable Connect there. Enabling it in a different sandbox
-                  won&apos;t help — the app uses the account this key resolves
-                  to.
-                </p>
-              )}
-            </div>
-          )}
-          <p className="mt-3 text-xs text-stone-400">
-            Shows which Stripe account the configured secret key resolves to.
-            The key itself is never displayed.
-          </p>
-        </div>
+        {/* ── Stripe environment — streamed in independently via Suspense ── */}
+        <Suspense fallback={<StripeEnvironmentPanelSkeleton />}>
+          <StripeEnvironmentPanel />
+        </Suspense>
 
         <div className="overflow-hidden rounded-xl border border-stone-200 bg-white shadow-sm">
           <table className="w-full text-left text-sm">

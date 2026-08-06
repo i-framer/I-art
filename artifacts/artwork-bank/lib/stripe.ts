@@ -153,13 +153,53 @@ export type StripeEnvironmentDiagnostic =
       connectStatus: StripeConnectStatus;
     };
 
+// ---------------------------------------------------------------------------
+// Short-lived in-memory cache for the diagnostic (avoids Stripe round-trips
+// on every page load while keeping TTL short enough to catch key rotations).
+// ---------------------------------------------------------------------------
+
+let _diagnosticCache: {
+  value: StripeEnvironmentDiagnostic;
+  expiresAt: number;
+} | null = null;
+
+/** Cache TTL in milliseconds. Short enough to catch key rotations quickly. */
+export const DIAGNOSTIC_CACHE_TTL_MS = 60_000;
+
+/**
+ * Resets the in-process diagnostic cache.
+ * Exposed so test suites can clear state between cases without waiting for TTL.
+ */
+export function resetStripeEnvironmentDiagnosticCache(): void {
+  _diagnosticCache = null;
+}
+
 /**
  * Resolves which Stripe account and mode the configured secret key belongs
  * to, and probes whether Connect is enabled — via a harmless Connect-scoped
  * read (listing connected accounts). Never throws; never exposes key
  * material, only non-sensitive account metadata.
+ *
+ * Results are cached in-process for up to 60 seconds so slow/down Stripe
+ * doesn't block the operator page on every load. `expiresAt` is set after
+ * the fetch resolves so slow Stripe calls don't eat into the TTL window.
  */
 export async function getStripeEnvironmentDiagnostic(): Promise<StripeEnvironmentDiagnostic> {
+  const now = Date.now();
+  if (_diagnosticCache && now < _diagnosticCache.expiresAt) {
+    return _diagnosticCache.value;
+  }
+  const result = await _fetchStripeEnvironmentDiagnostic();
+  // Record expiresAt *after* the fetch so a slow Stripe call doesn't shorten
+  // the effective cache window.
+  _diagnosticCache = {
+    value: result,
+    expiresAt: Date.now() + DIAGNOSTIC_CACHE_TTL_MS,
+  };
+  return result;
+}
+
+async function _fetchStripeEnvironmentDiagnostic(): Promise<StripeEnvironmentDiagnostic> {
   let stripe: Stripe;
   try {
     stripe = await getStripeClient();

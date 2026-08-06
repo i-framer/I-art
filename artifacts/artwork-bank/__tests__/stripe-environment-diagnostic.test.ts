@@ -29,6 +29,7 @@ vi.mock("stripe", () => ({
 import {
   getStripeEnvironmentDiagnostic,
   isConnectNotEnabledError,
+  resetStripeEnvironmentDiagnosticCache,
 } from "@/lib/stripe";
 
 const ENV_KEYS = [
@@ -41,6 +42,9 @@ const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Clear the in-process diagnostic cache so each test starts fresh and
+  // doesn't receive a cached result from a previous test case.
+  resetStripeEnvironmentDiagnosticCache();
   for (const k of ENV_KEYS) {
     savedEnv[k] = process.env[k];
     delete process.env[k];
