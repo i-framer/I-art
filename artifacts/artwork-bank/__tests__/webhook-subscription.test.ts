@@ -61,7 +61,15 @@ vi.mock("@/lib/stripe", () => ({
   StripeNotConfiguredError: class StripeNotConfiguredError extends Error {},
 }));
 
-vi.mock("@/lib/email", () => ({ sendOrderConfirmation: vi.fn() }));
+vi.mock("@/lib/email", () => ({
+  sendOrderConfirmation: vi.fn(),
+  sendBillingAlertNotification: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/slack", () => ({
+  sendBillingAlertSlackNotification: vi
+    .fn()
+    .mockResolvedValue({ ok: true }),
+}));
 vi.mock("@/lib/iframer", () => ({
   createIFramerJob: vi.fn(),
   IFramerError: class IFramerError extends Error {},
@@ -339,6 +347,58 @@ describe("subscription webhook events", () => {
     // Status must mirror what Stripe returned, not be silently promoted to "active".
     expect(state.updates[0].vals.subscriptionStatus).toBe("trialing");
     expect(state.updates[0].vals.subscriptionStatus).not.toBe("active");
+  });
+
+  it("logs a structured error and falls back to 'active' when subscriptions.retrieve throws", async () => {
+    const retrieveError = new Error("Network timeout");
+    vi.mocked(getStripeClient).mockResolvedValue({
+      subscriptions: {
+        retrieve: vi.fn().mockRejectedValue(retrieveError),
+      },
+    } as any);
+
+    // Allow db.insert to succeed for this test (stripeAlertsTable insert)
+    vi.mocked(db.insert).mockImplementationOnce(() => ({
+      values: () => ({
+        onConflictDoNothing: () => ({
+          returning: () => Promise.resolve([{ id: "alert-1" }]),
+        }),
+      }),
+    }) as any);
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await post({
+      id: "evt_retrieve_fail",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_sub_retrieve_fail",
+          mode: "subscription",
+          customer: "cus_1",
+          subscription: "sub_retrieve_fail",
+          metadata: { billingTenantId: "tenant-1" },
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+
+    // Structured error must include the subscription ID and the thrown message.
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("subscriptions.retrieve failed"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("sub_retrieve_fail"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Network timeout"),
+    );
+
+    // Status must fall back to "active" so the tenant is not left in limbo.
+    expect(state.updates[0].vals.subscriptionStatus).toBe("active");
+
+    errorSpy.mockRestore();
   });
 
   it("checkout stores 'active' from subscriptions.retrieve when Stripe says active", async () => {
