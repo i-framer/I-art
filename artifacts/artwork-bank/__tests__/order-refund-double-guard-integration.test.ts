@@ -21,8 +21,6 @@ import { afterAll, beforeEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, tenantsTable, ordersTable, orderItemsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
-
 // ── Unique prefix per test run to avoid collisions ───────────────────────────
 const RUN = Date.now();
 function tid(suffix: string) { return `rfg-tenant-${RUN}-${suffix}`; }

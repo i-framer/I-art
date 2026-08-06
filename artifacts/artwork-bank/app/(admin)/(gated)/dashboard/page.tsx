@@ -21,6 +21,7 @@ import {
   STRIPE_WARNING_BANNER_HREF,
   STRIPE_PENDING_BANNER_HREF,
 } from "@/lib/stripe";
+import { getStorageProvider } from "@/lib/object-storage";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -39,6 +40,13 @@ export default async function DashboardPage() {
 
   const storefrontUrl = getTenantUrl(tenant);
   const stripeBanner = getStripeBannerKind(tenant);
+
+  let storageConfigured = true;
+  try {
+    getStorageProvider();
+  } catch {
+    storageConfigured = false;
+  }
 
   const stats = [
     {
@@ -85,6 +93,30 @@ export default async function DashboardPage() {
           </span>
         </p>
       </div>
+
+      {/* Storage misconfiguration banner */}
+      {!storageConfigured && (
+        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 flex items-start gap-4">
+          <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-red-900">
+              Image storage is not configured
+            </p>
+            <p className="text-sm text-red-700 mt-0.5">
+              Artworks cannot have photos until storage is set up. Set{" "}
+              <code className="font-mono text-xs bg-red-100 px-1 py-0.5 rounded">
+                BLOB_READ_WRITE_TOKEN
+              </code>{" "}
+              (Vercel Blob) or{" "}
+              <code className="font-mono text-xs bg-red-100 px-1 py-0.5 rounded">
+                PRIVATE_OBJECT_DIR
+              </code>{" "}
+              (Replit App Storage) in your environment. See DEPLOY.md §3 for
+              instructions.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Stripe Connect banners */}
       {stripeBanner === "warning" && (
