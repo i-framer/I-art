@@ -45,12 +45,14 @@ export default async function SettingsPage({
   // Stripe Connect status
   type StripeStatus = "not_connected" | "pending" | "active";
   let stripeStatus: StripeStatus = "not_connected";
+  let livePayoutsEnabled: boolean | null = null;
   if (tenant.stripeAccountId) {
     try {
       const stripeClient = await getStripeClient();
       const account = await stripeClient.accounts.retrieve(tenant.stripeAccountId);
       stripeStatus =
         account.details_submitted && account.charges_enabled ? "active" : "pending";
+      livePayoutsEnabled = account.payouts_enabled ?? null;
     } catch {
       stripeStatus = "pending";
     }
@@ -434,6 +436,37 @@ export default async function SettingsPage({
                 {tenant.stripeChargesEnabled === false ? "disabled" : "not yet received"}.
                 This usually means a webhook event was missed. To resync, go to
                 your{" "}
+                <a
+                  href="https://dashboard.stripe.com/webhooks"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline font-medium hover:text-amber-900"
+                >
+                  Stripe webhook settings
+                </a>{" "}
+                and resend the most recent{" "}
+                <span className="font-mono text-xs bg-amber-100 px-1 py-0.5 rounded">
+                  account.updated
+                </span>{" "}
+                event, or wait for the next Stripe activity to trigger a fresh
+                webhook.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Stale-cache warning — live Stripe says payouts enabled but the cache disagrees */}
+        {livePayoutsEnabled === true && tenant.stripePayoutsEnabled !== true && (
+          <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
+            <div className="space-y-1">
+              <p className="font-medium">Payouts cache is out of sync</p>
+              <p className="text-amber-700">
+                Stripe confirms payouts are enabled on your account, but the
+                cached value still shows{" "}
+                {tenant.stripePayoutsEnabled === false ? "disabled" : "not yet received"}.
+                This usually means a webhook event was missed and buyers may be
+                incorrectly blocked at checkout. To resync, go to your{" "}
                 <a
                   href="https://dashboard.stripe.com/webhooks"
                   target="_blank"
