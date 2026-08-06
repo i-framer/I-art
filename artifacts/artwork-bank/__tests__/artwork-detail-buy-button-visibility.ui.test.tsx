@@ -187,6 +187,64 @@ describe("artwork detail page — stripeChargesEnabled is null (no webhook yet)"
   });
 });
 
+// ── artwork.status = SOLD ─────────────────────────────────────────────────────
+
+describe("artwork detail page — artwork.status is SOLD", () => {
+  beforeEach(() => {
+    vi.mocked(getTenantBySlug).mockResolvedValue({
+      ...baseTenant,
+      stripeChargesEnabled: true,
+    } as any);
+    vi.mocked(db.query.artworksTable.findFirst).mockResolvedValue({
+      ...baseArtwork,
+      status: "SOLD",
+    } as any);
+  });
+
+  it("shows the 'This piece has been sold' message", async () => {
+    const jsx = await ArtworkDetailPage(makeParams());
+    render(jsx as React.ReactElement);
+
+    expect(screen.getByText(/this piece has been sold/i)).toBeTruthy();
+  });
+
+  it("does NOT render the buy now button", async () => {
+    const jsx = await ArtworkDetailPage(makeParams());
+    render(jsx as React.ReactElement);
+
+    expect(screen.queryByTestId("buy-now-button")).toBeNull();
+  });
+});
+
+// ── artwork.status = RESERVED ─────────────────────────────────────────────────
+
+describe("artwork detail page — artwork.status is RESERVED", () => {
+  beforeEach(() => {
+    vi.mocked(getTenantBySlug).mockResolvedValue({
+      ...baseTenant,
+      stripeChargesEnabled: true,
+    } as any);
+    vi.mocked(db.query.artworksTable.findFirst).mockResolvedValue({
+      ...baseArtwork,
+      status: "RESERVED",
+    } as any);
+  });
+
+  it("shows the 'Reserved — pending purchase' notice", async () => {
+    const jsx = await ArtworkDetailPage(makeParams());
+    render(jsx as React.ReactElement);
+
+    expect(screen.getByText(/reserved — pending purchase/i)).toBeTruthy();
+  });
+
+  it("does NOT render the buy now button", async () => {
+    const jsx = await ArtworkDetailPage(makeParams());
+    render(jsx as React.ReactElement);
+
+    expect(screen.queryByTestId("buy-now-button")).toBeNull();
+  });
+});
+
 // ── stripeChargesEnabled = true ──────────────────────────────────────────────
 
 describe("artwork detail page — stripeChargesEnabled is true", () => {
