@@ -37,7 +37,7 @@ _Describe the high-level user-facing capabilities of this app once they exist._
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- **Never estimate or state human developer hours** (owner instruction, Aug 2026). Commit timestamps, task counts, and session windows measure agent working time only — starting/applying a task is a single click and the system does not record who clicked or how long they spent. When reporting activity: list agent time and deliverables, and attribute human involvement only as "requests/planning made by conversation" (what a user actually asked for), never as time estimates. Human hours come solely from a person's own log (`WORK_LOG.md`).
 
 ## Gotchas
 
