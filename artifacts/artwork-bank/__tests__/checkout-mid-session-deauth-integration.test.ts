@@ -126,6 +126,25 @@ function postDeauthWebhook(stripeAccountId: string) {
   );
 }
 
+/** POST a synthetic Stripe account.updated event re-enabling charges. */
+function postReauthWebhook(stripeAccountId: string) {
+  return webhookPOST(
+    new Request("http://localhost/api/stripe/webhook", {
+      method: "POST",
+      body: JSON.stringify({
+        type: "account.updated",
+        data: {
+          object: {
+            id: stripeAccountId,
+            charges_enabled: true,
+            payouts_enabled: true,
+          },
+        },
+      }),
+    }),
+  );
+}
+
 /** Build a checkout POST request for the given slug. */
 function checkoutRequest(slug: string) {
   return new Request("http://localhost/api/stripe/checkout", {
@@ -237,6 +256,44 @@ describeIntegration(
           columns: { stripeChargesEnabled: true },
         });
         expect(after?.stripeChargesEnabled).toBe(false);
+      },
+    );
+
+    it(
+      "allows checkout again after re-authorization (second account.updated with charges_enabled=true)",
+      async () => {
+        // Step 1: gallery starts ready.
+        const { id, slug, stripeAccountId } = await createReadyTenant();
+        createdTenantIds.push(id);
+
+        // Step 2: deauthorize — checkout must now return 503.
+        const deauthWebhookRes = await postDeauthWebhook(stripeAccountId);
+        expect(deauthWebhookRes.status).toBe(200);
+
+        const afterDeauth = await checkoutPOST(checkoutRequest(slug));
+        expect(afterDeauth.status).toBe(503);
+
+        // Step 3: re-authorize — a second account.updated fires with
+        // charges_enabled=true (e.g. the gallery reconnects their Stripe account).
+        const reauthWebhookRes = await postReauthWebhook(stripeAccountId);
+        expect(reauthWebhookRes.status).toBe(200);
+
+        // Step 4: confirm the DB column was restored to true.
+        const row = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, id),
+          columns: { stripeChargesEnabled: true },
+        });
+        expect(row?.stripeChargesEnabled).toBe(true);
+
+        // Step 5: buyer attempts checkout again — must NOT get a stale 503.
+        // The route proceeds past the readiness gate and fails at the artwork
+        // lookup (no artwork row was created), returning 400 rather than 503.
+        const afterReauth = await checkoutPOST(checkoutRequest(slug));
+        expect(afterReauth.status).not.toBe(503);
+        expect(afterReauth.status).not.toBe(500);
+        // 400 confirms the route passed the readiness gate and hit the next
+        // validation layer (artwork not found / not available).
+        expect(afterReauth.status).toBe(400);
       },
     );
   },
