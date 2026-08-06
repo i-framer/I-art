@@ -14,3 +14,10 @@ uri = "file://attached_assets/i-art-logo-full.png"
 type = "image"
 title = "i-art full logo (transparent)"
 description = "Full lockup with text — use for the Logo slot in Stripe branding, website header, and emails."
+
+[[outputs]]
+id = "KMMnFbH0jTS2E1GYbogCw"
+uri = "file://WEEKLY_ACTIVITY_REPORT.md"
+type = "text"
+title = "Weekly Activity Report — August 2026"
+description = "Engineering activity report for August 2026. Week 1 (Aug 1–6) fully populated from git commits and task records. Fill in hours in WORK_LOG.md to complete the invoice summary."
