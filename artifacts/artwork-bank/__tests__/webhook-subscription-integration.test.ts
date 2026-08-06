@@ -79,6 +79,7 @@ async function getTenantBillingFields(id: string) {
       subscriptionStatus: true,
       stripeCustomerId: true,
       stripeSubscriptionId: true,
+      trialEnd: true,
     },
   });
 }
@@ -415,15 +416,19 @@ describeIntegration("checkout.session.completed with trialing subscription", () 
     const subId = `sub_trialing_chk_${uid()}`;
     const cusId = `cus_trialing_chk_${uid()}`;
 
+    // A future Unix timestamp representing the trial end date (30 days from now).
+    const trialEndUnix = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+
     // Make getStripeClient return a minimal fake whose subscriptions.retrieve
-    // resolves to { status: "trialing" } so the retrieve call succeeds.
+    // resolves to { status: "trialing", trial_end: <timestamp> } so the
+    // retrieve call succeeds and the trial end date is stored.
     vi.mocked(getStripeClient).mockResolvedValueOnce({
       subscriptions: {
-        retrieve: vi.fn().mockResolvedValue({ status: "trialing" }),
+        retrieve: vi.fn().mockResolvedValue({ status: "trialing", trial_end: trialEndUnix }),
       },
     } as any);
 
-    const res = await post({
+    const eventPayload = {
       id: `evt_checkout_trialing_${tenantId}`,
       type: "checkout.session.completed",
       data: {
@@ -435,7 +440,9 @@ describeIntegration("checkout.session.completed with trialing subscription", () 
           metadata: { billingTenantId: tenantId },
         },
       },
-    });
+    };
+
+    const res = await post(eventPayload);
 
     expect(res.status).toBe(200);
 
@@ -446,6 +453,62 @@ describeIntegration("checkout.session.completed with trialing subscription", () 
     expect(row?.subscriptionStatus).toBe("trialing");
     expect(row?.stripeSubscriptionId).toBe(subId);
     expect(row?.stripeCustomerId).toBe(cusId);
+    // trialEnd must be stored as a non-null date matching the Unix timestamp.
+    expect(row?.trialEnd).not.toBeNull();
+    expect(row?.trialEnd).toBeInstanceOf(Date);
+    expect((row?.trialEnd as Date).getTime()).toBe(trialEndUnix * 1000);
+  });
+
+  it("replaying the same trialing checkout event is idempotent — row is unchanged on second delivery", async () => {
+    // Confirms that Stripe re-delivering the checkout.session.completed event
+    // does not overwrite the status or trialEnd that the first delivery wrote.
+    const tenantId = await createTenant();
+    createdTenantIds.push(tenantId);
+
+    const subId = `sub_trialing_idem_${uid()}`;
+    const cusId = `cus_trialing_idem_${uid()}`;
+    const trialEndUnix = Math.floor(Date.now() / 1000) + 14 * 24 * 60 * 60;
+
+    const event = {
+      id: `evt_checkout_trialing_idem_${tenantId}`,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_trialing_idem_${tenantId}`,
+          mode: "subscription",
+          customer: cusId,
+          subscription: subId,
+          metadata: { billingTenantId: tenantId },
+        },
+      },
+    };
+
+    // First delivery — sets status to "trialing" and writes trialEnd.
+    vi.mocked(getStripeClient).mockResolvedValueOnce({
+      subscriptions: {
+        retrieve: vi.fn().mockResolvedValue({ status: "trialing", trial_end: trialEndUnix }),
+      },
+    } as any);
+
+    const res1 = await post(event);
+    expect(res1.status).toBe(200);
+
+    const rowAfterFirst = await getTenantBillingFields(tenantId);
+    expect(rowAfterFirst?.subscriptionStatus).toBe("trialing");
+    expect(rowAfterFirst?.trialEnd).not.toBeNull();
+
+    // Second delivery (Stripe retry) — isNewSubscription is false because the
+    // sub ID is already stored, so the handler must skip the retrieve and leave
+    // the row untouched.  No mock needed for getStripeClient here.
+    const res2 = await post(event);
+    expect(res2.status).toBe(200);
+
+    const rowAfterSecond = await getTenantBillingFields(tenantId);
+    // Status and trialEnd must be identical to what the first delivery wrote.
+    expect(rowAfterSecond?.subscriptionStatus).toBe("trialing");
+    expect(rowAfterSecond?.stripeSubscriptionId).toBe(subId);
+    expect(rowAfterSecond?.stripeCustomerId).toBe(cusId);
+    expect(rowAfterSecond?.trialEnd).toEqual(rowAfterFirst?.trialEnd);
   });
 });
 
