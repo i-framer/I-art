@@ -86,3 +86,21 @@ export async function resetRateLimiter(keyPrefix?: string) {
   }
   lastSweep = 0;
 }
+
+/**
+ * Test-only helper that prunes stale test rows left behind by crashed runs.
+ *
+ * Integration tests use a per-run `test-rl-*` key prefix so normal runs never
+ * collide, but when a process crashes the `afterAll` cleanup is skipped and
+ * those rows accumulate. Call this once at the start of a test suite to
+ * delete any `test-rl-*` rows older than `maxAgeMs` (default: 5 minutes),
+ * which is safely beyond any window used by the tests themselves.
+ */
+export async function sweepStaleTestRows(maxAgeMs = 5 * 60_000): Promise<void> {
+  await pool.query(
+    `DELETE FROM rate_limit_event
+     WHERE key LIKE 'test-rl-%'
+       AND created_at < now() - ($1 || ' milliseconds')::interval`,
+    [String(maxAgeMs)],
+  );
+}

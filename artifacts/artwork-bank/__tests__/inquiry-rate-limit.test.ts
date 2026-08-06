@@ -1,11 +1,19 @@
-import { it, expect, beforeEach, afterAll } from "vitest";
+import { it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
-import { checkRateLimit, resetRateLimiter } from "../lib/rate-limit";
+import { checkRateLimit, resetRateLimiter, sweepStaleTestRows } from "../lib/rate-limit";
 import { pool } from "@workspace/db";
 
 // Integration tests against the shared Postgres-backed limiter, using a
 // unique key prefix so runs don't interfere with real data or each other.
 const prefix = `test-rl-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+// Prune any stale test rows left behind by crashed previous runs before the
+// suite starts. This runs even when the suite is skipped (no DATABASE_URL) so
+// a fresh environment stays clean over time.
+beforeAll(async () => {
+  if (!process.env.DATABASE_URL) return;
+  await sweepStaleTestRows();
+});
 
 describeIntegration("checkRateLimit (Postgres-backed)", () => {
   beforeEach(async () => {
