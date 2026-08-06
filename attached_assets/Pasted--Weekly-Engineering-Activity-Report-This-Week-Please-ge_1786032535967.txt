@@ -1,0 +1,124 @@
+# Weekly Engineering Activity Report (This Week)
+
+Please generate a complete engineering activity report for THIS WEEK only.
+
+Date Range:
+August 1, 2026 through August 6, 2026
+
+IMPORTANT
+
+Do NOT estimate my billable hours.
+Do NOT ask me for start/end times.
+Do NOT use AI execution time as my working time.
+
+Instead, reconstruct my engineering activity using every timestamp and project artifact available.
+
+Review ALL available sources including:
+
+- Replit Tasks
+- Replit Agent conversations
+- Agent run timestamps
+- "Worked for XX seconds" records
+- Checkpoint timestamps
+- Git commit history
+- File modification history
+- Project timeline
+- Deployment history
+- Build history
+- Test execution history
+- Task merge history
+- Database migrations
+- Terminal history (if available)
+
+For EVERY engineering event include:
+
+- Timestamp
+- Task number
+- Task title
+- Activity performed
+- Files modified
+- Commit hash
+- Checkpoint (if available)
+- Agent runtime
+- Source of evidence
+
+Then reconstruct my engineering timeline by grouping nearby activities into work sessions.
+
+Example:
+
+Session 1
+Start:
+End:
+Evidence:
+- Task #305
+- Task #322
+- 6 commits
+- 2 checkpoints
+
+Work performed:
+- Prompt engineering
+- Code review
+- Testing
+- Debugging
+- Validation
+
+Repeat for every engineering session during the week.
+
+Finally generate these sections:
+
+==========================================
+WEEKLY DASHBOARD
+==========================================
+
+- Total Git commits
+- Total tasks completed
+- Total production fixes
+- Total features delivered
+- Total tests added
+- Total checkpoints
+- Total agent runs
+- Total deployments
+
+==========================================
+DAILY SUMMARY
+==========================================
+
+One summary for each day (August 1–6).
+
+==========================================
+ENGINEERING TIMELINE
+==========================================
+
+Session
+Start Timestamp
+End Timestamp
+Evidence
+Tasks
+Commits
+
+==========================================
+DELIVERABLES
+==========================================
+
+Group completed work into:
+
+- Features
+- Bug fixes
+- Security
+- Stripe
+- Testing
+- Infrastructure
+- UI/UX
+- Documentation
+
+==========================================
+SUPPORTING EVIDENCE
+==========================================
+
+List every task, commit, checkpoint, deployment, and major file modification.
+
+Do not calculate my personal hours.
+
+Export the report as:
+
+WEEKLY_ENGINEERING_REPORT.md

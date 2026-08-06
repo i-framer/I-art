@@ -21,3 +21,10 @@ uri = "file://WEEKLY_ACTIVITY_REPORT.md"
 type = "text"
 title = "Weekly Activity Report — August 2026"
 description = "Engineering activity report for August 2026. Week 1 (Aug 1–6) fully populated from git commits and task records. Fill in hours in WORK_LOG.md to complete the invoice summary."
+
+[[outputs]]
+id = "iyAPlmx2wU7SarrjxwCRn"
+uri = "file://WEEKLY_ENGINEERING_REPORT.md"
+type = "text"
+title = "Weekly Engineering Report — August 1–6, 2026"
+description = "Complete engineering timeline: 6 sessions, 186 commits, ~97 tasks merged. Includes commit-by-commit chronology, session reconstruction, deliverables by category, and full supporting evidence."
