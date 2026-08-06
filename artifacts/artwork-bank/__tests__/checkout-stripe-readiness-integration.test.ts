@@ -77,7 +77,7 @@ vi.mock("@/lib/slack", () => ({
 }));
 
 // ── Real DB — the whole point of this integration test ───────────────────────
-import { db, tenantsTable } from "@workspace/db";
+import { db, tenantsTable, artworksTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 // ── Route under test — imported after all mocks are registered ───────────────
@@ -127,13 +127,22 @@ function checkoutRequest(slug: string) {
 // ── Cleanup tracking ──────────────────────────────────────────────────────────
 
 const createdTenantIds: string[] = [];
+const createdArtworkIds: string[] = [];
 
 beforeEach(() => {
   createdTenantIds.length = 0;
+  createdArtworkIds.length = 0;
   sessionsCreate.mockResolvedValue({ url: "https://stripe.test/session" });
 });
 
 afterEach(async () => {
+  // Delete artworks first (FK references tenants).
+  for (const id of createdArtworkIds) {
+    await db
+      .delete(artworksTable)
+      .where(eq(artworksTable.id, id))
+      .catch(() => {});
+  }
   for (const id of createdTenantIds) {
     await db
       .delete(tenantsTable)
@@ -176,6 +185,46 @@ describeIntegration(
 
         // The route must short-circuit before ever contacting Stripe.
         expect(sessionsCreate).not.toHaveBeenCalled();
+      },
+    );
+
+    it(
+      "leaves the artwork AVAILABLE in the DB when stripeChargesEnabled is false",
+      async () => {
+        const { id: tenantId, slug } = await createTenant({
+          stripeChargesEnabled: false,
+        });
+        createdTenantIds.push(tenantId);
+
+        // Insert a real artwork so the route could theoretically reserve it.
+        const artworkId = uid();
+        await db.insert(artworksTable).values({
+          id: artworkId,
+          tenantId,
+          title: "Test Artwork",
+          sku: `sku-${artworkId}`,
+          status: "AVAILABLE",
+          showInGallery: true,
+        } as any);
+        createdArtworkIds.push(artworkId);
+
+        const res = await checkoutPOST(
+          new Request("http://localhost/api/stripe/checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ artworkId, slug, fulfillmentType: "SHIP" }),
+          }),
+        );
+
+        // The readiness gate must reject before attempting to reserve the artwork.
+        expect(res.status).toBe(503);
+
+        // Directly query the DB to confirm the artwork was never RESERVED.
+        const [row] = await db
+          .select({ status: artworksTable.status })
+          .from(artworksTable)
+          .where(eq(artworksTable.id, artworkId));
+        expect(row?.status).toBe("AVAILABLE");
       },
     );
 
