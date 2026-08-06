@@ -1,0 +1,73 @@
+# August 1–6 Work Activity & Invoice Report
+
+Review all project activity between **August 1, 2026** and **August 6, 2026** (inclusive).
+
+Search all project records, including:
+
+* Completed tasks
+* In-progress tasks
+* Approved and reviewed tasks
+* Replit Agent task history
+* Work logs
+* Git commits
+* Project checkpoints
+* Related engineering activity
+
+For every task with a recorded **Time worked** value, extract:
+
+* Date worked
+* Task title
+* Task status
+* Recorded **Time worked**
+* Brief summary of the completed work
+* Related commits or files changed (if available)
+
+Display the results in this format:
+
+| Date | Task | Status | Time Worked | Summary |
+| ---- | ---- | ------ | ----------- | ------- |
+
+## Engineering Time Rules
+
+Use the recorded **Time worked** values as the primary source of truth.
+
+The recorded time may include legitimate engineering activities such as:
+
+* Creating and refining AI Agent tasks
+* Reviewing AI-generated code and recommendations
+* Validating completed work
+* Debugging and troubleshooting
+* Running tests and verifying results
+* Monitoring builds and deployments
+* Waiting while actively supervising an Agent run and preparing the next engineering task
+* Investigating failures and restarting tasks when necessary
+* Production verification and quality assurance
+* Reviewing pull requests and applying changes
+* Planning and sequencing technical work
+
+Do **not** reduce or replace recorded **Time worked** values with estimates unless there is clear evidence that a value is incorrect or duplicated.
+
+Only exclude periods that are clearly unrelated to project work, such as prolonged personal inactivity with no engineering supervision or interaction.
+
+## Monthly Summary (August 1–6)
+
+Provide:
+
+* Total recorded Time worked
+* Daily totals
+* Total completed tasks
+* Total active tasks
+* Tasks missing a recorded Time worked value
+* Total commits
+* Total deployments (if available)
+
+Finally, prepare an invoice-ready summary:
+
+* Invoice Period: August 1–6, 2026
+* Total Recorded Engineering Hours
+* Number of Completed Tasks
+* Number of Active Tasks
+* Hours Supported by Recorded Time Worked
+* Tasks Requiring Manual Review (if any)
+
+Do not estimate hours when recorded **Time worked** values exist. Use those values as the primary evidence for the invoice and provide a clear, transparent summary of all engineering work completed during the reporting period.
