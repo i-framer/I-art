@@ -1,7 +1,7 @@
 /**
  * Integration tests: checkout route readiness gate — real DB.
  *
- * Three scenarios under test:
+ * Four scenarios under test:
  *
  *  1. Tenant with stripeChargesEnabled = false → 503 with a user-visible
  *     "not yet ready" message, never a 500.  The artwork must not be reserved
@@ -11,10 +11,14 @@
  *     received) → benefit of the doubt: the gate is passed and the route
  *     advances to the artwork-reservation step.  With no matching artwork it
  *     returns 400 "not available for purchase", confirming the gate did not
- *     block checkout.  Stripe's account_invalid error is the safety net if the
- *     account is genuinely not charge-ready.
+ *     block checkout.
  *
- *  3. Tenant with stripeChargesEnabled = true → the readiness check is passed;
+ *  3. Tenant with stripeChargesEnabled = null, real artwork present, and Stripe
+ *     returns account_invalid → the route surfaces a user-visible 503 (not a
+ *     raw 500), confirming the Stripe-level safety net converts the error into
+ *     a clear buyer-facing message and releases the reservation.
+ *
+ *  4. Tenant with stripeChargesEnabled = true → the readiness check is passed;
  *     the route advances to the artwork-reservation step.  With no matching
  *     artwork in the DB it returns 400 "not available for purchase", which
  *     confirms the gate did not block checkout.
@@ -262,6 +266,72 @@ describeIntegration(
         // route did NOT return 503 before even attempting reservation.
         const res = await checkoutPOST(checkoutRequest(slug));
         expect(res.status).not.toBe(503);
+      },
+    );
+
+    it(
+      "surfaces a user-visible 503 (not a 500) when stripeChargesEnabled is null and Stripe returns account_invalid",
+      async () => {
+        // Scenario: gallery has a stripeAccountId but has never received an
+        // account.updated webhook (stripeChargesEnabled = null). The readiness
+        // gate passes with benefit of the doubt. However the underlying Stripe
+        // account was never fully onboarded, so stripe.checkout.sessions.create
+        // rejects with an account_invalid error. The route must convert that
+        // into a clear 503 rather than letting it bubble up as a raw 500.
+
+        const { id: tenantId, slug } = await createTenant({
+          stripeChargesEnabled: null,
+        });
+        createdTenantIds.push(tenantId);
+
+        // Insert a real AVAILABLE artwork so the route reaches the Stripe call.
+        const artworkId = uid();
+        await db.insert(artworksTable).values({
+          id: artworkId,
+          tenantId,
+          title: "Stripe Safety Net Test Artwork",
+          sku: `sku-safety-${artworkId}`,
+          status: "AVAILABLE",
+          showInGallery: true,
+          price: 50000, // $500.00 AUD in cents
+        } as any);
+        createdArtworkIds.push(artworkId);
+
+        // Simulate Stripe rejecting because the connected account is not yet
+        // enabled for charges (the common case for a brand-new gallery that
+        // started but never finished Stripe onboarding).
+        const stripeAccountInvalidError = Object.assign(
+          new Error(
+            "The provided key 'acct_test_...' does not have access to perform this action.",
+          ),
+          {
+            type: "StripeInvalidRequestError",
+            code: "account_invalid",
+            statusCode: 400,
+          },
+        );
+        sessionsCreate.mockRejectedValueOnce(stripeAccountInvalidError);
+
+        const res = await checkoutPOST(
+          new Request("http://localhost/api/stripe/checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ artworkId, slug, fulfillmentType: "SHIP" }),
+          }),
+        );
+
+        // Must surface a 503 (user-visible, handled), never a raw 500.
+        expect(res.status).toBe(503);
+        const json = await res.json();
+        expect(json.error).toMatch(/not yet ready to accept payments/i);
+
+        // Confirm the reservation was released: the artwork must be AVAILABLE
+        // again so it can be purchased once the gallery finishes onboarding.
+        const [row] = await db
+          .select({ status: artworksTable.status })
+          .from(artworksTable)
+          .where(eq(artworksTable.id, artworkId));
+        expect(row?.status).toBe("AVAILABLE");
       },
     );
 
