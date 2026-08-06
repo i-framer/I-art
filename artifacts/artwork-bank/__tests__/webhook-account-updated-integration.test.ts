@@ -125,6 +125,65 @@ afterEach(async () => {
 describeIntegration(
   "account.updated webhook — Stripe readiness cache on tenant row",
   () => {
+    /**
+     * Stale-cache warning scenario
+     *
+     * The settings page shows a warning banner when live Stripe reports
+     * charges_enabled=true but the DB column stripeChargesEnabled is not true
+     * (i.e. it is false or null).  The banner condition is:
+     *
+     *   stripeStatus === "active" && tenant.stripeChargesEnabled !== true
+     *
+     * This test starts with that exact mismatch (DB says false, live says
+     * enabled), fires a synthetic account.updated webhook, and confirms the DB
+     * column is flipped to true so the banner condition is no longer satisfied.
+     */
+    it(
+      "stale-cache warning clears: DB updates from false→true after account.updated webhook",
+      async () => {
+        const stripeAccountId = `acct_test_${uid().slice(0, 8)}`;
+        // Simulate the mismatch state: live Stripe has charges enabled, but the
+        // cached DB column (stripeChargesEnabled) still shows false.
+        const tenantId = await createTenant({
+          stripeAccountId,
+          stripeChargesEnabled: false, // the stale/incorrect cached value
+          stripePayoutsEnabled: false,
+        });
+        createdTenantIds.push(tenantId);
+
+        // Confirm the mismatch state before the webhook fires — the banner
+        // condition `tenant.stripeChargesEnabled !== true` is satisfied.
+        const before = await readReadiness(tenantId);
+        expect(before?.stripeChargesEnabled).toBe(false);
+
+        // A real account.updated webhook arrives (or is manually redelivered)
+        // containing the authoritative Stripe values.
+        const res = await postEvent({
+          type: "account.updated",
+          data: {
+            object: {
+              id: stripeAccountId,
+              charges_enabled: true,
+              payouts_enabled: true,
+            },
+          },
+        });
+
+        expect(res.status).toBe(200);
+        const json = await res.json();
+        expect(json.received).toBe(true);
+
+        // After the webhook the DB column is true.  The settings page reads
+        // tenant.stripeChargesEnabled directly from the DB; on the next render
+        // the banner condition becomes:
+        //   stripeStatus === "active" && true !== true  →  false
+        // so the stale-cache warning banner is no longer rendered.
+        const after = await readReadiness(tenantId);
+        expect(after?.stripeChargesEnabled).toBe(true);
+        expect(after?.stripePayoutsEnabled).toBe(true);
+      },
+    );
+
     it(
       "updates stripeChargesEnabled and stripePayoutsEnabled for a known account",
       async () => {
