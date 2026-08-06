@@ -4,8 +4,13 @@
  *
  * Verifies that the Stripe checkout session is created with
  * payment_intent_data.application_fee_amount equal to the value returned by
- * calcApplicationFee(artwork.price), and that the gallery's connected account
- * receives the transfer (transfer_data.destination = tenant.stripeAccountId).
+ * the REAL calcApplicationFee(artwork.price), and that the gallery's connected
+ * account receives the transfer (transfer_data.destination =
+ * tenant.stripeAccountId).
+ *
+ * calcApplicationFee is intentionally NOT mocked here (uses importOriginal like
+ * the webhook-commission sibling test) so a regression in the production
+ * rounding formula would cause these tests to fail.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
@@ -75,23 +80,26 @@ vi.mock("@/lib/object-storage", () => ({
 }));
 
 // ── Stripe: capture what the route passes to sessions.create ─────────────────
+// Use the REAL calcApplicationFee (importOriginal) so the rounding edge case
+// verifies production formula behaviour, not a copy of it.
 
 const sessionsCreate = vi.hoisted(() => vi.fn());
-const calcApplicationFee = vi.hoisted(() =>
-  vi.fn((cents: number) => Math.round(cents * 0.05)),
-);
 
-vi.mock("@/lib/stripe", () => ({
-  getStripeClient: vi.fn().mockResolvedValue({
-    checkout: { sessions: { create: (...a: any[]) => sessionsCreate(...a) } },
-  }),
-  calcApplicationFee: (cents: number) => calcApplicationFee(cents),
-  StripeNotConfiguredError: class StripeNotConfiguredError extends Error {},
-}));
+vi.mock("@/lib/stripe", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/stripe")>();
+  return {
+    getStripeClient: vi.fn().mockResolvedValue({
+      checkout: { sessions: { create: (...a: any[]) => sessionsCreate(...a) } },
+    }),
+    calcApplicationFee: real.calcApplicationFee,
+    StripeNotConfiguredError: class StripeNotConfiguredError extends Error {},
+  };
+});
 
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 import { POST } from "@/app/api/stripe/checkout/route";
+import { calcApplicationFee } from "@/lib/stripe";
 
 function checkoutRequest(overrides: Record<string, string> = {}) {
   return new Request("http://localhost/api/stripe/checkout", {
@@ -106,10 +114,22 @@ function checkoutRequest(overrides: Record<string, string> = {}) {
   });
 }
 
+/** Return a mock db.update that resolves with the given artwork price. */
+function dbUpdateReturning(price: number) {
+  return (_table: any) => ({
+    set: (_vals: any) => ({
+      where: (_cond: any) => ({
+        returning: () => Promise.resolve([{ ...artwork, price }]),
+      }),
+    }),
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  sessionsCreate.mockResolvedValue({ url: "https://checkout.stripe.com/cs_test_abc" });
-  calcApplicationFee.mockImplementation((cents: number) => Math.round(cents * 0.05));
+  sessionsCreate.mockResolvedValue({
+    url: "https://checkout.stripe.com/cs_test_abc",
+  });
 });
 
 describe("POST /api/stripe/checkout — commission amount", () => {
@@ -117,10 +137,8 @@ describe("POST /api/stripe/checkout — commission amount", () => {
     const res = await POST(checkoutRequest());
     expect(res.status).toBe(200);
 
-    expect(calcApplicationFee).toHaveBeenCalledWith(artwork.price);
-
     const args = sessionsCreate.mock.calls[0][0];
-    const expectedFee = Math.round(artwork.price * 0.05);
+    const expectedFee = calcApplicationFee(artwork.price);
     expect(args.payment_intent_data.application_fee_amount).toBe(expectedFee);
   });
 
@@ -138,16 +156,6 @@ describe("POST /api/stripe/checkout — commission amount", () => {
     expect(args.payment_intent_data.application_fee_amount).toBeGreaterThan(0);
   });
 
-  it("commission changes proportionally when calcApplicationFee returns a different amount", async () => {
-    // Simulate a 10% fee override.
-    calcApplicationFee.mockImplementation((cents: number) => Math.round(cents * 0.10));
-    await POST(checkoutRequest());
-    const args = sessionsCreate.mock.calls[0][0];
-    expect(args.payment_intent_data.application_fee_amount).toBe(
-      Math.round(artwork.price * 0.10),
-    );
-  });
-
   it("uses the artwork price as the Stripe line item unit_amount", async () => {
     await POST(checkoutRequest());
     const args = sessionsCreate.mock.calls[0][0];
@@ -162,5 +170,22 @@ describe("POST /api/stripe/checkout — commission amount", () => {
       tenantId: tenant.id,
       fulfillmentType: "SHIP",
     });
+  });
+
+  it("rounds odd-cent commission correctly — 9 999 × 5% = 499.95 → 500 cents", async () => {
+    // Use the REAL calcApplicationFee (not a copy of the formula) so this test
+    // would fail if the production function were changed to truncate instead of round.
+    const oddCentPrice = 9_999;
+    const { db: mockDb } = await import("@workspace/db");
+    (mockDb as any).update = dbUpdateReturning(oddCentPrice);
+
+    const res = await POST(checkoutRequest());
+    expect(res.status).toBe(200);
+
+    const args = sessionsCreate.mock.calls[0][0];
+    // Real calcApplicationFee: Math.round(9999 * (5/100)) = Math.round(499.95) = 500
+    const realFee = calcApplicationFee(oddCentPrice);
+    expect(realFee).toBe(500); // sanity-check the real function
+    expect(args.payment_intent_data.application_fee_amount).toBe(realFee);
   });
 });
