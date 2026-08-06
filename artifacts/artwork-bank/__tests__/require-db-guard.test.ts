@@ -4092,3 +4092,129 @@ describe("require-db.js — small-but-safe scientific-notation REQUIRE_DB_PSQL_T
     expect(result.signal).toBeNull();
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("require-db.js — scientific-notation timeout values reach spawnSync with the correct ms value", () => {
+  // The happy-path tests above confirm the guard exits 0 for '1e3', '5e4', and
+  // '1e4', but they do not verify the actual numeric timeout passed to
+  // spawnSync.  A bug that parsed '1e3' correctly but passed 500 to spawnSync
+  // would go undetected by those tests.
+  //
+  // This suite closes that gap by straddling the timeout boundary with a
+  // comfortable 200 ms margin on each side to absorb shell-spawn overhead:
+  //
+  //   '1e3' → 1000 ms   boundary: 800 ms (pass) vs 1200 ms (time out)
+  //   '1e4' → 10000 ms  boundary: 9800 ms (pass) vs 10200 ms (time out)
+  //   '5e4' → 50000 ms  boundary: 49800 ms (pass) vs 50200 ms (time out)
+  //
+  // A 1 ms margin is impractical because forking a shell + starting the sleep
+  // binary alone can consume 5–50 ms depending on the host; using 200 ms gives
+  // reliable results while still catching any bug that passes the wrong order-
+  // of-magnitude value to spawnSync (e.g. 100 ms or 10 000 ms instead of 1000).
+  //
+  // The Vitest per-test timeout is set to (expected_ms + 5000) so the test
+  // framework does not kill the subprocess before spawnSync's own timeout fires.
+
+  // ── '1e3' = 1000 ms ──────────────────────────────────────────────────────
+
+  it("exits 1 with 'timed out' when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e3' and psql sleeps 1200 ms (just over 1000 ms)", () => {
+    // If spawnSync received 1000 ms as the timeout, a 1200 ms sleep must
+    // trigger ETIMEDOUT and cause the guard to exit 1 with 'timed out'.
+    const fakeBinDir = makeFakePsqlDir("sleep 1.2");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e3",
+    });
+
+    expect(result.status).toBe(1);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/timed out/i);
+  }, 6_000);
+
+  it("exits 0 and prints 'dev database confirmed' when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e3' and psql sleeps 800 ms (just under 1000 ms)", () => {
+    // If spawnSync received 1000 ms as the timeout, a 800 ms sleep must
+    // complete before the deadline and allow the guard to exit 0.
+    const fakeBinDir = makeFakePsqlDir("sleep 0.8");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e3",
+    });
+
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  }, 6_000);
+
+  // ── '1e4' = 10000 ms ─────────────────────────────────────────────────────
+
+  it("exits 1 with 'timed out' when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e4' and psql sleeps 10200 ms (just over 10000 ms)", () => {
+    // If spawnSync received 10000 ms as the timeout, a 10200 ms sleep must
+    // trigger ETIMEDOUT and cause the guard to exit 1 with 'timed out'.
+    const fakeBinDir = makeFakePsqlDir("sleep 10.2");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e4",
+    });
+
+    expect(result.status).toBe(1);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/timed out/i);
+  }, 15_000);
+
+  it("exits 0 and prints 'dev database confirmed' when REQUIRE_DB_PSQL_TIMEOUT_MS is '1e4' and psql sleeps 9800 ms (just under 10000 ms)", () => {
+    // If spawnSync received 10000 ms as the timeout, a 9800 ms sleep must
+    // complete before the deadline and allow the guard to exit 0.
+    const fakeBinDir = makeFakePsqlDir("sleep 9.8");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "1e4",
+    });
+
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  }, 15_000);
+
+  // ── '5e4' = 50000 ms ─────────────────────────────────────────────────────
+
+  it("exits 1 with 'timed out' when REQUIRE_DB_PSQL_TIMEOUT_MS is '5e4' and psql sleeps 50200 ms (just over 50000 ms)", () => {
+    // If spawnSync received 50000 ms as the timeout, a 50200 ms sleep must
+    // trigger ETIMEDOUT and cause the guard to exit 1 with 'timed out'.
+    const fakeBinDir = makeFakePsqlDir("sleep 50.2");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/testdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "5e4",
+    });
+
+    expect(result.status).toBe(1);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toMatch(/timed out/i);
+  }, 55_000);
+
+  it("exits 0 and prints 'dev database confirmed' when REQUIRE_DB_PSQL_TIMEOUT_MS is '5e4' and psql sleeps 49800 ms (just under 50000 ms)", () => {
+    // If spawnSync received 50000 ms as the timeout, a 49800 ms sleep must
+    // complete before the deadline and allow the guard to exit 0.
+    const fakeBinDir = makeFakePsqlDir("sleep 49.8");
+
+    const result = runGuard({
+      DATABASE_URL: "postgres://user:pass@localhost/devdb",
+      PATH: `${fakeBinDir}:${process.env.PATH}`,
+      REQUIRE_DB_PSQL_TIMEOUT_MS: "5e4",
+    });
+
+    expect(result.status).toBe(0);
+    const output = String(result.stderr || "") + String(result.stdout || "");
+    expect(output).toContain("dev database confirmed");
+  }, 55_000);
+});
