@@ -263,19 +263,25 @@ async function _fetchStripeEnvironmentDiagnostic(): Promise<StripeEnvironmentDia
   };
 }
 
+/** The fallback platform fee percentage used when the env var is misconfigured. */
+export const PLATFORM_FEE_PERCENT_DEFAULT = 5;
+
 /**
  * Parse and validate PLATFORM_FEE_PERCENT at module load time.
- * Throws immediately on bad configuration so operators see the problem in
- * startup logs rather than discovering a wrong (e.g. NaN → $0) fee mid-sale.
+ * Logs a clear error and falls back to the documented default (5%) if the
+ * value is missing or invalid, so operators see the problem in startup logs
+ * rather than silently charging NaN% or 0% on every sale.
  */
 function parsePlatformFeePercent(): number {
-  const raw = process.env.PLATFORM_FEE_PERCENT ?? "5";
+  const raw = process.env.PLATFORM_FEE_PERCENT ?? String(PLATFORM_FEE_PERCENT_DEFAULT);
   const parsed = parseFloat(raw);
   if (!isFinite(parsed) || parsed < 0 || parsed > 100) {
-    throw new Error(
-      `Invalid PLATFORM_FEE_PERCENT "${raw}": must be a finite number between 0 and 100 ` +
-        `(default 5). Platform fees will not be collected until this is corrected.`,
+    console.error(
+      `[stripe] Invalid PLATFORM_FEE_PERCENT "${raw}": must be a finite number between 0 ` +
+        `and 100. Falling back to the default of ${PLATFORM_FEE_PERCENT_DEFAULT}%. ` +
+        `Fix the environment variable to suppress this warning.`,
     );
+    return PLATFORM_FEE_PERCENT_DEFAULT;
   }
   return parsed;
 }
