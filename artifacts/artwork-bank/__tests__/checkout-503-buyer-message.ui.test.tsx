@@ -152,6 +152,84 @@ describe("BuyNowButton — 503 with non-JSON body", () => {
   });
 });
 
+// ── Mid-session deauthorization ───────────────────────────────────────────────
+// Buyer opens the gallery page while stripeChargesEnabled is true (button
+// rendered, no error), then the gallery's Stripe Connect account is
+// deauthorized.  When the buyer clicks Buy Now the API returns 503 with the
+// "not yet ready" body because stripeChargesEnabled has flipped to false in
+// the tenant cache.  The buyer must see the specific actionable message rather
+// than a generic fallback.
+
+describe("BuyNowButton — mid-session Stripe account deauthorization", () => {
+  it("shows the 'not yet ready' message when stripeChargesEnabled flips to false before Buy Now", async () => {
+    // Simulate the server-side fast-path rejection that fires when the
+    // account.updated webhook sets stripeChargesEnabled = false between page
+    // load and the buyer clicking Buy Now.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: NOT_READY_MSG }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    // Buyer opens the page — button is rendered and enabled (no initial error).
+    render(<BuyNowButton {...defaultProps} />);
+    expect(screen.queryByText(NOT_READY_MSG)).toBeNull();
+
+    // Buyer clicks Buy Now after the account has been deauthorized mid-session.
+    await userEvent.click(screen.getByRole("button", { name: /buy now/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(NOT_READY_MSG)).toBeTruthy();
+    });
+  });
+
+  it("does NOT show the generic 503 fallback when the account is deauthorized mid-session", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: NOT_READY_MSG }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    render(<BuyNowButton {...defaultProps} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /buy now/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(GENERIC_503_MSG)).toBeNull();
+    });
+  });
+
+  it("does NOT show the generic 'something went wrong' message when the account is deauthorized mid-session", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: NOT_READY_MSG }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    render(<BuyNowButton {...defaultProps} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /buy now/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText("Something went wrong. Please try again."),
+      ).toBeNull();
+    });
+  });
+});
+
 // ── Successful checkout — no error shown ─────────────────────────────────────
 
 describe("BuyNowButton — successful 200 checkout", () => {
