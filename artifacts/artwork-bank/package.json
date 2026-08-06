@@ -9,6 +9,7 @@
     "start": "next start --port $PORT",
     "typecheck": "rm -rf .next/types && tsc --noEmit",
     "test": "vitest run --no-file-parallelism",
+    "test:slow": "vitest run --config vitest.slow.config.ts --no-file-parallelism --reporter=verbose",
     "test:integration": "node scripts/require-db.js && vitest run --reporter=verbose integration",
     "db:seed": "tsx scripts/seed.ts",
     "smoke:billing-alert": "tsx scripts/smoke-billing-alert.ts",

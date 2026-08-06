@@ -12,5 +12,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["__tests__/**/*.test.ts", "__tests__/**/*.ui.test.tsx"],
+    // The __tests__/slow/ directory contains tests that each take ~50 s of
+    // real wall-clock time.  They are excluded here and run via `pnpm test:slow`
+    // in a dedicated CI slot so the default `pnpm test` stays fast.
+    exclude: ["__tests__/slow/**"],
   },
 });

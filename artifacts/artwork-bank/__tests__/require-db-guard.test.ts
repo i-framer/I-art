@@ -4104,9 +4104,15 @@ describe("require-db.js — scientific-notation timeout values reach spawnSync w
   // This suite closes that gap by straddling the timeout boundary with a
   // comfortable 200 ms margin on each side to absorb shell-spawn overhead:
   //
-  //   '1e3' → 1000 ms   boundary: 800 ms (pass) vs 1200 ms (time out)
-  //   '1e4' → 10000 ms  boundary: 9800 ms (pass) vs 10200 ms (time out)
-  //   '5e4' → 50000 ms  boundary: 49800 ms (pass) vs 50200 ms (time out)
+  //   '1e3' → 1000 ms   boundary: 800 ms (pass) vs 1200 ms (time out)   ← tested here
+  //   '1e4' → 10000 ms  boundary: 9800 ms (pass) vs 10200 ms (time out)  ← tested here
+  //   '5e4' → 50000 ms  boundary: 49800 ms (pass) vs 50200 ms (time out) ← __tests__/slow/require-db-guard-5e4.test.ts
+  //
+  // The '5e4' boundary tests each require ~50 s of real wall-clock time and
+  // are therefore kept in the dedicated slow-test suite at
+  // __tests__/slow/require-db-guard-5e4.test.ts.  Run them with
+  // `pnpm test:slow`.  The 1e3 and 1e4 cases here are fast enough (~20 s
+  // combined) to remain in the standard test run.
   //
   // A 1 ms margin is impractical because forking a shell + starting the sleep
   // binary alone can consume 5–50 ms depending on the host; using 200 ms gives
@@ -4184,37 +4190,4 @@ describe("require-db.js — scientific-notation timeout values reach spawnSync w
     expect(output).toContain("dev database confirmed");
   }, 15_000);
 
-  // ── '5e4' = 50000 ms ─────────────────────────────────────────────────────
-
-  it("exits 1 with 'timed out' when REQUIRE_DB_PSQL_TIMEOUT_MS is '5e4' and psql sleeps 50200 ms (just over 50000 ms)", () => {
-    // If spawnSync received 50000 ms as the timeout, a 50200 ms sleep must
-    // trigger ETIMEDOUT and cause the guard to exit 1 with 'timed out'.
-    const fakeBinDir = makeFakePsqlDir("sleep 50.2");
-
-    const result = runGuard({
-      DATABASE_URL: "postgres://user:pass@localhost/testdb",
-      PATH: `${fakeBinDir}:${process.env.PATH}`,
-      REQUIRE_DB_PSQL_TIMEOUT_MS: "5e4",
-    });
-
-    expect(result.status).toBe(1);
-    const output = String(result.stderr || "") + String(result.stdout || "");
-    expect(output).toMatch(/timed out/i);
-  }, 55_000);
-
-  it("exits 0 and prints 'dev database confirmed' when REQUIRE_DB_PSQL_TIMEOUT_MS is '5e4' and psql sleeps 49800 ms (just under 50000 ms)", () => {
-    // If spawnSync received 50000 ms as the timeout, a 49800 ms sleep must
-    // complete before the deadline and allow the guard to exit 0.
-    const fakeBinDir = makeFakePsqlDir("sleep 49.8");
-
-    const result = runGuard({
-      DATABASE_URL: "postgres://user:pass@localhost/devdb",
-      PATH: `${fakeBinDir}:${process.env.PATH}`,
-      REQUIRE_DB_PSQL_TIMEOUT_MS: "5e4",
-    });
-
-    expect(result.status).toBe(0);
-    const output = String(result.stderr || "") + String(result.stdout || "");
-    expect(output).toContain("dev database confirmed");
-  }, 55_000);
 });
