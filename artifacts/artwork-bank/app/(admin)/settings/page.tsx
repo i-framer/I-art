@@ -24,6 +24,7 @@ import { getStripeClient } from "@/lib/stripe";
 import { getCnameTarget } from "@/lib/tenant-cache";
 import { getPlatformBaseUrl } from "@/lib/base-url";
 import { DomainForm } from "./_components/domain-form";
+import { StripeReadinessPanel } from "./_components/stripe-readiness-panel";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -488,46 +489,10 @@ export default async function SettingsPage({
 
         {/* Cached status — shown once a Stripe account exists */}
         {tenant.stripeAccountId && (
-          <div className="rounded-lg border border-stone-200 bg-stone-50 px-4 py-3 space-y-2">
-            <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider">
-              Checkout status (cached)
-            </p>
-            <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1.5 text-sm">
-              <span className="text-stone-500">Charges enabled</span>
-              {tenant.stripeChargesEnabled === true ? (
-                <span className="flex items-center gap-1.5 text-emerald-700">
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                  Yes
-                </span>
-              ) : tenant.stripeChargesEnabled === false ? (
-                <span className="flex items-center gap-1.5 text-red-600">
-                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                  No
-                </span>
-              ) : (
-                <span className="text-stone-400">Not yet received</span>
-              )}
-              <span className="text-stone-500">Payouts enabled</span>
-              {tenant.stripePayoutsEnabled === true ? (
-                <span className="flex items-center gap-1.5 text-emerald-700">
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                  Yes
-                </span>
-              ) : tenant.stripePayoutsEnabled === false ? (
-                <span className="flex items-center gap-1.5 text-red-600">
-                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                  No
-                </span>
-              ) : (
-                <span className="text-stone-400">Not yet received</span>
-              )}
-            </div>
-            <p className="text-xs text-stone-400 leading-relaxed pt-0.5">
-              These values are updated by Stripe webhooks and are what buyers
-              experience at checkout. If they look stale, complete Stripe
-              onboarding and wait for the webhook to arrive.
-            </p>
-          </div>
+          <StripeReadinessPanel
+            stripeChargesEnabled={tenant.stripeChargesEnabled ?? null}
+            stripePayoutsEnabled={tenant.stripePayoutsEnabled ?? null}
+          />
         )}
       </div>
     </div>
