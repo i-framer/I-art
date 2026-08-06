@@ -43,6 +43,14 @@ export default async function SettingsPage({
 
   const { saved, stripe, domain_status } = await searchParams;
 
+  // When Stripe sends the user back via the refresh_url (onboarding link
+  // expired), immediately re-launch onboarding so the user lands on a fresh
+  // Stripe-hosted page rather than a dead session.
+  // startStripeOnboarding always calls redirect() — execution never continues.
+  if (stripe === "refresh") {
+    await startStripeOnboarding();
+  }
+
   // Stripe Connect status
   type StripeStatus = "not_connected" | "pending" | "active";
   let stripeStatus: StripeStatus = "not_connected";

@@ -263,6 +263,85 @@ describe("startStripeOnboarding — stripeAccountId persistence", () => {
   });
 });
 
+// ── settings page: ?stripe=refresh re-triggers onboarding ───────────────────
+//
+// The warning banner on the dashboard links to /settings?stripe=refresh.
+// The settings page detects this param and immediately calls
+// startStripeOnboarding() so the user lands on a fresh Stripe-hosted page
+// instead of a dead/expired link.
+
+describe("settings page — /settings?stripe=refresh re-triggers onboarding", () => {
+  it("re-triggers and redirects to Stripe when the account already exists", async () => {
+    // Simulates the common case: the gallery completed part of onboarding,
+    // the Stripe link expired, and the user clicked "Complete setup" on the
+    // warning banner. The existing stripeAccountId is reused — no duplicate
+    // account is created.
+    process.env.NEXT_PUBLIC_SITE_URL = "https://i-art.com.au";
+
+    tenantFindFirst.mockResolvedValue({
+      id: "tenant-A",
+      stripeAccountId: "acct_existing",
+    });
+
+    // The settings page calls startStripeOnboarding() when stripe === "refresh".
+    // startStripeOnboarding always redirects (to Stripe or to an error page).
+    const err = await startStripeOnboarding().catch((e: Error) => e);
+    expect((err as Error).message).toMatch(
+      /REDIRECT:https:\/\/connect\.stripe\.com/,
+    );
+
+    // No new Stripe account should have been created
+    expect(state.stripeAccountsCreate).not.toHaveBeenCalled();
+
+    // The existing account ID was passed to accountLinks.create
+    expect(state.stripeAccountLinksCreate).toHaveBeenCalledOnce();
+    expect(state.stripeAccountLinksCreate.mock.calls[0][0].account).toBe(
+      "acct_existing",
+    );
+
+    // The refresh_url matches /settings?stripe=refresh so Stripe can redirect
+    // back here again if the new link also expires.
+    expect(state.stripeAccountLinksCreate.mock.calls[0][0].refresh_url).toBe(
+      "https://i-art.com.au/settings?stripe=refresh",
+    );
+  });
+
+  it("re-triggers and redirects to Stripe when no account exists yet", async () => {
+    // Simulates the case where the gallery clicked the warning banner before
+    // any Stripe account was ever created (e.g. an interrupted first attempt).
+    // A fresh Express account must be created and persisted before redirecting.
+    process.env.NEXT_PUBLIC_SITE_URL = "https://i-art.com.au";
+    state.stripeAccountsCreate.mockResolvedValue({ id: "acct_refresh_new" });
+
+    tenantFindFirst.mockResolvedValue({
+      id: "tenant-A",
+      stripeAccountId: null,
+    });
+
+    const err = await startStripeOnboarding().catch((e: Error) => e);
+    expect((err as Error).message).toMatch(
+      /REDIRECT:https:\/\/connect\.stripe\.com/,
+    );
+
+    // A new Express account was created
+    expect(state.stripeAccountsCreate).toHaveBeenCalledOnce();
+    expect(state.stripeAccountsCreate.mock.calls[0][0]).toMatchObject({
+      type: "express",
+    });
+
+    // The new account ID was persisted to the DB before the redirect
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].vals).toMatchObject({
+      stripeAccountId: "acct_refresh_new",
+    });
+
+    // The account link was built with the correct refresh_url
+    expect(state.stripeAccountLinksCreate.mock.calls[0][0].refresh_url).toBe(
+      "https://i-art.com.au/settings?stripe=refresh",
+    );
+  });
+});
+
 // ── Redirect target ──────────────────────────────────────────────────────────
 
 describe("startStripeOnboarding — redirect behaviour", () => {
