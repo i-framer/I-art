@@ -41,6 +41,7 @@ import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { POST as webhookPOST } from "@/app/api/stripe/webhook/route";
 import { sendBillingAlertNotification } from "@/lib/email";
+import { sendBillingAlertSlackNotification } from "@/lib/slack";
 import { getStripeClient } from "@/lib/stripe";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1070,6 +1071,7 @@ describeIntegration("checkout.session.completed — subscriptions.retrieve failu
     } as any);
 
     vi.mocked(sendBillingAlertNotification).mockClear();
+    vi.mocked(sendBillingAlertSlackNotification).mockClear();
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -1109,6 +1111,16 @@ describeIntegration("checkout.session.completed — subscriptions.retrieve failu
     expect(alert?.eventType).toBe("checkout.session.completed");
     expect(alert?.subscriptionId).toBe(subId);
     expect(alert?.reason).toMatch(/retrieve.*failed|falling back/i);
+
+    // Slack notification was sent with the correct subscription ID and reason.
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledOnce();
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stripeEventId: eventId,
+        subscriptionId: subId,
+        reason: expect.stringContaining(subId),
+      }),
+    );
 
     // Email notification was sent.
     expect(sendBillingAlertNotification).toHaveBeenCalledOnce();
