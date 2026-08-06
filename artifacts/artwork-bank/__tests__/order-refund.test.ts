@@ -66,6 +66,11 @@ vi.mock("@/lib/email", () => ({
   sendOrderConfirmation: vi.fn(async () => {}),
   sendPartialRefundNotification,
 }));
+
+const sendRefundDbFailureSlackNotification = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
+vi.mock("@/lib/slack", () => ({
+  sendRefundDbFailureSlackNotification,
+}));
 vi.mock("@/lib/base-url", () => ({ getTenantUrl: vi.fn(() => "https://x.example.com") }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
@@ -355,6 +360,36 @@ describe("DB failure after successful Stripe refund", () => {
 
     // Stripe was called — money left the account.
     expect(stripeRefundCreate).toHaveBeenCalledOnce();
+  });
+
+  it("sends a Slack alert containing the Stripe refund id, order id, and tenant when the DB update fails", async () => {
+    state.dbUpdateShouldFail = true;
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "30.00" })),
+    ).rejects.toThrow("REDIRECT:/orders/order-1?refund_error=");
+
+    // Allow the fire-and-forget promise to settle before asserting.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(sendRefundDbFailureSlackNotification).toHaveBeenCalledOnce();
+    expect(sendRefundDbFailureSlackNotification).toHaveBeenCalledWith({
+      stripeRefundId: "re_test",
+      orderId: "order-1",
+      tenantId: "t1",
+    });
+  });
+
+  it("still redirects with the refund_error even if the Slack alert itself throws", async () => {
+    state.dbUpdateShouldFail = true;
+    sendRefundDbFailureSlackNotification.mockRejectedValueOnce(new Error("Slack down"));
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "30.00" })),
+    ).rejects.toThrow("REDIRECT:/orders/order-1?refund_error=");
+
+    // Allow microtasks to drain so the caught rejection doesn't leak.
+    await new Promise((r) => setTimeout(r, 0));
   });
 
   it("reuses the existing Stripe refund when an admin retries after a DB failure", async () => {

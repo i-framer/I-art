@@ -141,6 +141,70 @@ export type SlackNotificationResult =
   | { ok: true }
   | { ok: false; error: string };
 
+/**
+ * Post an alert to the configured Slack channel when a Stripe refund was
+ * accepted but the subsequent DB write failed. The operator must reconcile
+ * the order manually before allowing any retry.
+ *
+ * Uses SLACK_BILLING_ALERTS_CHANNEL. If no channel is configured the call is
+ * a no-op. Failures are logged but never re-thrown — this is always fire-and-forget.
+ */
+export async function sendRefundDbFailureSlackNotification({
+  stripeRefundId,
+  orderId,
+  tenantId,
+}: {
+  stripeRefundId: string;
+  orderId: string;
+  tenantId: string;
+}): Promise<SlackNotificationResult> {
+  const channel = process.env.SLACK_BILLING_ALERTS_CHANNEL?.trim();
+
+  if (!channel) {
+    console.log(
+      "[Refund DB-failure Slack skipped — SLACK_BILLING_ALERTS_CHANNEL not configured]",
+      { stripeRefundId, orderId, tenantId },
+    );
+    return { ok: true };
+  }
+
+  const text =
+    `:rotating_light: *Stripe refund recorded in Stripe but NOT in the database*\n` +
+    `*Stripe refund ID:* \`${stripeRefundId}\`\n` +
+    `*Order ID:* \`${orderId}\`\n` +
+    `*Tenant:* \`${tenantId}\`\n` +
+    `The refund was accepted by Stripe but the order record could not be updated. ` +
+    `Do NOT retry the refund — check Stripe for \`${stripeRefundId}\` and update the order manually.`;
+
+  try {
+    const connectors = new ReplitConnectors();
+    const response = await connectors.proxy("slack", "/chat.postMessage", {
+      method: "POST",
+      body: JSON.stringify({ channel, text }),
+    });
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok || (body && !body.ok)) {
+      const errorDetail = body?.error ?? `HTTP ${response.status}`;
+      console.error(
+        `[Refund DB-failure Slack] Post failed (HTTP ${response.status}):`,
+        body?.error ?? "(no error field)",
+        { stripeRefundId, orderId, tenantId },
+      );
+      return { ok: false, error: errorDetail };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    const errorMessage = (err as any)?.message ?? String(err);
+    console.error(
+      `[Refund DB-failure Slack] Failed to post message: ${errorMessage}`,
+      { stripeRefundId, orderId, tenantId },
+    );
+    return { ok: false, error: errorMessage };
+  }
+}
+
 export async function sendBillingAlertSlackNotification({
   stripeEventId,
   eventType,

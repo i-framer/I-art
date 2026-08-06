@@ -11,6 +11,7 @@ import { orderItemsTable, tenantsTable } from "@workspace/db";
 import { sendOrderConfirmation, sendOrderStatusUpdate, sendPartialRefundNotification } from "@/lib/email";
 import { getTenantUrl } from "@/lib/base-url";
 import { getStripeClient, StripeNotConfiguredError } from "@/lib/stripe";
+import { sendRefundDbFailureSlackNotification } from "@/lib/slack";
 
 async function requireOwnership(orderId: string) {
   const session = await getSession();
@@ -318,6 +319,15 @@ export async function refundOrder(formData: FormData): Promise<void> {
       `[refundOrder] DB update failed after Stripe refund ${safeId} was created:`,
       dbErr,
     );
+    // Fire-and-forget: alert the operator via Slack. A Slack failure must not
+    // suppress the refund_error redirect the admin is already seeing.
+    sendRefundDbFailureSlackNotification({
+      stripeRefundId: safeId,
+      orderId,
+      tenantId: order.tenantId,
+    }).catch((slackErr) => {
+      console.error("[refundOrder] Slack alert also failed:", slackErr);
+    });
     redirect(
       `/orders/${orderId}?refund_error=${encodeURIComponent(
         `Stripe refund ${safeId} was accepted but the order record could not be updated. Do NOT retry — check Stripe for refund ${safeId} before proceeding.`,
