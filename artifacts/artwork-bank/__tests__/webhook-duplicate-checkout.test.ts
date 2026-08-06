@@ -14,6 +14,8 @@ const state = vi.hoisted(() => ({
   artworkUpdatesInTx: [] as { vals: Record<string, unknown> }[],
   transactionCallCount: 0,
   dbInsertCallCount: 0,
+  /** When true, tx.update().set({status:…}) throws to simulate a mid-tx crash. */
+  throwOnArtworkUpdate: false,
 }));
 
 // ── DB mock ───────────────────────────────────────────────────────────────────
@@ -71,6 +73,12 @@ vi.mock("@workspace/db", () => {
               // Capture artwork status writes so we can assert SOLD count.
               if (vals.status !== undefined) {
                 state.artworkUpdatesInTx.push({ vals });
+                // Simulate a mid-transaction crash on the artwork SOLD update.
+                if (state.throwOnArtworkUpdate) {
+                  return Promise.reject(
+                    new Error("Simulated DB crash on artwork SOLD update"),
+                  );
+                }
               }
               return Promise.resolve();
             }),
@@ -185,6 +193,7 @@ describe("checkout.session.completed — duplicate webhook idempotency", () => {
     state.artworkUpdatesInTx.length = 0;
     state.transactionCallCount = 0;
     state.dbInsertCallCount = 0;
+    state.throwOnArtworkUpdate = false;
   });
 
   afterEach(() => {
@@ -258,5 +267,59 @@ describe("checkout.session.completed — duplicate webhook idempotency", () => {
     // The tx's insert was called (order + order item = 2 calls)
     const txMock = (db.transaction as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(txMock).toBeDefined(); // transaction was called
+  });
+
+  it("rolls back and lets a retry mark the artwork SOLD when the artwork update crashes mid-transaction", async () => {
+    /**
+     * Scenario:
+     *   1. Stripe delivers the event. The transaction inserts the order, then
+     *      tx.update(artworksTable) throws — simulating a DB crash.
+     *   2. Because the transaction rolls back, the order row is never committed.
+     *      The webhook returns 500.
+     *   3. Stripe retries. The idempotency guard finds no existing order
+     *      (the rolled-back insert left nothing), so it runs the full transaction
+     *      again — this time successfully — and the artwork ends up SOLD.
+     */
+    const { POST } = await import("@/app/api/stripe/webhook/route");
+    const session = makeSession();
+
+    // ── First delivery: artwork update crashes ────────────────────────────────
+    state.throwOnArtworkUpdate = true;
+    state.ordersFindFirstResults.push(null); // no prior order → enters transaction
+
+    const firstResponse = await POST(makeRequest(session));
+
+    // Webhook must return 500 so Stripe knows to retry.
+    expect((firstResponse as any).status).toBe(500);
+
+    // Transaction was attempted once, and the artwork update was attempted
+    // (the throw is the signal the update ran before rolling back).
+    expect(state.transactionCallCount).toBe(1);
+    const failedSoldAttempts = state.artworkUpdatesInTx.filter(
+      (u) => u.vals.status === "SOLD",
+    );
+    expect(failedSoldAttempts).toHaveLength(1);
+
+    // ── Stripe retry: transaction rolled back → no committed order ────────────
+    state.throwOnArtworkUpdate = false; // artwork update will now succeed
+    // The rolled-back transaction left no order row — the idempotency guard
+    // finds null and allows the full transaction to proceed.
+    state.ordersFindFirstResults.push(null);
+
+    const retryResponse = await POST(makeRequest(session));
+
+    // Retry succeeds.
+    expect((retryResponse as any).status ?? 200).toBe(200);
+
+    // Total transactions: first (crashed) + retry (succeeded) = 2.
+    expect(state.transactionCallCount).toBe(2);
+
+    // Exactly one successful SOLD write came from the retry; the failed attempt
+    // is also counted in artworkUpdatesInTx (it threw but was recorded first),
+    // so we expect exactly 2 entries total — one per transaction attempt.
+    const allSoldWrites = state.artworkUpdatesInTx.filter(
+      (u) => u.vals.status === "SOLD",
+    );
+    expect(allSoldWrites).toHaveLength(2);
   });
 });
