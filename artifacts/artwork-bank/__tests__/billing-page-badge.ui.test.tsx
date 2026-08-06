@@ -170,3 +170,114 @@ describe("billing page badge – trial countdown", () => {
     ).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// trial countdown boundary cases
+// ---------------------------------------------------------------------------
+
+describe("billing page badge – trial countdown boundary cases", () => {
+  it('renders "Your trial ends today" when trialEnd is now (0 days remaining)', () => {
+    // Set trialEnd slightly in the past so msLeft <= 0 → daysRemaining = 0
+    const trialEnd = new Date(Date.now() - 1000);
+    render(
+      <SubscriptionStatusBadge
+        subscriptionStatus="trialing"
+        billingExempt={false}
+        trialEnd={trialEnd}
+      />,
+    );
+    expect(screen.getByText("Your trial ends today")).toBeTruthy();
+  });
+
+  it('renders "1 day remaining in your trial" when trialEnd is 1 day out', () => {
+    const trialEnd = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000);
+    render(
+      <SubscriptionStatusBadge
+        subscriptionStatus="trialing"
+        billingExempt={false}
+        trialEnd={trialEnd}
+      />,
+    );
+    expect(screen.getByText("1 day remaining in your trial")).toBeTruthy();
+  });
+
+  it('renders "3 days remaining in your trial" when trialEnd is 3 days out', () => {
+    const trialEnd = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    render(
+      <SubscriptionStatusBadge
+        subscriptionStatus="trialing"
+        billingExempt={false}
+        trialEnd={trialEnd}
+      />,
+    );
+    expect(screen.getByText("3 days remaining in your trial")).toBeTruthy();
+  });
+
+  it('renders "4 days remaining in your trial" when trialEnd is 4 days out', () => {
+    const trialEnd = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
+    render(
+      <SubscriptionStatusBadge
+        subscriptionStatus="trialing"
+        billingExempt={false}
+        trialEnd={trialEnd}
+      />,
+    );
+    expect(screen.getByText("4 days remaining in your trial")).toBeTruthy();
+  });
+
+  it("applies amber colour class when 0 days remain (ends today)", () => {
+    const trialEnd = new Date(Date.now() - 1000);
+    render(
+      <SubscriptionStatusBadge
+        subscriptionStatus="trialing"
+        billingExempt={false}
+        trialEnd={trialEnd}
+      />,
+    );
+    const countdown = screen.getByText("Your trial ends today");
+    expect(countdown.className).toContain("text-amber-600");
+    expect(countdown.className).not.toContain("text-stone-500");
+  });
+
+  it("applies amber colour class when 1 day remains (≤3 threshold)", () => {
+    const trialEnd = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000);
+    render(
+      <SubscriptionStatusBadge
+        subscriptionStatus="trialing"
+        billingExempt={false}
+        trialEnd={trialEnd}
+      />,
+    );
+    const countdown = screen.getByText("1 day remaining in your trial");
+    expect(countdown.className).toContain("text-amber-600");
+    expect(countdown.className).not.toContain("text-stone-500");
+  });
+
+  it("applies amber colour class when 3 days remain (at the ≤3 boundary)", () => {
+    const trialEnd = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+    render(
+      <SubscriptionStatusBadge
+        subscriptionStatus="trialing"
+        billingExempt={false}
+        trialEnd={trialEnd}
+      />,
+    );
+    const countdown = screen.getByText("3 days remaining in your trial");
+    expect(countdown.className).toContain("text-amber-600");
+    expect(countdown.className).not.toContain("text-stone-500");
+  });
+
+  it("applies stone colour class when 4 days remain (above the ≤3 threshold)", () => {
+    const trialEnd = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
+    render(
+      <SubscriptionStatusBadge
+        subscriptionStatus="trialing"
+        billingExempt={false}
+        trialEnd={trialEnd}
+      />,
+    );
+    const countdown = screen.getByText("4 days remaining in your trial");
+    expect(countdown.className).toContain("text-stone-500");
+    expect(countdown.className).not.toContain("text-amber-600");
+  });
+});
