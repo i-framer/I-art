@@ -15,7 +15,7 @@
 >   in the matching section (or a new section) in the same commit.
 > - When the user reports a result in chat, update the checkbox for them.
 
-_Last updated: 2026-08-07 (agent + GG live run)_
+_Last updated: 2026-08-07 (agent + GG live run #2)_
 
 ---
 
@@ -55,21 +55,21 @@ _Last updated: 2026-08-07 (agent + GG live run)_
 
 ## 5. Storage & sweeps
 
-- [ ] 5.1 Upload artwork images on the live site — they display via `/api/storage/serve`
+- [!] 5.1 Upload artwork images on the live site — they display via `/api/storage/serve` — **BLOCKED: production storage backend not configured** (`/api/storage/health` returns 503: "No storage backend configured. Set BLOB_READ_WRITE_TOKEN or PRIVATE_OBJECT_DIR"). Mark must add the storage env var to Vercel before this can pass.
 - [ ] 5.2 Delete an artwork — its images are removed from object storage
 - [ ] 5.3 Orphan sweep cron runs and posts its result; operator alert arrives on errors (Task #205)
 - [x] 5.4 `/api/storage/orphan-sweep` rejects calls without the Bearer secret (GG 2026-08-07)
 
 ## 6. Domains & routing
 
-- [ ] 6.1 `{slug}.i-art.com.au` subdomain routing resolves to the right tenant
+- [x] 6.1 `{slug}.i-art.com.au` subdomain routing resolves to the right tenant (GG 2026-08-07)
 - [x] 6.2 An unknown subdomain shows the unknown-domain page (no crash, no wrong tenant data) (GG 2026-08-07)
 - [ ] 6.3 A tenant custom domain (if configured) serves the right storefront over HTTPS
 
 ## 7. Browse & discovery
 
 - [x] 7.1 `/browse` filters: seller slug + keyword (`q=`) combined return correct results (Task #287) (GG 2026-08-07)
-- [ ] 7.2 SOLD / RESERVED artworks still appear under the artist filter; HIDDEN never does (Tasks #283/#285)
+- [x] 7.2 SOLD / RESERVED artworks still appear under the artist filter; HIDDEN never does (Tasks #283/#285) (GG 2026-08-07)
 - [x] 7.3 Sitemap and robots.txt respond for both the apex and a tenant subdomain (GG 2026-08-07)
 
 ## 8. Inquiries & email
