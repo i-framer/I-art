@@ -174,6 +174,21 @@ describeIntegration("email-sweep route integration — auth guard with real Requ
       expect(res.status).toBe(200);
       expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
     });
+
+    it("POST accepts CRON_SECRET as the only configured secret", async () => {
+      // Operators who rely on a single shared CRON_SECRET (without
+      // EMAIL_SWEEP_SECRET) must be able to trigger the sweep via POST.
+      setEnv({
+        NODE_ENV: "production",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: "cron-integration-xyz",
+      });
+
+      const res = await POST(realRequest("POST", "Bearer cron-integration-xyz"));
+
+      expect(res.status).toBe(200);
+      expect(sweepUnsentConfirmationEmails).toHaveBeenCalledOnce();
+    });
   });
 
   describe("production with a wrong Bearer token → 401", () => {
