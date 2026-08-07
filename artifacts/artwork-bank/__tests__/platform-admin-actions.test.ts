@@ -1,5 +1,5 @@
 /**
- * Platform admin actions — setBillingExempt and dismissBillingAlert.
+ * Platform admin actions — setBillingExempt, setIframerAccount, and dismissBillingAlert.
  *
  * Covers:
  *  - Non-platform-admin callers are blocked by requirePlatformAdmin
@@ -7,6 +7,13 @@
  *  - setBillingExempt throws when tenantId is missing or empty
  *  - setBillingExempt throws when exempt param is invalid
  *  - setBillingExempt throws when tenant is not found (UPDATE returns 0 rows)
+ *  - setIframerAccount links an i-Framer ID and also sets billingExempt=true
+ *  - setIframerAccount unlinks (empty accountId) without touching billingExempt
+ *  - setIframerAccount treats whitespace-only accountId as an unlink
+ *  - setIframerAccount throws when tenantId is missing or empty
+ *  - setIframerAccount throws when accountId is null (not a string)
+ *  - setIframerAccount throws when tenant not found
+ *  - setIframerAccount blocks non-admin callers
  *  - dismissBillingAlert marks alertId as dismissed
  *  - dismissBillingAlert is a no-op (not an error) for an unknown alertId
  *  - dismissBillingAlert throws when alertId is empty
@@ -39,7 +46,11 @@ vi.mock("@workspace/db", () => ({
       }),
     }),
   },
-  tenantsTable: { id: "tenants.id", billingExempt: "tenants.billingExempt" },
+  tenantsTable: {
+    id: "tenants.id",
+    billingExempt: "tenants.billingExempt",
+    iframerAccountId: "tenants.iframerAccountId",
+  },
   stripeAlertsTable: {
     id: "stripeAlerts.id",
     dismissedAt: "stripeAlerts.dismissedAt",
@@ -60,7 +71,11 @@ vi.mock("@/lib/slack", () => ({
   sendBillingAlertSlackNotification: vi.fn(),
 }));
 
-import { setBillingExempt, dismissBillingAlert } from "@/app/platform/actions";
+import {
+  setBillingExempt,
+  setIframerAccount,
+  dismissBillingAlert,
+} from "@/app/platform/actions";
 
 function formData(fields: Record<string, string>): FormData {
   return {
@@ -125,6 +140,71 @@ describe("setBillingExempt", () => {
     await expect(
       setBillingExempt(formData({ tenantId: "t-1", exempt: "true" })),
     ).resolves.toBeUndefined();
+  });
+});
+
+// ── setIframerAccount ─────────────────────────────────────────────────────────
+
+describe("setIframerAccount", () => {
+  it("blocks non-admin callers", async () => {
+    requirePlatformAdmin.mockRejectedValueOnce(new Error("Forbidden"));
+    await expect(
+      setIframerAccount(formData({ tenantId: "t-1", accountId: "ifr-123" })),
+    ).rejects.toThrow("Forbidden");
+  });
+
+  it("throws when tenantId is missing", async () => {
+    await expect(
+      setIframerAccount(formData({ accountId: "ifr-123" })),
+    ).rejects.toThrow("Missing tenantId");
+  });
+
+  it("throws when tenantId is empty", async () => {
+    await expect(
+      setIframerAccount(formData({ tenantId: "", accountId: "ifr-123" })),
+    ).rejects.toThrow("Missing tenantId");
+  });
+
+  it("throws when accountId is absent (null from FormData)", async () => {
+    await expect(
+      setIframerAccount(formData({ tenantId: "t-1" })),
+    ).rejects.toThrow("Missing accountId");
+  });
+
+  it("throws when tenant is not found (UPDATE returns 0 rows)", async () => {
+    dbUpdateReturning = [];
+    await expect(
+      setIframerAccount(formData({ tenantId: "nonexistent", accountId: "ifr-123" })),
+    ).rejects.toThrow("Tenant not found");
+  });
+
+  it("links: sets iframerAccountId and billingExempt=true when accountId is non-empty", async () => {
+    await setIframerAccount(formData({ tenantId: "t-1", accountId: "ifr-abc" }));
+    expect(dbUpdateVals).toMatchObject({
+      iframerAccountId: "ifr-abc",
+      billingExempt: true,
+    });
+  });
+
+  it("links: trims whitespace from accountId", async () => {
+    await setIframerAccount(formData({ tenantId: "t-1", accountId: "  ifr-abc  " }));
+    expect(dbUpdateVals).toMatchObject({ iframerAccountId: "ifr-abc" });
+  });
+
+  it("unlinks: sets iframerAccountId=null when accountId is empty string", async () => {
+    await setIframerAccount(formData({ tenantId: "t-1", accountId: "" }));
+    expect(dbUpdateVals).toMatchObject({ iframerAccountId: null });
+  });
+
+  it("unlinks: does NOT set billingExempt when accountId is empty", async () => {
+    await setIframerAccount(formData({ tenantId: "t-1", accountId: "" }));
+    expect(dbUpdateVals).not.toHaveProperty("billingExempt");
+  });
+
+  it("unlinks: treats whitespace-only accountId as empty (unlink)", async () => {
+    await setIframerAccount(formData({ tenantId: "t-1", accountId: "   " }));
+    expect(dbUpdateVals).toMatchObject({ iframerAccountId: null });
+    expect(dbUpdateVals).not.toHaveProperty("billingExempt");
   });
 });
 

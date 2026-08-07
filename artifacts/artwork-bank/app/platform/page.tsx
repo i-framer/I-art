@@ -4,7 +4,7 @@ import { asc, desc, isNull } from "drizzle-orm";
 import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
 import { getSession } from "@/lib/auth";
 import { isPlatformAdmin, tenantBillingStatus } from "@/lib/platform-admin";
-import { setBillingExempt } from "./actions";
+import { setBillingExempt, setIframerAccount } from "./actions";
 import { ShieldCheck } from "lucide-react";
 import { BillingAlerts } from "./_components/BillingAlerts";
 import {
@@ -47,6 +47,7 @@ export default async function PlatformAdminPage() {
         contactEmail: true,
         subscriptionStatus: true,
         billingExempt: true,
+        iframerAccountId: true,
       },
     }),
   ]);
@@ -84,6 +85,7 @@ export default async function PlatformAdminPage() {
                 <th className="px-4 py-3 font-medium">Type</th>
                 <th className="px-4 py-3 font-medium">Subscription</th>
                 <th className="px-4 py-3 font-medium">Billing exempt</th>
+                <th className="px-4 py-3 font-medium">i-Framer Premium</th>
                 <th className="px-4 py-3 font-medium text-right">Action</th>
               </tr>
             </thead>
@@ -91,7 +93,7 @@ export default async function PlatformAdminPage() {
               {tenants.length === 0 && (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     className="px-4 py-8 text-center text-stone-500"
                   >
                     No tenants yet.
@@ -123,6 +125,44 @@ export default async function PlatformAdminPage() {
                     </td>
                     <td className="px-4 py-3 text-stone-600">
                       {tenant.billingExempt ? "Yes" : "No"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {tenant.iframerAccountId ? (
+                        /* ── Linked — show ID + unlink button ── */
+                        <form action={setIframerAccount} className="flex items-center gap-2">
+                          <input type="hidden" name="tenantId" value={tenant.id} />
+                          <input type="hidden" name="accountId" value="" />
+                          <span
+                            className="max-w-[120px] truncate rounded bg-indigo-50 px-2 py-0.5 font-mono text-xs text-indigo-700"
+                            title={tenant.iframerAccountId}
+                          >
+                            {tenant.iframerAccountId}
+                          </span>
+                          <button
+                            type="submit"
+                            className="rounded px-2 py-0.5 text-xs text-stone-500 hover:bg-stone-100 hover:text-stone-700 transition-colors"
+                          >
+                            Unlink
+                          </button>
+                        </form>
+                      ) : (
+                        /* ── Not linked — show link form ── */
+                        <form action={setIframerAccount} className="flex items-center gap-1.5">
+                          <input type="hidden" name="tenantId" value={tenant.id} />
+                          <input
+                            type="text"
+                            name="accountId"
+                            placeholder="Account ID"
+                            className="w-28 rounded border border-stone-200 px-2 py-1 text-xs text-stone-700 placeholder-stone-400 focus:border-indigo-400 focus:outline-none"
+                          />
+                          <button
+                            type="submit"
+                            className="rounded px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+                          >
+                            Link ↗
+                          </button>
+                        </form>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <form action={setBillingExempt}>

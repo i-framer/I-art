@@ -39,6 +39,52 @@ export async function setBillingExempt(formData: FormData): Promise<void> {
 }
 
 /**
+ * Link or unlink an i-Framer Premium account ID for a tenant.
+ *
+ * Linking (non-empty accountId):
+ *   - Sets iframerAccountId = accountId (trimmed)
+ *   - Also sets billingExempt = true (i-Framer Premium implies exempt access)
+ *
+ * Unlinking (empty accountId):
+ *   - Clears iframerAccountId = null
+ *   - Does NOT change billingExempt — the tenant may still be comped for
+ *     another reason; use setBillingExempt to manage that separately.
+ *
+ * Platform-owner only — tenant admins must never reach this.
+ */
+export async function setIframerAccount(formData: FormData): Promise<void> {
+  await requirePlatformAdmin();
+
+  const tenantId = formData.get("tenantId");
+  const accountId = formData.get("accountId");
+
+  if (typeof tenantId !== "string" || !tenantId) {
+    throw new Error("Missing tenantId");
+  }
+  if (typeof accountId !== "string") {
+    throw new Error("Missing accountId");
+  }
+
+  const trimmed = accountId.trim();
+
+  const updateValues: Record<string, unknown> = trimmed
+    ? { iframerAccountId: trimmed, billingExempt: true }
+    : { iframerAccountId: null };
+
+  const result = await db
+    .update(tenantsTable)
+    .set(updateValues)
+    .where(eq(tenantsTable.id, tenantId))
+    .returning({ id: tenantsTable.id });
+
+  if (result.length === 0) {
+    throw new Error("Tenant not found");
+  }
+
+  revalidatePath("/platform");
+}
+
+/**
  * Dismiss a billing alert once the operator has investigated and resolved it.
  * Platform-admin only — no tenant user may clear global alerts.
  */
