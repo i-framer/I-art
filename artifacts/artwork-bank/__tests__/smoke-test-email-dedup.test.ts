@@ -65,6 +65,32 @@ afterEach(() => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
+describe("sendSmokeTestFailureEmail — PLATFORM_ADMIN_EMAIL guard", () => {
+  it("returns false without calling fetch or nodemailer when neither PLATFORM_ADMIN_EMAIL nor a transport is set", async () => {
+    // No env vars set at all — bare minimum: function must bail out silently
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const result = await sendSmokeTestFailureEmail(ARGS);
+
+    expect(result).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(sendMailMock).not.toHaveBeenCalled();
+  });
+
+  it("returns false without calling fetch or nodemailer when RESEND_API_KEY is set but PLATFORM_ADMIN_EMAIL is not", async () => {
+    process.env.RESEND_API_KEY = "re_test_key";
+    // PLATFORM_ADMIN_EMAIL intentionally omitted
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const result = await sendSmokeTestFailureEmail(ARGS);
+
+    expect(result).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(sendMailMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("sendSmokeTestFailureEmail — RESEND_ALREADY_SENT guard", () => {
   it("returns true without calling Resend when RESEND_ALREADY_SENT=1 and no SMTP_HOST", async () => {
     process.env.RESEND_ALREADY_SENT = "1";
