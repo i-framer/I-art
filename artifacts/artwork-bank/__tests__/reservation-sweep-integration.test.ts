@@ -345,6 +345,22 @@ describeIntegration("reservation-sweep route — CRON_SECRET auth parity (Task #
     expect(ReservationSweepLib.sweepStaleReservations).not.toHaveBeenCalled();
   });
 
+  it("GET accepts CRON_SECRET as the only configured secret → 200 and sweep called", async () => {
+    // Vercel cron issues GET requests with "Authorization: Bearer $CRON_SECRET".
+    // A correctly-authenticated GET must run the sweep and return 200.
+    setRouteEnv({ CRON_SECRET: "cron-only-secret-xyz" });
+
+    const req = new Request("http://localhost/api/reservation-sweep", {
+      method: "GET",
+      headers: { authorization: "Bearer cron-only-secret-xyz" },
+    });
+
+    const res = await GET(req);
+
+    expect(res.status).toBe(200);
+    expect(ReservationSweepLib.sweepStaleReservations).toHaveBeenCalledOnce();
+  });
+
   it("GET returns 401 when only CRON_SECRET is configured and no Authorization header is sent", async () => {
     // Vercel cron issues GET requests with "Authorization: Bearer $CRON_SECRET".
     // A bare GET with no header must be blocked — the same guard that rejects
