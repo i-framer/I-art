@@ -25,13 +25,25 @@ import { eq } from "drizzle-orm";
 // ── requirePlatformAdmin: bypass the admin auth check ────────────────────────
 vi.mock("@/lib/platform-admin", () => ({
   requirePlatformAdmin: vi.fn(async () => undefined),
+  isPlatformAdmin: vi.fn(() => true),
+  getPlatformAdminEmails: vi.fn(() => ["test@example.com"]),
+}));
+
+// ── getSession: return a synthetic admin session so getSession() calls inside
+//    actions (e.g. for audit logging) don't attempt to read cookies() outside
+//    a request context ──────────────────────────────────────────────────────
+vi.mock("@/lib/auth", () => ({
+  getSession: vi.fn(async () => ({
+    userId: "test-platform-admin",
+    email: "test@example.com",
+  })),
 }));
 
 // ── next/cache: no-op — we are not testing Next.js cache invalidation ─────────
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 // Import actions AFTER mocks are registered so vi.mock() is hoisted correctly.
-import { setIframerAccount } from "@/app/platform/actions";
+import { setIframerAccount, setBillingExempt } from "@/app/platform/actions";
 import { requireActiveBillingAccess } from "@/lib/billing";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -176,6 +188,143 @@ describeIntegration("setIframerAccount — Task #469 (i-Framer billing link, rea
 
     // billingExempt is still true even though the i-Framer account ID was
     // cleared — so the billing guard must continue to pass.
+    await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
+  });
+
+  // ── Task #471 — billing link survives a row update that touches other fields ─
+
+  it("setBillingExempt(false) after linking clears the comp but preserves the i-Framer account ID", async () => {
+    const id = tenantId("clobber-exempt");
+    await insertTenant(id, { billingExempt: false, subscriptionStatus: null });
+
+    // Link an i-Framer account — billingExempt becomes true.
+    await setIframerAccount(
+      formData({ tenantId: id, accountId: "ifr-account-005" }),
+    );
+
+    // Confirm the tenant is currently admitted.
+    await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
+
+    // An operator explicitly removes the comp via setBillingExempt.
+    // setBillingExempt only touches billingExempt — it must NOT clear
+    // iframerAccountId.
+    await setBillingExempt(
+      formData({ tenantId: id, exempt: "false" }),
+    );
+
+    const row = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, id),
+      columns: { iframerAccountId: true, billingExempt: true },
+    });
+
+    // The i-Framer account ID must still be present — setBillingExempt must
+    // not touch iframerAccountId.
+    expect(row?.iframerAccountId).toBe("ifr-account-005");
+    // billingExempt was explicitly cleared.
+    expect(row?.billingExempt).toBe(false);
+
+    // The comp is gone — billing guard must now reject (no active subscription).
+    await expect(requireActiveBillingAccess(id)).rejects.toThrow(
+      "Subscription required",
+    );
+  });
+
+  it("setBillingExempt(true) applied after linking, then unlink — billingExempt stays true", async () => {
+    const id = tenantId("exempt-survives-unlink");
+    await insertTenant(id, { billingExempt: false, subscriptionStatus: null });
+
+    // Link an i-Framer account (sets billingExempt=true via setIframerAccount).
+    await setIframerAccount(
+      formData({ tenantId: id, accountId: "ifr-account-006" }),
+    );
+
+    // Operator also explicitly sets billingExempt=true as an independent comp
+    // (simulates a scenario where the comp predates or is separate from the
+    // i-Framer link).
+    await setBillingExempt(
+      formData({ tenantId: id, exempt: "true" }),
+    );
+
+    // Unlink the i-Framer account — only iframerAccountId should be cleared.
+    await setIframerAccount(
+      formData({ tenantId: id, accountId: "" }),
+    );
+
+    const row = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, id),
+      columns: { iframerAccountId: true, billingExempt: true },
+    });
+
+    // i-Framer account ID is gone.
+    expect(row?.iframerAccountId).toBeNull();
+    // billingExempt must remain true — it was set independently by
+    // setBillingExempt and must not be cleared by the unlink.
+    expect(row?.billingExempt).toBe(true);
+
+    // Billing guard must still pass.
+    await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
+  });
+
+  it("concurrent setIframerAccount (link) and setBillingExempt(false) on the same row — i-Framer account ID is preserved", async () => {
+    const id = tenantId("concurrent-clobber");
+    await insertTenant(id, { billingExempt: false, subscriptionStatus: null });
+
+    // Fire both mutations concurrently against the same tenant row.
+    // setIframerAccount writes iframerAccountId + billingExempt=true.
+    // setBillingExempt writes billingExempt=false.
+    // The key invariant: iframerAccountId must remain set regardless of which
+    // write wins, because setBillingExempt must never touch iframerAccountId.
+    await Promise.all([
+      setIframerAccount(formData({ tenantId: id, accountId: "ifr-account-007" })),
+      setBillingExempt(formData({ tenantId: id, exempt: "false" })),
+    ]);
+
+    const row = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, id),
+      columns: { iframerAccountId: true, billingExempt: true },
+    });
+
+    // The i-Framer account ID must always survive — setBillingExempt does not
+    // touch that column regardless of execution order.
+    expect(row?.iframerAccountId).toBe("ifr-account-007");
+
+    // billingExempt is the contested column.  One of the two writes wins
+    // depending on DB ordering.  We do not assert a specific value here
+    // because the outcome is non-deterministic; the invariant is only that
+    // iframerAccountId is never clobbered by a concurrent setBillingExempt.
+  });
+
+  it("concurrent setIframerAccount (unlink) and setBillingExempt(true) — billingExempt is true and account ID is cleared", async () => {
+    const id = tenantId("concurrent-unlink");
+    await insertTenant(id, { billingExempt: false, subscriptionStatus: null });
+
+    // Establish a linked state first.
+    await setIframerAccount(
+      formData({ tenantId: id, accountId: "ifr-account-008" }),
+    );
+
+    // Concurrently unlink the i-Framer account and explicitly set
+    // billingExempt=true.  The unlink must clear only iframerAccountId; it
+    // must not clobber billingExempt.  The concurrent setBillingExempt(true)
+    // must similarly not affect iframerAccountId.
+    await Promise.all([
+      setIframerAccount(formData({ tenantId: id, accountId: "" })),
+      setBillingExempt(formData({ tenantId: id, exempt: "true" })),
+    ]);
+
+    const row = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, id),
+      columns: { iframerAccountId: true, billingExempt: true },
+    });
+
+    // The unlink clears iframerAccountId; neither mutation writes the other's
+    // column, so iframerAccountId must be null.
+    expect(row?.iframerAccountId).toBeNull();
+    // billingExempt must be true — the explicit setBillingExempt(true) write
+    // always sets it, and the unlink path never touches billingExempt.
+    expect(row?.billingExempt).toBe(true);
+
+    // Billing guard must pass because billingExempt=true.
     await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
   });
 });
