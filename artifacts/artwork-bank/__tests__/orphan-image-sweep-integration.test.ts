@@ -274,17 +274,14 @@ describeIntegration("sweepOrphanedImageFiles() — integration (real DB)", () =>
     const idx = insertedOrphanImageIds.indexOf(orphanId);
     if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
 
-    // Second sweep — our orphan is gone, so deleted count should not increase
+    // Second sweep — our orphan is gone so it must not appear in any new deletion.
+    // We do not assert the absolute deleteObject call count because other tests
+    // running in the same suite may have left their own orphan rows in the DB
+    // that get swept here (a known interaction in the shared test database).
     const deleteCallsAfterFirst = vi.mocked(deleteObject).mock.calls.length;
     const second = await sweepOrphanedImageFiles();
 
-    // No new deletions for our previously cleaned row
-    const deleteCallsAfterSecond = vi.mocked(deleteObject).mock.calls.length;
-    expect(deleteCallsAfterSecond).toBe(deleteCallsAfterFirst);
-
-    // orphaned count for our specific row must be zero
-    // (second.orphaned could be >0 if other tests left rows, but our specific
-    // orphanId must not appear in another deleteObject call)
+    // Our specific orphan must not be re-deleted on the second sweep.
     const secondCallPaths = vi
       .mocked(deleteObject)
       .mock.calls.slice(deleteCallsAfterFirst)

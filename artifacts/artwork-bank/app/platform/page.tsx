@@ -48,6 +48,8 @@ export default async function PlatformAdminPage() {
         subscriptionStatus: true,
         billingExempt: true,
         iframerAccountId: true,
+        iframerAccountLinkedBy: true,
+        iframerAccountLinkedAt: true,
       },
     }),
   ]);
@@ -128,40 +130,66 @@ export default async function PlatformAdminPage() {
                     </td>
                     <td className="px-4 py-3">
                       {tenant.iframerAccountId ? (
-                        /* ── Linked — show ID + unlink button ── */
-                        <form action={setIframerAccount} className="flex items-center gap-2">
-                          <input type="hidden" name="tenantId" value={tenant.id} />
-                          <input type="hidden" name="accountId" value="" />
-                          <span
-                            className="max-w-[120px] truncate rounded bg-indigo-50 px-2 py-0.5 font-mono text-xs text-indigo-700"
-                            title={tenant.iframerAccountId}
-                          >
-                            {tenant.iframerAccountId}
-                          </span>
-                          <button
-                            type="submit"
-                            className="rounded px-2 py-0.5 text-xs text-stone-500 hover:bg-stone-100 hover:text-stone-700 transition-colors"
-                          >
-                            Unlink
-                          </button>
-                        </form>
+                        /* ── Linked — show ID + audit info + unlink button ── */
+                        <div className="flex flex-col gap-1">
+                          <form action={setIframerAccount} className="flex items-center gap-2">
+                            <input type="hidden" name="tenantId" value={tenant.id} />
+                            <input type="hidden" name="accountId" value="" />
+                            <span
+                              className="max-w-[120px] truncate rounded bg-indigo-50 px-2 py-0.5 font-mono text-xs text-indigo-700"
+                              title={tenant.iframerAccountId}
+                            >
+                              {tenant.iframerAccountId}
+                            </span>
+                            <button
+                              type="submit"
+                              className="rounded px-2 py-0.5 text-xs text-stone-500 hover:bg-stone-100 hover:text-stone-700 transition-colors"
+                            >
+                              Unlink
+                            </button>
+                          </form>
+                          {tenant.iframerAccountLinkedBy && (
+                            <p
+                              className="text-[10px] text-stone-400"
+                              title={tenant.iframerAccountLinkedAt?.toISOString()}
+                            >
+                              Linked by {tenant.iframerAccountLinkedBy}
+                              {tenant.iframerAccountLinkedAt
+                                ? ` on ${tenant.iframerAccountLinkedAt.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}`
+                                : ""}
+                            </p>
+                          )}
+                        </div>
                       ) : (
-                        /* ── Not linked — show link form ── */
-                        <form action={setIframerAccount} className="flex items-center gap-1.5">
-                          <input type="hidden" name="tenantId" value={tenant.id} />
-                          <input
-                            type="text"
-                            name="accountId"
-                            placeholder="Account ID"
-                            className="w-28 rounded border border-stone-200 px-2 py-1 text-xs text-stone-700 placeholder-stone-400 focus:border-indigo-400 focus:outline-none"
-                          />
-                          <button
-                            type="submit"
-                            className="rounded px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
-                          >
-                            Link ↗
-                          </button>
-                        </form>
+                        /* ── Not linked — show link form + last-action audit if present ── */
+                        <div className="flex flex-col gap-1">
+                          <form action={setIframerAccount} className="flex items-center gap-1.5">
+                            <input type="hidden" name="tenantId" value={tenant.id} />
+                            <input
+                              type="text"
+                              name="accountId"
+                              placeholder="Account ID"
+                              className="w-28 rounded border border-stone-200 px-2 py-1 text-xs text-stone-700 placeholder-stone-400 focus:border-indigo-400 focus:outline-none"
+                            />
+                            <button
+                              type="submit"
+                              className="rounded px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
+                            >
+                              Link ↗
+                            </button>
+                          </form>
+                          {tenant.iframerAccountLinkedBy && (
+                            <p
+                              className="text-[10px] text-stone-400"
+                              title={tenant.iframerAccountLinkedAt?.toISOString()}
+                            >
+                              Unlinked by {tenant.iframerAccountLinkedBy}
+                              {tenant.iframerAccountLinkedAt
+                                ? ` on ${tenant.iframerAccountLinkedAt.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}`
+                                : ""}
+                            </p>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
