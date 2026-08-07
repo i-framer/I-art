@@ -18,7 +18,7 @@ import { db, artworksTable, tenantsTable, ordersTable, orderItemsTable } from "@
 import { eq, and } from "drizzle-orm";
 import { sweepStaleReservations } from "@/lib/reservation-sweep";
 import * as ReservationSweepLib from "@/lib/reservation-sweep";
-import { POST } from "@/app/api/reservation-sweep/route";
+import { GET, POST } from "@/app/api/reservation-sweep/route";
 
 // ── next/server mock (used only by the route-level tests below) ───────────────
 vi.mock("next/server", () => ({
@@ -340,6 +340,22 @@ describeIntegration("reservation-sweep route — CRON_SECRET auth parity (Task #
     });
 
     const res = await POST(req);
+
+    expect(res.status).toBe(401);
+    expect(ReservationSweepLib.sweepStaleReservations).not.toHaveBeenCalled();
+  });
+
+  it("GET returns 401 when only CRON_SECRET is configured and no Authorization header is sent", async () => {
+    // Vercel cron issues GET requests with "Authorization: Bearer $CRON_SECRET".
+    // A bare GET with no header must be blocked — the same guard that rejects
+    // an unauthenticated POST must also reject an unauthenticated GET.
+    setRouteEnv({ CRON_SECRET: "cron-only-secret-xyz" });
+
+    const req = new Request("http://localhost/api/reservation-sweep", {
+      method: "GET",
+    });
+
+    const res = await GET(req);
 
     expect(res.status).toBe(401);
     expect(ReservationSweepLib.sweepStaleReservations).not.toHaveBeenCalled();
