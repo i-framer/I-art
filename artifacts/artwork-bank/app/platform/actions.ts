@@ -14,6 +14,16 @@ import {
 /**
  * Toggle a tenant's billing_exempt flag (comp/uncomp an account).
  * Platform-owner only — tenant admins must never reach this.
+ *
+ * When billing_exempt is flipped to FALSE on a tenant that still has an
+ * iframerAccountId set, a Slack audit alert is fired ("comp-removed").  This
+ * closes the gap where an operator could silently remove the comp from an
+ * i-Framer Premium tenant without any operator-visible notification:
+ *   - setIframerAccount fires alerts on link/unlink.
+ *   - setBillingExempt now fires an alert when it removes the comp while the
+ *     i-Framer link is still present.
+ *   - Setting billingExempt=true (restoring or adding a comp) does NOT send an
+ *     alert; only the removal is noteworthy because it locks the tenant out.
  */
 export async function setBillingExempt(formData: FormData): Promise<void> {
   await requirePlatformAdmin();
@@ -31,13 +41,36 @@ export async function setBillingExempt(formData: FormData): Promise<void> {
     .update(tenantsTable)
     .set({ billingExempt: exempt === "true" })
     .where(eq(tenantsTable.id, tenantId))
-    .returning({ id: tenantsTable.id });
+    .returning({
+      id: tenantsTable.id,
+      slug: tenantsTable.slug,
+      businessName: tenantsTable.businessName,
+      iframerAccountId: tenantsTable.iframerAccountId,
+    });
 
   if (result.length === 0) {
     throw new Error("Tenant not found");
   }
 
   revalidatePath("/platform");
+
+  // Fire a Slack alert when an operator removes the comp from an i-Framer-linked
+  // tenant.  Setting billingExempt=true is intentionally silent.
+  if (exempt === "false" && result[0].iframerAccountId) {
+    const session = await getSession();
+    sendIframerAccountSlackNotification({
+      action: "comp-removed",
+      tenantName: result[0].businessName,
+      tenantSlug: result[0].slug,
+      accountId: result[0].iframerAccountId,
+      adminEmail: session.email,
+    }).catch((err) => {
+      console.error(
+        "[i-Framer comp-removed Slack] Unexpected error:",
+        (err as any)?.message ?? String(err),
+      );
+    });
+  }
 }
 
 /**

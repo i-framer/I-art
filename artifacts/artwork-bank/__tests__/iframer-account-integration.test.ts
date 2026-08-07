@@ -17,7 +17,7 @@
  * CI runners without a DB provisioned).  requirePlatformAdmin and
  * revalidatePath are mocked so only the DB layer is exercised.
  */
-import { afterAll, it, expect, vi } from "vitest";
+import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, tenantsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
@@ -55,9 +55,20 @@ vi.mock("@/lib/slack", () => ({
 // ── next/cache: no-op — we are not testing Next.js cache invalidation ─────────
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
+// ── @/lib/slack: spy on Slack notifications so tests can verify they fire
+//    without needing a live Slack connector. ────────────────────────────────
+vi.mock("@/lib/slack", () => ({
+  sendIframerAccountSlackNotification: vi.fn(async () => ({ ok: true })),
+  sendBillingAlertSlackNotification: vi.fn(async () => ({ ok: true })),
+  sendOrphanSweepSlackNotification: vi.fn(async () => ({ ok: true })),
+  sendRefundDbFailureSlackNotification: vi.fn(async () => ({ ok: true })),
+  resolveSlackChannel: vi.fn(() => "test-channel"),
+}));
+
 // Import actions AFTER mocks are registered so vi.mock() is hoisted correctly.
 import { setIframerAccount, setBillingExempt } from "@/app/platform/actions";
 import { requireActiveBillingAccess } from "@/lib/billing";
+import { sendIframerAccountSlackNotification } from "@/lib/slack";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -370,5 +381,83 @@ describeIntegration("setIframerAccount — Task #469 (i-Framer billing link, rea
 
     // Billing guard must pass because billingExempt=true.
     await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
+  });
+
+  // ── Task #474 — setBillingExempt(false) on an i-Framer-linked tenant fires Slack ─
+
+  // Reset Slack spy state between tests in this section.
+  afterEach(() => {
+    vi.mocked(sendIframerAccountSlackNotification).mockClear();
+  });
+
+  it("setBillingExempt(false) on a linked i-Framer tenant fires a Slack comp-removed alert", async () => {
+    const id = tenantId("slack-comp-removed");
+    await insertTenant(id, { billingExempt: false, subscriptionStatus: null });
+
+    // Link an i-Framer account (sets billingExempt=true and iframerAccountId).
+    await setIframerAccount(
+      formData({ tenantId: id, accountId: "ifr-account-slack-01" }),
+    );
+
+    // Clear calls accumulated during the link step so we only observe the
+    // setBillingExempt call below.
+    vi.mocked(sendIframerAccountSlackNotification).mockClear();
+
+    // Remove the comp — this must fire a Slack alert.
+    await setBillingExempt(
+      formData({ tenantId: id, exempt: "false" }),
+    );
+
+    // Allow the fire-and-forget promise to resolve.
+    await vi.runAllTimersAsync().catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(sendIframerAccountSlackNotification).toHaveBeenCalledTimes(1);
+    expect(sendIframerAccountSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "comp-removed",
+        accountId: "ifr-account-slack-01",
+        adminEmail: "test@example.com",
+      }),
+    );
+  });
+
+  it("setBillingExempt(false) on a tenant with NO i-Framer link does NOT fire a Slack alert", async () => {
+    const id = tenantId("slack-no-link");
+    // Start with billingExempt=true but no i-Framer account ID (plain comp).
+    await insertTenant(id, { billingExempt: true, subscriptionStatus: null });
+
+    vi.mocked(sendIframerAccountSlackNotification).mockClear();
+
+    await setBillingExempt(
+      formData({ tenantId: id, exempt: "false" }),
+    );
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    // No i-Framer account is linked — no alert should fire.
+    expect(sendIframerAccountSlackNotification).not.toHaveBeenCalled();
+  });
+
+  it("setBillingExempt(true) on a linked i-Framer tenant does NOT fire a Slack alert (only removals are alerted)", async () => {
+    const id = tenantId("slack-restore-exempt");
+    // Start unlinked, no comp.
+    await insertTenant(id, { billingExempt: false, subscriptionStatus: null });
+
+    await setIframerAccount(
+      formData({ tenantId: id, accountId: "ifr-account-slack-02" }),
+    );
+
+    // Simulate an operator explicitly restoring or setting the comp.
+    vi.mocked(sendIframerAccountSlackNotification).mockClear();
+
+    await setBillingExempt(
+      formData({ tenantId: id, exempt: "true" }),
+    );
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Setting billingExempt=true is intentionally silent — no alert.
+    expect(sendIframerAccountSlackNotification).not.toHaveBeenCalled();
   });
 });

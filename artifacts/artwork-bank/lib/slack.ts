@@ -207,7 +207,15 @@ export async function sendRefundDbFailureSlackNotification({
 
 /**
  * Post an audit message to the configured Slack channel when an i-Framer
- * Premium account is linked to or unlinked from a tenant by a platform admin.
+ * Premium account is linked to or unlinked from a tenant by a platform admin,
+ * or when an operator manually removes the billing comp from an i-Framer-linked
+ * tenant via setBillingExempt(false).
+ *
+ * Actions:
+ *   "linked"       — an i-Framer account ID was associated with the tenant
+ *   "unlinked"     — the i-Framer account ID was cleared from the tenant
+ *   "comp-removed" — billingExempt was flipped to false while iframerAccountId
+ *                    is still set (tenant remains linked but loses the comp)
  *
  * Uses SLACK_BILLING_ALERTS_CHANNEL. If no channel is configured the call is
  * a no-op. Failures are logged but never re-thrown.
@@ -219,7 +227,7 @@ export async function sendIframerAccountSlackNotification({
   accountId,
   adminEmail,
 }: {
-  action: "linked" | "unlinked";
+  action: "linked" | "unlinked" | "comp-removed";
   tenantName: string | undefined;
   tenantSlug: string | undefined;
   accountId: string | null;
@@ -238,15 +246,28 @@ export async function sendIframerAccountSlackNotification({
     ? `${tenantName} (\`${tenantSlug ?? tenantName}\`)`
     : `\`${tenantSlug ?? "(unknown)"}\``;
 
-  const text =
-    action === "linked"
-      ? `:link: *i-Framer Premium account linked*\n` +
-        `*Tenant:* ${tenantLabel}\n` +
-        `*Account ID:* \`${accountId ?? "(unknown)"}\`\n` +
-        `*Admin:* ${adminEmail ?? "(unknown)"}`
-      : `:chains: *i-Framer Premium account unlinked*\n` +
-        `*Tenant:* ${tenantLabel}\n` +
-        `*Admin:* ${adminEmail ?? "(unknown)"}`;
+  let text: string;
+  if (action === "linked") {
+    text =
+      `:link: *i-Framer Premium account linked*\n` +
+      `*Tenant:* ${tenantLabel}\n` +
+      `*Account ID:* \`${accountId ?? "(unknown)"}\`\n` +
+      `*Admin:* ${adminEmail ?? "(unknown)"}`;
+  } else if (action === "unlinked") {
+    text =
+      `:chains: *i-Framer Premium account unlinked*\n` +
+      `*Tenant:* ${tenantLabel}\n` +
+      `*Admin:* ${adminEmail ?? "(unknown)"}`;
+  } else {
+    // "comp-removed": billing_exempt flipped to false while the i-Framer link remains
+    text =
+      `:no_entry: *i-Framer Premium comp removed (tenant still linked)*\n` +
+      `*Tenant:* ${tenantLabel}\n` +
+      `*Account ID:* \`${accountId ?? "(unknown)"}\`\n` +
+      `*Admin:* ${adminEmail ?? "(unknown)"}\n` +
+      `The i-Framer account link is still set but billing_exempt is now false. ` +
+      `The tenant will be locked out until a subscription is active or the comp is restored.`;
+  }
 
   try {
     const connectors = new ReplitConnectors();
