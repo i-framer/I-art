@@ -188,3 +188,30 @@ describe("sendOrphanSweepErrorNotification — delivery when configured", () => 
     expect(mailArgs.html).toContain("Slack notification also failed");
   });
 });
+
+describe("sendOrphanSweepErrorNotification — re-throw on sendMail failure", () => {
+  it("rejects when SMTP sendMail rejects, so callers are never silently swallowed", async () => {
+    process.env.SMTP_HOST = "smtp.example.com";
+    process.env.PLATFORM_ADMIN_EMAIL = "admin@example.com";
+
+    const smtpError = new Error("SMTP connection refused");
+    sendMailMock.mockRejectedValueOnce(smtpError);
+
+    await expect(sendOrphanSweepErrorNotification(ARGS)).rejects.toThrow(
+      "SMTP connection refused",
+    );
+  });
+
+  it("rejects when the Resend API returns a non-OK response, so callers are never silently swallowed", async () => {
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.PLATFORM_ADMIN_EMAIL = "admin@example.com";
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("internal server error", { status: 500 }),
+    );
+
+    await expect(sendOrphanSweepErrorNotification(ARGS)).rejects.toThrow(
+      /Resend error 500/,
+    );
+  });
+});
