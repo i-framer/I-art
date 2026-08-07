@@ -42,6 +42,10 @@ export const tenantsTable = pgTable("tenant", {
    */
   stripePayoutsEnabled: boolean("stripe_payouts_enabled"),
   iframerAccountId: text("iframer_account_id"),
+  /** Email of the platform admin who last linked or unlinked an i-Framer account. */
+  iframerAccountLinkedBy: text("iframer_account_linked_by"),
+  /** Timestamp when the i-Framer account was last linked or unlinked. */
+  iframerAccountLinkedAt: timestamp("iframer_account_linked_at", { withTimezone: true }),
   // ── Platform subscription billing (charged by the platform account, not Connect) ──
   stripeCustomerId: text("stripe_customer_id").unique(),
   stripeSubscriptionId: text("stripe_subscription_id").unique(),

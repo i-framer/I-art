@@ -104,10 +104,20 @@ export async function setIframerAccount(formData: FormData): Promise<void> {
   }
 
   const trimmed = accountId.trim();
+  const now = new Date();
 
   const updateValues: Record<string, unknown> = trimmed
-    ? { iframerAccountId: trimmed, billingExempt: true }
-    : { iframerAccountId: null };
+    ? {
+        iframerAccountId: trimmed,
+        billingExempt: true,
+        iframerAccountLinkedBy: adminEmail ?? null,
+        iframerAccountLinkedAt: now,
+      }
+    : {
+        iframerAccountId: null,
+        iframerAccountLinkedBy: adminEmail ?? null,
+        iframerAccountLinkedAt: now,
+      };
 
   const result = await db
     .update(tenantsTable)
