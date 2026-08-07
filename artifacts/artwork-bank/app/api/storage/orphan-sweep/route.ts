@@ -13,6 +13,15 @@
  * production (NODE_ENV === "production") at least one of ORPHAN_SWEEP_SECRET
  * or CRON_SECRET must be set — an unconfigured production deployment returns
  * 403 to prevent strangers from triggering the sweep.
+ *
+ * ## Notification channels
+ * When the sweep completes with errors the route attempts to notify the
+ * operator via Slack (SLACK_BILLING_ALERTS_CHANNEL) and/or email
+ * (PLATFORM_ADMIN_EMAIL + SMTP_HOST or RESEND_API_KEY).  If neither channel
+ * is configured the 207 response body includes `notificationSkipped: true` so
+ * a caller polling the endpoint can detect the misconfiguration without tailing
+ * server logs.  Use GET /api/storage/orphan-sweep/health to check which
+ * channels are currently active without triggering a sweep.
  */
 import { NextResponse } from "next/server";
 import { BlobStoreNotFoundError } from "@vercel/blob";
@@ -22,6 +31,29 @@ import { sendOrphanSweepSlackNotification } from "@/lib/slack";
 import { sendOrphanSweepErrorNotification } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Returns true when at least one operator notification channel is configured:
+ * - Slack: SLACK_BILLING_ALERTS_CHANNEL is set to a non-empty string
+ * - Email: a transport (SMTP_HOST or RESEND_API_KEY) AND PLATFORM_ADMIN_EMAIL are set
+ *
+ * Mirrors the checks in lib/email.ts (isEmailTransportConfigured / smtpConfigured)
+ * but uses env vars directly so it is not affected by test mocks of @/lib/email.
+ *
+ * Used to set `notificationSkipped` in the sweep response so operators can
+ * detect a silent misconfiguration without tailing server logs.
+ */
+function isAnyNotificationChannelConfigured(): boolean {
+  const slackConfigured = Boolean(
+    process.env.SLACK_BILLING_ALERTS_CHANNEL?.trim(),
+  );
+  // Mirrors isEmailTransportConfigured() from lib/email.ts
+  const emailTransportConfigured =
+    Boolean(process.env.SMTP_HOST) || Boolean(process.env.RESEND_API_KEY);
+  const emailConfigured =
+    emailTransportConfigured && Boolean(process.env.PLATFORM_ADMIN_EMAIL);
+  return slackConfigured || emailConfigured;
+}
 
 function isAuthorized(request: Request): boolean {
   // Accept the sweep secret or Vercel's CRON_SECRET (Vercel cron sends
@@ -119,6 +151,23 @@ async function runSweep(request: Request) {
               email: emailFailure,
             },
           },
+          { status: 207 },
+        );
+      }
+
+      // When no channel is configured at all, both notification attempts above
+      // silently skipped (returned without error).  Surface this as
+      // `notificationSkipped: true` so a caller polling the endpoint can detect
+      // the misconfiguration — without needing to tail server logs.
+      if (!isAnyNotificationChannelConfigured()) {
+        console.warn(
+          "[orphan-sweep] Sweep completed with errors but no notification " +
+            "channel is configured (set SLACK_BILLING_ALERTS_CHANNEL and/or " +
+            "PLATFORM_ADMIN_EMAIL + email transport). " +
+            "Returning notificationSkipped:true in the 207 body.",
+        );
+        return NextResponse.json(
+          { ...result, notificationSkipped: true },
           { status: 207 },
         );
       }
