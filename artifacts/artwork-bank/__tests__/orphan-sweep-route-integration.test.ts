@@ -167,6 +167,21 @@ describeIntegration("orphan-sweep route integration — auth guard with real Req
       expect(res.status).toBe(200);
       expect(sweepOrphanedImageFiles).toHaveBeenCalledOnce();
     });
+
+    it("POST accepts CRON_SECRET as the only configured secret", async () => {
+      setEnv({
+        NODE_ENV: "production",
+        ORPHAN_SWEEP_SECRET: undefined,
+        CRON_SECRET: "cron-integration-xyz",
+      });
+
+      const res = await POST(
+        realRequest("POST", "Bearer cron-integration-xyz"),
+      );
+
+      expect(res.status).toBe(200);
+      expect(sweepOrphanedImageFiles).toHaveBeenCalledOnce();
+    });
   });
 
   describe("production with a wrong Bearer token → 401", () => {
