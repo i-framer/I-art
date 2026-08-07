@@ -1,5 +1,6 @@
 /**
- * Integration smoke test: Slack billing alerts against the live Replit connector.
+ * Integration smoke test: Slack billing alerts and i-Framer comp-removed alerts
+ * against the live Replit connector.
  *
  * This test is SKIPPED by default. It only runs when SLACK_INTEGRATION_TEST=true
  * is set in the environment, because it makes a real network call to the Replit
@@ -19,24 +20,29 @@
  *   SLACK_BILLING_ALERTS_CHANNEL=#billing-alerts \
  *     pnpm --filter @workspace/artwork-bank test -- --reporter=verbose slack-reconnect-smoke
  *
- * After the test passes, verify the message arrived in Slack:
- *   Open the channel and look for a message beginning with:
- *     "🚨 Unmatched Stripe billing event (customer.subscription.updated)"
+ * After the tests pass, verify the messages arrived in Slack:
+ *   1. A message beginning with:
+ *        "🚨 Unmatched Stripe billing event (customer.subscription.updated)"
+ *   2. A message beginning with:
+ *        "⛔ i-Framer Premium comp removed (tenant still linked)"
  *
  * See RUNBOOK.md — "Slack connector reconnect" for the full verification
  * procedure after re-authorising the OAuth token.
  */
 
 import { describe, it, expect } from "vitest";
-import { sendBillingAlertSlackNotification } from "@/lib/slack";
+import {
+  sendBillingAlertSlackNotification,
+  sendIframerAccountSlackNotification,
+} from "@/lib/slack";
 
 const RUN_INTEGRATION = process.env.SLACK_INTEGRATION_TEST === "true";
 
 describe.skipIf(!RUN_INTEGRATION)(
-  "Slack billing alert — live connector smoke test (SLACK_INTEGRATION_TEST=true)",
+  "Slack — live connector smoke tests (SLACK_INTEGRATION_TEST=true)",
   () => {
     it(
-      "posts to the real Slack connector and returns { ok: true }",
+      "billing alert: posts to the real Slack connector and returns { ok: true }",
       async () => {
         const channel = process.env.SLACK_BILLING_ALERTS_CHANNEL;
         if (!channel) {
@@ -52,6 +58,34 @@ describe.skipIf(!RUN_INTEGRATION)(
           customerId: "cus_smoke_test",
           subscriptionId: "sub_smoke_test",
           reason: "Smoke test — Slack connector reconnect verification",
+        });
+
+        expect(result).toMatchObject({ ok: true });
+      },
+      // Allow up to 15 s for the live network call.
+      15_000,
+    );
+
+    it(
+      "comp-removed alert: sendIframerAccountSlackNotification posts to the real Slack connector and returns { ok: true }",
+      async () => {
+        const channel = process.env.SLACK_BILLING_ALERTS_CHANNEL;
+        if (!channel) {
+          throw new Error(
+            "SLACK_BILLING_ALERTS_CHANNEL must be set to run the Slack integration smoke test.\n" +
+              "Example: SLACK_BILLING_ALERTS_CHANNEL=#billing-alerts SLACK_INTEGRATION_TEST=true pnpm --filter @workspace/artwork-bank test",
+          );
+        }
+
+        // Simulate the alert that fires when setBillingExempt(false) is called on a
+        // tenant that still has an i-Framer account linked.  After a Slack connector
+        // reconnect (token rotation) this path must still reach the operator.
+        const result = await sendIframerAccountSlackNotification({
+          action: "comp-removed",
+          tenantName: "Smoke Test Gallery",
+          tenantSlug: `smoke-test-${Date.now()}`,
+          accountId: "ifr-smoke-reconnect-001",
+          adminEmail: "platform-admin@example.com",
         });
 
         expect(result).toMatchObject({ ok: true });
