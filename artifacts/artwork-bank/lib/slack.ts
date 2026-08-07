@@ -302,12 +302,15 @@ export async function sendBillingAlertSlackNotification({
   customerId,
   subscriptionId,
   reason,
+  iframerAccountId,
 }: {
   stripeEventId: string;
   eventType: string;
   customerId?: string | null;
   subscriptionId?: string | null;
   reason: string;
+  /** When set, appends an i-Framer Premium account note to the Slack message. */
+  iframerAccountId?: string | null;
 }): Promise<SlackNotificationResult> {
   const channel = resolveSlackChannel(eventType);
 
@@ -329,6 +332,7 @@ export async function sendBillingAlertSlackNotification({
   if (customerId) details.push(`*Customer ID:* \`${customerId}\``);
   if (subscriptionId) details.push(`*Subscription ID:* \`${subscriptionId}\``);
   details.push(`*Reason:* ${reason}`);
+  if (iframerAccountId) details.push(`:link: *i-Framer Premium account:* \`${iframerAccountId}\``);
   if (panelUrl) details.push(`<${panelUrl}|View billing alerts panel>`);
 
   const text =

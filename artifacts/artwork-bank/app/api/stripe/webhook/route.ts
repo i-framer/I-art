@@ -301,7 +301,78 @@ async function handleSubscriptionEvent(
       ...(customerId ? { stripeCustomerId: customerId } : {}),
     })
     .where(and(where, cancelGuard))
-    .returning({ id: tenantsTable.id });
+    .returning({ id: tenantsTable.id, iframerAccountId: tenantsTable.iframerAccountId });
+
+  // When a matched i-Framer-linked tenant loses billing access, persist a durable
+  // stripe_alert row and notify the operator — matching the delivery pattern used
+  // for unmatched events so Slack failures are recoverable via replay.
+  if (updated.length > 0) {
+    const { iframerAccountId } = updated[0]!;
+    const BILLING_LOSS_STATUSES = new Set([
+      "past_due",
+      "canceled",
+      "unpaid",
+      "incomplete_expired",
+      "paused",
+    ]);
+    if (iframerAccountId && BILLING_LOSS_STATUSES.has(status)) {
+      const alertReason =
+        `Subscription status changed to "${status}" for i-Framer Premium account \`${iframerAccountId}\``;
+      try {
+        const inserted = await db
+          .insert(stripeAlertsTable)
+          .values({
+            stripeEventId: eventId,
+            eventType,
+            customerId: customerId ?? null,
+            subscriptionId: subscription.id,
+            reason: alertReason,
+          })
+          .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId })
+          .returning({ id: stripeAlertsTable.id });
+        // Only notify on the first delivery — conflict means Stripe retried the
+        // same event and the alert row (with its Slack state) already exists.
+        if (inserted.length > 0) {
+          let slackFailure: string | undefined;
+          try {
+            const slackResult = await sendBillingAlertSlackNotification({
+              stripeEventId: eventId,
+              eventType,
+              customerId: customerId ?? null,
+              subscriptionId: subscription.id,
+              reason: alertReason,
+              iframerAccountId,
+            });
+            if (!slackResult.ok) slackFailure = slackResult.error;
+          } catch (slackErr) {
+            console.error(
+              "[webhook] Failed to send i-Framer billing alert Slack message:",
+              slackErr,
+            );
+            slackFailure = (slackErr as any)?.message ?? String(slackErr);
+          }
+          if (slackFailure) {
+            try {
+              await db
+                .update(stripeAlertsTable)
+                .set({ slackPostFailed: new Date() })
+                .where(eq(stripeAlertsTable.stripeEventId, eventId));
+            } catch (updateErr) {
+              console.error(
+                "[webhook] Failed to persist slackPostFailed flag for i-Framer alert:",
+                updateErr,
+              );
+            }
+          }
+        }
+      } catch (dbErr) {
+        console.error(
+          "[webhook] Failed to persist i-Framer billing alert:",
+          dbErr,
+        );
+      }
+    }
+  }
 
   if (updated.length === 0) {
     // Distinguish two cases:
@@ -417,7 +488,71 @@ async function handleInvoicePaymentFailed(
     .update(tenantsTable)
     .set({ subscriptionStatus: "past_due" })
     .where(and(eq(tenantsTable.stripeCustomerId, customerId), cancelGuard))
-    .returning({ id: tenantsTable.id });
+    .returning({ id: tenantsTable.id, iframerAccountId: tenantsTable.iframerAccountId });
+
+  // When a matched i-Framer-linked tenant's invoice payment fails, persist a durable
+  // stripe_alert row and notify the operator — matching the delivery pattern used
+  // for unmatched events so Slack failures are recoverable via replay.
+  if (updated.length > 0) {
+    const { iframerAccountId } = updated[0]!;
+    if (iframerAccountId) {
+      const alertReason =
+        `Invoice payment failed — tenant status set to past_due (i-Framer Premium account \`${iframerAccountId}\`)`;
+      try {
+        const inserted = await db
+          .insert(stripeAlertsTable)
+          .values({
+            stripeEventId: eventId,
+            eventType: "invoice.payment_failed",
+            customerId,
+            subscriptionId: null,
+            reason: alertReason,
+          })
+          .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId })
+          .returning({ id: stripeAlertsTable.id });
+        // Only notify on the first delivery — conflict means Stripe retried the
+        // same event and the alert row (with its Slack state) already exists.
+        if (inserted.length > 0) {
+          let slackFailure: string | undefined;
+          try {
+            const slackResult = await sendBillingAlertSlackNotification({
+              stripeEventId: eventId,
+              eventType: "invoice.payment_failed",
+              customerId,
+              subscriptionId: null,
+              reason: alertReason,
+              iframerAccountId,
+            });
+            if (!slackResult.ok) slackFailure = slackResult.error;
+          } catch (slackErr) {
+            console.error(
+              "[webhook] Failed to send i-Framer billing alert Slack message:",
+              slackErr,
+            );
+            slackFailure = (slackErr as any)?.message ?? String(slackErr);
+          }
+          if (slackFailure) {
+            try {
+              await db
+                .update(stripeAlertsTable)
+                .set({ slackPostFailed: new Date() })
+                .where(eq(stripeAlertsTable.stripeEventId, eventId));
+            } catch (updateErr) {
+              console.error(
+                "[webhook] Failed to persist slackPostFailed flag for i-Framer alert:",
+                updateErr,
+              );
+            }
+          }
+        }
+      } catch (dbErr) {
+        console.error(
+          "[webhook] Failed to persist i-Framer billing alert:",
+          dbErr,
+        );
+      }
+    }
+  }
 
   if (updated.length === 0) {
     // Distinguish two cases:
