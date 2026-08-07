@@ -162,4 +162,29 @@ describe("sendOrphanSweepErrorNotification — delivery when configured", () => 
     // HTML body lists at least the first failed path
     expect(mailArgs.html).toContain("uploads/img1.jpg");
   });
+
+  it("still calls nodemailer sendMail and includes the Slack error text in the HTML body when SMTP_HOST + slackFailure are both set", async () => {
+    process.env.SMTP_HOST = "smtp.example.com";
+    process.env.PLATFORM_ADMIN_EMAIL = "admin@example.com";
+
+    await sendOrphanSweepErrorNotification({
+      ...ARGS,
+      slackFailure: "Slack connector timed out: connection refused",
+    });
+
+    expect(sendMailMock).toHaveBeenCalledOnce();
+
+    const mailArgs = sendMailMock.mock.calls[0][0] as {
+      to: string;
+      subject: string;
+      html: string;
+    };
+
+    // Email must still be delivered even though Slack also failed
+    expect(mailArgs.to).toBe("admin@example.com");
+    // HTML body must contain the Slack error message verbatim
+    expect(mailArgs.html).toContain("Slack connector timed out: connection refused");
+    // The red-banner warning text must be present
+    expect(mailArgs.html).toContain("Slack notification also failed");
+  });
 });
