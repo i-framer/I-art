@@ -67,9 +67,31 @@ both `sendBillingAlertSlackNotification` and `sendIframerAccountSlackNotificatio
 against the live connector. Pass/fail is reported in the workflow run summary.
 
 Required repository secrets (set once under **Settings → Secrets → Actions**):
-- `ARTWORK_BANK_URL` — base URL of the deployed app (e.g. `https://your-app.vercel.app`)
-- `SLACK_SMOKE_SECRET` — must match the `SLACK_SMOKE_SECRET` (or `CRON_SECRET`)
-  env var set in the deployed app. Omit both if the endpoint is open (dev only).
+
+| Secret | Required | Description |
+|---|---|---|
+| `ARTWORK_BANK_URL` | ✅ Yes | Base URL of the deployed app (e.g. `https://your-app.vercel.app`) |
+| `SLACK_SMOKE_SECRET` | ⚠️ If protected | Must match the `SLACK_SMOKE_SECRET` (or `CRON_SECRET`) env var in the deployed app. Omit both if the endpoint is open (dev only). |
+| `PLATFORM_ADMIN_EMAIL` | Optional | Recipient address for the fallback failure email. **If absent, the email-alert step is silently skipped.** |
+| `RESEND_API_KEY` | Optional | Resend API key — the simplest transport option for GitHub Actions. Used when `PLATFORM_ADMIN_EMAIL` is set. |
+| `SMTP_HOST` | Optional | SMTP server hostname. Used only if `RESEND_API_KEY` is not set. |
+| `SMTP_PORT` | Optional | SMTP server port (e.g. `587`). |
+| `SMTP_USER` | Optional | SMTP username / login. |
+| `SMTP_PASS` | Optional | SMTP password. |
+
+**Email fallback alert (failure only):** When the smoke probe fails, Slack itself
+may be unreachable, so a fallback email is sent to `PLATFORM_ADMIN_EMAIL` so the
+operator is notified even when Slack is completely down.
+
+- If `PLATFORM_ADMIN_EMAIL` is **not set**, the email step is silently skipped —
+  the workflow still reports the failure in the Actions log and step summary, but
+  no email is sent.
+- If `PLATFORM_ADMIN_EMAIL` **is set**, the email is sent using the first
+  transport that is configured: `RESEND_API_KEY` (preferred for GitHub Actions)
+  or `SMTP_*` (own mail server).
+- `RESEND_API_KEY` is the recommended option: sign up at
+  [resend.com](https://resend.com), create an API key, and add it as a repository
+  secret.  No server configuration required.
 
 The workflow also runs automatically every Monday at 07:00 UTC so silent
 regressions between reconnects are caught without manual intervention.
