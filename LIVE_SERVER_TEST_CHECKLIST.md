@@ -55,8 +55,8 @@ _Last updated: 2026-08-07 (agent + GG live run #2)_
 
 ## 5. Storage & sweeps
 
-- [!] 5.1 Upload artwork images on the live site — they display via `/api/storage/serve` — **BLOCKED: production storage backend not configured** (`/api/storage/health` returns 503: "No storage backend configured. Set BLOB_READ_WRITE_TOKEN or PRIVATE_OBJECT_DIR"). Mark must add the storage env var to Vercel before this can pass.
-- [ ] 5.2 Delete an artwork — its images are removed from object storage
+- [!] 5.1 Upload artwork images on the live site — they display via `/api/storage/serve` — **BLOCKED: production storage backend not configured** (`/api/storage/health` returns `{"ok":false,"error":"No storage backend configured. Set BLOB_READ_WRITE_TOKEN (Vercel Blob) or PRIVATE_OBJECT_DIR (Replit App Storage)."}` — re-verified 2026-08-07). Mark must add `BLOB_READ_WRITE_TOKEN` or `PRIVATE_OBJECT_DIR` to Vercel env vars and redeploy before this can pass.
+- [!] 5.2 Delete an artwork — its images are removed from object storage — **BLOCKED: depends on 5.1** (storage backend must be configured first)
 - [ ] 5.3 Orphan sweep cron runs and posts its result; operator alert arrives on errors (Task #205)
 - [x] 5.4 `/api/storage/orphan-sweep` rejects calls without the Bearer secret (GG 2026-08-07)
 
