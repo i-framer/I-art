@@ -117,6 +117,32 @@ describe("sendOrphanSweepErrorNotification — delivery when configured", () => 
     expect(body.html).toContain("uploads/img1.jpg");
   });
 
+  it("still calls fetch and includes the Slack error text in the HTML body when slackFailure is provided", async () => {
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.PLATFORM_ADMIN_EMAIL = "admin@example.com";
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: "resend-test-id" }), { status: 200 }),
+    );
+
+    await sendOrphanSweepErrorNotification({
+      ...ARGS,
+      slackFailure: "Slack connector timed out: connection refused",
+    });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+
+    // Email must still be delivered even though Slack also failed
+    expect(body.to).toBe("admin@example.com");
+    // HTML body must contain the Slack error message verbatim
+    expect(body.html).toContain("Slack connector timed out: connection refused");
+    // The red-banner warning text must be present
+    expect(body.html).toContain("Slack notification also failed");
+  });
+
   it("calls nodemailer sendMail once with the correct subject when SMTP_HOST and PLATFORM_ADMIN_EMAIL are both set", async () => {
     process.env.SMTP_HOST = "smtp.example.com";
     process.env.PLATFORM_ADMIN_EMAIL = "admin@example.com";
