@@ -41,6 +41,7 @@ vi.mock("@/lib/orphan-image-sweep", () => ({
 // ── Import route handlers after mocks are in place ───────────────────────────
 
 import { GET, POST } from "@/app/api/storage/orphan-sweep/route";
+import { GET as healthGET } from "@/app/api/storage/orphan-sweep/health/route";
 
 // ── Env management ────────────────────────────────────────────────────────────
 
@@ -350,6 +351,133 @@ describeIntegration("orphan-sweep route integration — auth guard with real Req
       expect(res.status).toBe(401);
       expect((res.body as any).error).toMatch(/Unauthorized/i);
       expect(sweepOrphanedImageFiles).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// ── Health endpoint tests ─────────────────────────────────────────────────────
+
+describeIntegration("orphan-sweep health endpoint — auth configuration reporting", () => {
+  describe("only CRON_SECRET configured", () => {
+    it("reports cronSecret:true, orphanSweepSecret:false, anySecretConfigured:true", async () => {
+      setEnv({
+        ORPHAN_SWEEP_SECRET: undefined,
+        CRON_SECRET: "cron-only-secret",
+        SLACK_BILLING_ALERTS_CHANNEL: undefined,
+        SMTP_HOST: undefined,
+        RESEND_API_KEY: undefined,
+        PLATFORM_ADMIN_EMAIL: undefined,
+      });
+
+      const res = await healthGET();
+
+      expect(res.status).toBe(200);
+      const body = res.body as any;
+      expect(body.auth.cronSecret).toBe(true);
+      expect(body.auth.orphanSweepSecret).toBe(false);
+      expect(body.auth.anySecretConfigured).toBe(true);
+    });
+
+    it("reports anyConfigured:false when no notification channels are set", async () => {
+      setEnv({
+        ORPHAN_SWEEP_SECRET: undefined,
+        CRON_SECRET: "cron-only-secret",
+        SLACK_BILLING_ALERTS_CHANNEL: undefined,
+        SMTP_HOST: undefined,
+        RESEND_API_KEY: undefined,
+        PLATFORM_ADMIN_EMAIL: undefined,
+      });
+
+      const res = await healthGET();
+
+      expect(res.status).toBe(200);
+      const body = res.body as any;
+      expect(body.anyConfigured).toBe(false);
+      expect(body.notificationChannels.slack).toBe(false);
+      expect(body.notificationChannels.email).toBe(false);
+    });
+  });
+
+  describe("only ORPHAN_SWEEP_SECRET configured", () => {
+    it("reports orphanSweepSecret:true, cronSecret:false, anySecretConfigured:true", async () => {
+      setEnv({
+        ORPHAN_SWEEP_SECRET: "sweep-only-secret",
+        CRON_SECRET: undefined,
+        SLACK_BILLING_ALERTS_CHANNEL: undefined,
+        SMTP_HOST: undefined,
+        RESEND_API_KEY: undefined,
+        PLATFORM_ADMIN_EMAIL: undefined,
+      });
+
+      const res = await healthGET();
+
+      expect(res.status).toBe(200);
+      const body = res.body as any;
+      expect(body.auth.orphanSweepSecret).toBe(true);
+      expect(body.auth.cronSecret).toBe(false);
+      expect(body.auth.anySecretConfigured).toBe(true);
+    });
+  });
+
+  describe("no secrets configured", () => {
+    it("reports anySecretConfigured:false when neither secret is set", async () => {
+      setEnv({
+        ORPHAN_SWEEP_SECRET: undefined,
+        CRON_SECRET: undefined,
+        SLACK_BILLING_ALERTS_CHANNEL: undefined,
+        SMTP_HOST: undefined,
+        RESEND_API_KEY: undefined,
+        PLATFORM_ADMIN_EMAIL: undefined,
+      });
+
+      const res = await healthGET();
+
+      expect(res.status).toBe(200);
+      const body = res.body as any;
+      expect(body.auth.orphanSweepSecret).toBe(false);
+      expect(body.auth.cronSecret).toBe(false);
+      expect(body.auth.anySecretConfigured).toBe(false);
+    });
+  });
+
+  describe("both secrets configured", () => {
+    it("reports both orphanSweepSecret:true and cronSecret:true", async () => {
+      setEnv({
+        ORPHAN_SWEEP_SECRET: "sweep-secret",
+        CRON_SECRET: "cron-secret",
+        SLACK_BILLING_ALERTS_CHANNEL: undefined,
+        SMTP_HOST: undefined,
+        RESEND_API_KEY: undefined,
+        PLATFORM_ADMIN_EMAIL: undefined,
+      });
+
+      const res = await healthGET();
+
+      expect(res.status).toBe(200);
+      const body = res.body as any;
+      expect(body.auth.orphanSweepSecret).toBe(true);
+      expect(body.auth.cronSecret).toBe(true);
+      expect(body.auth.anySecretConfigured).toBe(true);
+    });
+  });
+
+  describe("notification channel reporting", () => {
+    it("reports slack:true when SLACK_BILLING_ALERTS_CHANNEL is set", async () => {
+      setEnv({
+        ORPHAN_SWEEP_SECRET: undefined,
+        CRON_SECRET: "cron-only-secret",
+        SLACK_BILLING_ALERTS_CHANNEL: "C12345678",
+        SMTP_HOST: undefined,
+        RESEND_API_KEY: undefined,
+        PLATFORM_ADMIN_EMAIL: undefined,
+      });
+
+      const res = await healthGET();
+
+      expect(res.status).toBe(200);
+      const body = res.body as any;
+      expect(body.notificationChannels.slack).toBe(true);
+      expect(body.anyConfigured).toBe(true);
     });
   });
 });
