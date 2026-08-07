@@ -1,0 +1,172 @@
+name: Slack reconnect smoke test
+
+# Verifies that both Slack alert paths (billing alert and i-Framer comp-removed)
+# are reachable after a Slack connector reconnect.
+#
+# The Replit connectors SDK only works inside the running Replit/deployed app,
+# so this workflow hits the /api/slack-smoke probe endpoint rather than running
+# the vitest integration test directly in CI.
+#
+# When to run:
+#   - Manually (workflow_dispatch) immediately after every Slack connector
+#     reconnect / OAuth token rotation.
+#   - Optionally on a schedule (e.g. weekly) to catch silent regressions.
+#
+# Required GitHub Actions repository secrets:
+#   ARTWORK_BANK_URL     — base URL of the deployed Artwork Bank app
+#                          (e.g. https://your-app.vercel.app)
+#   SLACK_SMOKE_SECRET   — the secret configured as SLACK_SMOKE_SECRET (or
+#                          CRON_SECRET) in the deployed app's environment.
+#                          Omit if the endpoint is open (no secret configured).
+#
+# Pass/fail is reported in the workflow run summary and as a Slack message
+# in the configured channel when the test passes (the alert itself is the proof).
+
+on:
+  # Trigger manually from the GitHub Actions UI after a connector reconnect.
+  workflow_dispatch:
+    inputs:
+      artwork_bank_url:
+        description: >
+          Base URL of the deployed Artwork Bank (overrides the ARTWORK_BANK_URL
+          secret). Leave blank to use the secret.
+        required: false
+        type: string
+
+  # Optional weekly schedule — catches silent regressions between reconnects.
+  # Remove or comment out this block if you prefer manual-only triggering.
+  schedule:
+    - cron: "0 7 * * 1"  # Every Monday at 07:00 UTC
+
+jobs:
+  slack-smoke:
+    name: Slack connector smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve target URL
+        id: resolve
+        env:
+          # Pass untrusted inputs through env vars — never interpolate them
+          # directly into run: scripts (prevents shell injection).
+          INPUT_URL: ${{ github.event.inputs.artwork_bank_url }}
+          SECRET_URL: ${{ secrets.ARTWORK_BANK_URL }}
+        run: |
+          URL="${INPUT_URL:-$SECRET_URL}"
+          if [ -z "$URL" ]; then
+            echo "❌  No target URL provided."
+            echo "    Set the ARTWORK_BANK_URL repository secret, or supply the URL"
+            echo "    via the 'artwork_bank_url' workflow_dispatch input."
+            exit 1
+          fi
+          # Validate that the URL starts with https:// to prevent curl from
+          # being pointed at unexpected schemes (file://, etc.).
+          if [[ "$URL" != https://* ]]; then
+            echo "❌  ARTWORK_BANK_URL must begin with https://"
+            exit 1
+          fi
+          # Strip trailing slash so we can safely append the path.
+          URL="${URL%/}"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Probe target: $URL/api/slack-smoke"
+
+      - name: Run Slack smoke probe
+        id: probe
+        env:
+          TARGET_URL: ${{ steps.resolve.outputs.url }}
+          SLACK_SMOKE_SECRET: ${{ secrets.SLACK_SMOKE_SECRET }}
+        run: |
+          TARGET="${TARGET_URL}/api/slack-smoke"
+          SECRET="$SLACK_SMOKE_SECRET"
+
+          echo "→ POST $TARGET"
+
+          # Build curl arguments.  Only add the Authorization header when a
+          # secret is configured; omit it entirely for open (dev) endpoints.
+          CURL_ARGS=(-sf -X POST -H "Content-Type: application/json")
+          if [ -n "$SECRET" ]; then
+            CURL_ARGS+=(-H "Authorization: Bearer $SECRET")
+          fi
+
+          HTTP_CODE=$(curl "${CURL_ARGS[@]}" \
+            -o /tmp/slack_smoke_body.json \
+            -w "%{http_code}" \
+            "$TARGET" 2>/tmp/slack_smoke_curl_err || true)
+
+          echo "HTTP status: $HTTP_CODE"
+
+          # Surface curl-level errors (DNS failure, connection refused, etc.)
+          if [ -s /tmp/slack_smoke_curl_err ]; then
+            echo "curl error output:"
+            cat /tmp/slack_smoke_curl_err
+          fi
+
+          # Print the full response body for the workflow log.
+          if [ -f /tmp/slack_smoke_body.json ]; then
+            echo "Response body:"
+            cat /tmp/slack_smoke_body.json
+            echo ""
+          fi
+
+          # 401 — bad or missing secret
+          if [ "$HTTP_CODE" = "401" ]; then
+            echo "❌  Unauthorized (HTTP 401). Check that SLACK_SMOKE_SECRET matches"
+            echo "    the SLACK_SMOKE_SECRET (or CRON_SECRET) set in the deployed app."
+            exit 1
+          fi
+
+          # 503 — channel env var not configured
+          if [ "$HTTP_CODE" = "503" ]; then
+            echo "❌  Probe endpoint returned 503 — SLACK_BILLING_ALERTS_CHANNEL is"
+            echo "    not set in the deployed app environment."
+            exit 1
+          fi
+
+          # Any other non-200 response is an unexpected error.
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌  Unexpected HTTP status: $HTTP_CODE"
+            exit 1
+          fi
+
+          # Parse the 'ok' field from the response body.
+          OK=$(python3 -c "import json,sys; d=json.load(open('/tmp/slack_smoke_body.json')); print('true' if d.get('ok') else 'false')" 2>/dev/null || echo "parse_error")
+
+          if [ "$OK" = "parse_error" ]; then
+            echo "❌  Could not parse JSON response body."
+            exit 1
+          fi
+
+          echo "ok=$OK" >> "$GITHUB_OUTPUT"
+
+          if [ "$OK" = "true" ]; then
+            echo "✅  All Slack smoke probes passed."
+            echo "    Verify the two test messages arrived in the configured Slack channel:"
+            echo "      • 🚨 Unmatched Stripe billing event (customer.subscription.updated)"
+            echo "      • ⛔ i-Framer Premium comp removed (tenant still linked)"
+          else
+            echo "❌  One or more Slack smoke probes FAILED — see response body above."
+            echo "    Common causes:"
+            echo "      • Slack connector not reconnected / token still expired"
+            echo "      • Bot removed from the target channel"
+            echo "      • SLACK_BILLING_ALERTS_CHANNEL points to a channel the bot can't see"
+            echo "    Refer to RUNBOOK.md — 'Slack connector reconnect' for repair steps."
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          OK="${{ steps.probe.outputs.ok }}"
+          if [ "$OK" = "true" ]; then
+            echo "### ✅ Slack smoke test passed" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Both alert paths (billing alert, comp-removed) reached Slack successfully." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Verify** the two test messages appeared in the configured Slack channel." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ Slack smoke test FAILED" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "One or more alert paths could not reach Slack. See the job log for details." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Next steps:** Follow the Slack connector reconnect runbook in \`RUNBOOK.md\`." >> "$GITHUB_STEP_SUMMARY"
+          fi

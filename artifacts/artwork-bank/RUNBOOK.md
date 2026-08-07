@@ -51,9 +51,46 @@ pnpm --filter @workspace/artwork-bank dev
 
 #### 4 — Run the integration smoke test
 
-The fastest way to confirm the connector is healthy after a reconnect is to run
-the dedicated integration test, which calls `sendBillingAlertSlackNotification`
-directly against the live Replit connectors SDK and asserts `{ ok: true }`:
+**Option A — GitHub Actions (recommended after any reconnect):**
+
+Trigger the `slack-reconnect-smoke` workflow from the GitHub Actions UI:
+
+1. Open the repository on GitHub.
+2. Navigate to **Actions → Slack reconnect smoke test**.
+3. Click **Run workflow** (top right of the workflow list).
+4. Optionally enter the deployed app URL if `ARTWORK_BANK_URL` is not set as a
+   repository secret.
+5. Click **Run workflow** to start the job.
+
+The workflow calls `POST /api/slack-smoke` on the deployed app, which exercises
+both `sendBillingAlertSlackNotification` and `sendIframerAccountSlackNotification`
+against the live connector. Pass/fail is reported in the workflow run summary.
+
+Required repository secrets (set once under **Settings → Secrets → Actions**):
+- `ARTWORK_BANK_URL` — base URL of the deployed app (e.g. `https://your-app.vercel.app`)
+- `SLACK_SMOKE_SECRET` — must match the `SLACK_SMOKE_SECRET` (or `CRON_SECRET`)
+  env var set in the deployed app. Omit both if the endpoint is open (dev only).
+
+The workflow also runs automatically every Monday at 07:00 UTC so silent
+regressions between reconnects are caught without manual intervention.
+
+**Option B — curl the probe endpoint directly:**
+
+```bash
+curl -sf -X POST \
+  -H "Authorization: Bearer YOUR_SLACK_SMOKE_SECRET" \
+  https://your-app.vercel.app/api/slack-smoke \
+| jq .
+```
+
+Expected response on success: `{ "ok": true, "results": [...] }`
+
+**Option C — vitest integration test (Replit shell only):**
+
+The `sendBillingAlertSlackNotification` and `sendIframerAccountSlackNotification`
+paths can also be verified via the vitest smoke test — but this requires the
+Replit connectors SDK to be available, so it must run in the Replit workspace
+shell (not in GitHub Actions):
 
 ```bash
 SLACK_INTEGRATION_TEST=true \
