@@ -15,7 +15,7 @@
 >   in the matching section (or a new section) in the same commit.
 > - When the user reports a result in chat, update the checkbox for them.
 
-_Last updated: 2026-08-07 (agent)_
+_Last updated: 2026-08-07 (agent + GG live run)_
 
 ---
 
@@ -49,7 +49,7 @@ _Last updated: 2026-08-07 (agent)_
 
 - [ ] 4.1 A failed Slack post is recorded on the tenant and visible in the platform panel (Task #477)
 - [ ] 4.2 The failed-alert replay sends the original payload and clears the failure marker
-- [ ] 4.3 `/api/slack-replay` rejects a request without the correct secret (401/403) (Task #175)
+- [x] 4.3 `/api/slack-replay` rejects a request without the correct secret (401/403) (Task #175) (GG 2026-08-07)
 - [ ] 4.4 Weekly Slack smoke test posts to the ops channel (check Monday run in GitHub Actions)
 - [ ] 4.5 When the smoke test fails, exactly ONE fallback email arrives via Resend — not two (Tasks #488/#493)
 
@@ -58,19 +58,19 @@ _Last updated: 2026-08-07 (agent)_
 - [ ] 5.1 Upload artwork images on the live site — they display via `/api/storage/serve`
 - [ ] 5.2 Delete an artwork — its images are removed from object storage
 - [ ] 5.3 Orphan sweep cron runs and posts its result; operator alert arrives on errors (Task #205)
-- [ ] 5.4 `/api/storage/orphan-sweep` rejects calls without the Bearer secret
+- [x] 5.4 `/api/storage/orphan-sweep` rejects calls without the Bearer secret (GG 2026-08-07)
 
 ## 6. Domains & routing
 
 - [ ] 6.1 `{slug}.i-art.com.au` subdomain routing resolves to the right tenant
-- [ ] 6.2 An unknown subdomain shows the unknown-domain page (no crash, no wrong tenant data)
+- [x] 6.2 An unknown subdomain shows the unknown-domain page (no crash, no wrong tenant data) (GG 2026-08-07)
 - [ ] 6.3 A tenant custom domain (if configured) serves the right storefront over HTTPS
 
 ## 7. Browse & discovery
 
-- [ ] 7.1 `/browse` filters: seller slug + keyword (`q=`) combined return correct results (Task #287)
+- [x] 7.1 `/browse` filters: seller slug + keyword (`q=`) combined return correct results (Task #287) (GG 2026-08-07)
 - [ ] 7.2 SOLD / RESERVED artworks still appear under the artist filter; HIDDEN never does (Tasks #283/#285)
-- [ ] 7.3 Sitemap and robots.txt respond for both the apex and a tenant subdomain
+- [x] 7.3 Sitemap and robots.txt respond for both the apex and a tenant subdomain (GG 2026-08-07)
 
 ## 8. Inquiries & email
 
