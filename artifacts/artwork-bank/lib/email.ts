@@ -806,6 +806,93 @@ export async function sendDriftFailureEmail({
   }
 }
 
+/**
+ * Sends an operator alert when the automated Slack smoke test fails.
+ *
+ * Called by `scripts/notify-smoke-failure.ts` which is invoked by the
+ * `slack-reconnect-smoke` GitHub Actions workflow on failure.
+ *
+ * Skipped silently when PLATFORM_ADMIN_EMAIL or a transport is not configured.
+ */
+export async function sendSmokeTestFailureEmail({
+  probeResponseBody,
+  workflowRunUrl,
+}: {
+  /** Raw JSON response body from the /api/slack-smoke probe (may be empty). */
+  probeResponseBody: string;
+  /** Direct link to the failed GitHub Actions run. */
+  workflowRunUrl: string;
+}): Promise<boolean> {
+  const adminEmail = process.env.PLATFORM_ADMIN_EMAIL;
+
+  if (!isEmailTransportConfigured() || !adminEmail) {
+    console.log(
+      `[Smoke test email skipped — ${!isEmailTransportConfigured() ? "email transport (SMTP_HOST or RESEND_API_KEY)" : "PLATFORM_ADMIN_EMAIL"} not set]`,
+    );
+    return false;
+  }
+
+  // Truncate very long bodies so the email stays readable.
+  const MAX_CHARS = 4000;
+  const truncatedBody =
+    probeResponseBody.length > MAX_CHARS
+      ? probeResponseBody.slice(0, MAX_CHARS) + "\n… (truncated)"
+      : probeResponseBody;
+
+  try {
+    await deliverEmail({
+      from: getOrdersFrom(),
+      to: adminEmail,
+      subject: `Action needed — Slack smoke test failed (weekly check)`,
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+          <h2 style="color:#b91c1c;">Slack smoke test failed</h2>
+          <p>The automated weekly Slack smoke test detected that one or more Slack
+          alert paths are not working. This may mean the Slack connector token has
+          expired, the bot was removed from the channel, or Slack itself is
+          experiencing an outage.</p>
+          <div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
+            <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">Action required</p>
+            <ul style="margin:0;padding-left:20px;color:#7f1d1d;">
+              <li>Check the failed workflow run linked below for the full error output.</li>
+              <li>Follow the <strong>Slack connector reconnect</strong> steps in <code>RUNBOOK.md</code>
+                to restore the Slack integration.</li>
+              <li>Re-run the smoke test after reconnecting to confirm delivery is restored.</li>
+            </ul>
+          </div>
+          ${
+            workflowRunUrl
+              ? `<p style="margin:16px 0;">
+                  <a href="${htmlEscape(workflowRunUrl)}"
+                     style="display:inline-block;padding:10px 20px;background:#1c1917;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">
+                    View failed workflow run →
+                  </a>
+                </p>`
+              : ""
+          }
+          <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
+            <p style="margin:0 0 8px;font-weight:bold;">Probe response body:</p>
+            <pre style="margin:0;white-space:pre-wrap;font-size:12px;font-family:monospace;overflow-x:auto;">${truncatedBody ? htmlEscape(truncatedBody) : "(no response body captured)"}</pre>
+          </div>
+          <p style="color:#78716c;font-size:13px;margin-top:24px;">
+            This alert was sent as an email fallback because Slack itself may be
+            unreachable — a Slack notification about a Slack outage cannot be
+            delivered through the same broken channel.
+          </p>
+        </div>
+      `,
+    });
+    return true;
+  } catch (err) {
+    // Best-effort — log but do not propagate.
+    console.error(
+      "[Smoke test email] Failed to send operator notification:",
+      (err as any)?.message ?? String(err),
+    );
+    return false;
+  }
+}
+
 export async function sendOrderConfirmation({
   buyerEmail,
   buyerName,

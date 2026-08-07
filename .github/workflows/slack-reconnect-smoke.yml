@@ -170,3 +170,58 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "**Next steps:** Follow the Slack connector reconnect runbook in \`RUNBOOK.md\`." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # ── Email fallback alert on failure ──────────────────────────────────────
+      # When the probe fails, Slack itself may be unreachable, so we cannot
+      # alert the operator through the same broken channel.  This step sends a
+      # fallback email via SMTP or Resend so the operator is notified even when
+      # Slack is completely down.
+      #
+      # Requires at least one email transport secret:
+      #   PLATFORM_ADMIN_EMAIL — recipient address
+      #   RESEND_API_KEY       — Resend API key (preferred for GitHub Actions)
+      #   SMTP_HOST + SMTP_PORT + SMTP_USER + SMTP_PASS — own mail server
+      #
+      # Steps below run only on failure and are skipped on success, so they add
+      # zero overhead to passing runs.
+
+      - name: Checkout (failure only)
+        if: failure()
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm (failure only)
+        if: failure()
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js (failure only)
+        if: failure()
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies (failure only)
+        if: failure()
+        run: pnpm install --frozen-lockfile
+
+      - name: Send failure email alert
+        if: failure()
+        env:
+          PROBE_RESPONSE_BODY: ${{ steps.probe.outputs.ok == '' && '(probe step did not complete — see job log)' || '' }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PLATFORM_ADMIN_EMAIL: ${{ secrets.PLATFORM_ADMIN_EMAIL }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+        run: |
+          # Read the raw probe body captured by the probe step (if present).
+          BODY=""
+          if [ -f /tmp/slack_smoke_body.json ]; then
+            BODY=$(cat /tmp/slack_smoke_body.json)
+          fi
+          PROBE_RESPONSE_BODY="$BODY" \
+            pnpm --filter @workspace/artwork-bank exec tsx scripts/notify-smoke-failure.ts || true
