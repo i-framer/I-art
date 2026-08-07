@@ -130,6 +130,22 @@ describe("email sweep route — token validation", () => {
     expect(sweepUnsentConfirmationEmails).not.toHaveBeenCalled();
   });
 
+  it("returns 401 on GET with a wrong Bearer token when EMAIL_SWEEP_SECRET is set", async () => {
+    setEnv({ EMAIL_SWEEP_SECRET: "correct-secret" });
+
+    const res = await GET(makeRequest("Bearer wrong-secret", "GET"));
+    expect(res.status).toBe(401);
+    expect(sweepUnsentConfirmationEmails).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 on GET with a wrong Bearer token when CRON_SECRET is set", async () => {
+    setEnv({ CRON_SECRET: "cron-secret" });
+
+    const res = await GET(makeRequest("Bearer wrong-cron-secret", "GET"));
+    expect(res.status).toBe(401);
+    expect(sweepUnsentConfirmationEmails).not.toHaveBeenCalled();
+  });
+
   it("accepts either secret when both are configured", async () => {
     setEnv({ EMAIL_SWEEP_SECRET: "sweep-secret", CRON_SECRET: "cron-secret" });
 
