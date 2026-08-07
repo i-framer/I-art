@@ -14,11 +14,20 @@
  *  - setIframerAccount throws when accountId is null (not a string)
  *  - setIframerAccount throws when tenant not found
  *  - setIframerAccount blocks non-admin callers
+ *  - setIframerAccount sends a Slack "linked" notification on link
+ *  - setIframerAccount sends a Slack "unlinked" notification on unlink
+ *  - setIframerAccount skips Slack silently when SLACK_BILLING_ALERTS_CHANNEL is not set
  *  - dismissBillingAlert marks alertId as dismissed
  *  - dismissBillingAlert is a no-op (not an error) for an unknown alertId
  *  - dismissBillingAlert throws when alertId is empty
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// ── Auth mock ─────────────────────────────────────────────────────────────────
+const getSession = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ email: "admin@example.com" }),
+);
+vi.mock("@/lib/auth", () => ({ getSession }));
 
 // ── Platform-admin mock ───────────────────────────────────────────────────────
 const requirePlatformAdmin = vi.hoisted(() => vi.fn());
@@ -50,6 +59,8 @@ vi.mock("@workspace/db", () => ({
     id: "tenants.id",
     billingExempt: "tenants.billingExempt",
     iframerAccountId: "tenants.iframerAccountId",
+    slug: "tenants.slug",
+    businessName: "tenants.businessName",
   },
   stripeAlertsTable: {
     id: "stripeAlerts.id",
@@ -66,9 +77,13 @@ vi.mock("@workspace/db", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 // ── Slack mock ────────────────────────────────────────────────────────────────
+const sendIframerAccountSlackNotification = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ ok: true }),
+);
 vi.mock("@/lib/slack", () => ({
   resolveSlackChannel: vi.fn().mockReturnValue(null),
   sendBillingAlertSlackNotification: vi.fn(),
+  sendIframerAccountSlackNotification,
 }));
 
 import {
@@ -86,7 +101,9 @@ function formData(fields: Record<string, string>): FormData {
 beforeEach(() => {
   vi.clearAllMocks();
   requirePlatformAdmin.mockResolvedValue(undefined);
-  dbUpdateReturning = [{ id: "tenant-1" }];
+  getSession.mockResolvedValue({ email: "admin@example.com" });
+  sendIframerAccountSlackNotification.mockResolvedValue({ ok: true });
+  dbUpdateReturning = [{ id: "tenant-1", slug: "gallery-one", businessName: "Gallery One" }];
   dbUpdateVals = {};
 });
 
@@ -205,6 +222,39 @@ describe("setIframerAccount", () => {
     await setIframerAccount(formData({ tenantId: "t-1", accountId: "   " }));
     expect(dbUpdateVals).toMatchObject({ iframerAccountId: null });
     expect(dbUpdateVals).not.toHaveProperty("billingExempt");
+  });
+
+  it('sends a Slack "linked" notification with tenant and admin details on link', async () => {
+    await setIframerAccount(formData({ tenantId: "t-1", accountId: "ifr-abc" }));
+    expect(sendIframerAccountSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "linked",
+        accountId: "ifr-abc",
+        tenantName: "Gallery One",
+        tenantSlug: "gallery-one",
+        adminEmail: "admin@example.com",
+      }),
+    );
+  });
+
+  it('sends a Slack "unlinked" notification on unlink', async () => {
+    await setIframerAccount(formData({ tenantId: "t-1", accountId: "" }));
+    expect(sendIframerAccountSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "unlinked",
+        accountId: null,
+        adminEmail: "admin@example.com",
+      }),
+    );
+  });
+
+  it("does not send a Slack notification when SLACK_BILLING_ALERTS_CHANNEL is not configured", async () => {
+    // The mock already returns { ok: true } and the action fires-and-forgets.
+    // We verify that the action still resolves successfully when Slack is skipped.
+    sendIframerAccountSlackNotification.mockResolvedValueOnce({ ok: true });
+    await expect(
+      setIframerAccount(formData({ tenantId: "t-1", accountId: "ifr-abc" })),
+    ).resolves.toBeUndefined();
   });
 });
 

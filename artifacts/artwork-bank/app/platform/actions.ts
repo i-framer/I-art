@@ -3,10 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
+import { getSession } from "@/lib/auth";
 import { requirePlatformAdmin } from "@/lib/platform-admin";
 import {
   resolveSlackChannel,
   sendBillingAlertSlackNotification,
+  sendIframerAccountSlackNotification,
 } from "@/lib/slack";
 
 /**
@@ -55,6 +57,9 @@ export async function setBillingExempt(formData: FormData): Promise<void> {
 export async function setIframerAccount(formData: FormData): Promise<void> {
   await requirePlatformAdmin();
 
+  const session = await getSession();
+  const adminEmail = session.email;
+
   const tenantId = formData.get("tenantId");
   const accountId = formData.get("accountId");
 
@@ -75,13 +80,31 @@ export async function setIframerAccount(formData: FormData): Promise<void> {
     .update(tenantsTable)
     .set(updateValues)
     .where(eq(tenantsTable.id, tenantId))
-    .returning({ id: tenantsTable.id });
+    .returning({
+      id: tenantsTable.id,
+      slug: tenantsTable.slug,
+      businessName: tenantsTable.businessName,
+    });
 
   if (result.length === 0) {
     throw new Error("Tenant not found");
   }
 
   revalidatePath("/platform");
+
+  // Fire-and-forget Slack audit notification — never blocks or throws to caller.
+  sendIframerAccountSlackNotification({
+    action: trimmed ? "linked" : "unlinked",
+    tenantName: result[0].businessName,
+    tenantSlug: result[0].slug,
+    accountId: trimmed || null,
+    adminEmail,
+  }).catch((err) => {
+    console.error(
+      "[i-Framer account Slack] Unexpected error:",
+      (err as any)?.message ?? String(err),
+    );
+  });
 }
 
 /**

@@ -205,6 +205,76 @@ export async function sendRefundDbFailureSlackNotification({
   }
 }
 
+/**
+ * Post an audit message to the configured Slack channel when an i-Framer
+ * Premium account is linked to or unlinked from a tenant by a platform admin.
+ *
+ * Uses SLACK_BILLING_ALERTS_CHANNEL. If no channel is configured the call is
+ * a no-op. Failures are logged but never re-thrown.
+ */
+export async function sendIframerAccountSlackNotification({
+  action,
+  tenantName,
+  tenantSlug,
+  accountId,
+  adminEmail,
+}: {
+  action: "linked" | "unlinked";
+  tenantName: string | undefined;
+  tenantSlug: string | undefined;
+  accountId: string | null;
+  adminEmail: string | undefined;
+}): Promise<SlackNotificationResult> {
+  const channel = process.env.SLACK_BILLING_ALERTS_CHANNEL?.trim();
+
+  if (!channel) {
+    console.log(
+      "[i-Framer account Slack skipped — SLACK_BILLING_ALERTS_CHANNEL not configured]",
+    );
+    return { ok: true };
+  }
+
+  const tenantLabel = tenantName
+    ? `${tenantName} (\`${tenantSlug ?? tenantName}\`)`
+    : `\`${tenantSlug ?? "(unknown)"}\``;
+
+  const text =
+    action === "linked"
+      ? `:link: *i-Framer Premium account linked*\n` +
+        `*Tenant:* ${tenantLabel}\n` +
+        `*Account ID:* \`${accountId ?? "(unknown)"}\`\n` +
+        `*Admin:* ${adminEmail ?? "(unknown)"}`
+      : `:chains: *i-Framer Premium account unlinked*\n` +
+        `*Tenant:* ${tenantLabel}\n` +
+        `*Admin:* ${adminEmail ?? "(unknown)"}`;
+
+  try {
+    const connectors = new ReplitConnectors();
+    const response = await connectors.proxy("slack", "/chat.postMessage", {
+      method: "POST",
+      body: JSON.stringify({ channel, text }),
+    });
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok || (body && !body.ok)) {
+      const errorDetail = body?.error ?? `HTTP ${response.status}`;
+      console.error(
+        `[i-Framer account Slack] Post failed (HTTP ${response.status}):`,
+        body?.error ?? "(no error field)",
+      );
+      return { ok: false, error: errorDetail };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    const errorMessage = (err as any)?.message ?? String(err);
+    console.error(
+      `[i-Framer account Slack] Failed to post message: ${errorMessage}`,
+    );
+    return { ok: false, error: errorMessage };
+  }
+}
+
 export async function sendBillingAlertSlackNotification({
   stripeEventId,
   eventType,
