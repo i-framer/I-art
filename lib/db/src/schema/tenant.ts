@@ -48,6 +48,21 @@ export const tenantsTable = pgTable("tenant", {
   iframerAccountLinkedAt: timestamp("iframer_account_linked_at", {
     withTimezone: true,
   }),
+  /**
+   * Set when the Slack audit notification for an i-Framer account link/unlink
+   * failed (auth error, network error, etc.). Null means the notification
+   * either succeeded or Slack is not configured.
+   * Cleared automatically when the replay succeeds.
+   */
+  iframerSlackPostFailed: timestamp("iframer_slack_post_failed", {
+    withTimezone: true,
+  }),
+  /**
+   * JSON-encoded payload stored alongside iframerSlackPostFailed so the
+   * replay action can reconstruct the exact notification:
+   * { action: "linked"|"unlinked", accountId: string|null, adminEmail: string|undefined }
+   */
+  iframerSlackFailedPayload: text("iframer_slack_failed_payload"),
   // ── Platform subscription billing (charged by the platform account, not Connect) ──
   stripeCustomerId: text("stripe_customer_id").unique(),
   stripeSubscriptionId: text("stripe_subscription_id").unique(),

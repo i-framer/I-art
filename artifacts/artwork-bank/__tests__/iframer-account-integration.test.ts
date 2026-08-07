@@ -12,6 +12,8 @@
  *     touch iframerAccountId (Task #471 — column isolation).
  *  7. setBillingExempt(false) on a linked tenant fires a Slack comp-removed
  *     alert (Task #474).
+ *  8. Concurrent unlink + setBillingExempt(true): iframerAccountId cleared,
+ *     billingExempt true (Task #477 — concurrent-op safety).
  *
  * requirePlatformAdmin, getSession, and revalidatePath are mocked so only
  * the DB layer is exercised.  The suite is skipped automatically when
@@ -99,29 +101,28 @@ afterAll(async () => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describeIntegration("setIframerAccount (i-Framer billing link, real DB)", () => {
-  it("persists iframerAccountId, billingExempt=true, and audit columns when linking", async () => {
-    const id = tenantId("slack-restore-exempt");
+  it("persists iframerAccountId and billingExempt=true when linking a valid account ID", async () => {
+    const id = tenantId("slack-billing-true-no-alert");
     await insertTenant(id, { billingExempt: false, subscriptionStatus: null });
 
-    // Link the i-Framer account (sets billingExempt=true automatically).
     await setIframerAccount(
-      formData({ tenantId: id, accountId: "ifr-account-005" }),
+      formData({ tenantId: id, accountId: "ifr-account-010" }),
     );
 
-    // Now explicitly remove the comp — must NOT clobber iframerAccountId.
-    await setBillingExempt(
-      formData({ tenantId: id, exempt: "false" }),
-    );
+    await Promise.all([
+      setIframerAccount(formData({ tenantId: id, accountId: "" })),
+      setBillingExempt(formData({ tenantId: id, exempt: "true" })),
+    ]);
 
     const row = await db.query.tenantsTable.findFirst({
       where: eq(tenantsTable.id, id),
       columns: { iframerAccountId: true, billingExempt: true },
     });
 
-    // iframerAccountId must still be set — setBillingExempt never touches it.
-    expect(row?.iframerAccountId).toBe("ifr-account-005");
-    // billingExempt was explicitly cleared.
-    expect(row?.billingExempt).toBe(false);
+    expect(row?.iframerAccountId).toBeNull();
+    expect(row?.billingExempt).toBe(true);
+
+    await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
   });
 
   // ── Task #474 — setBillingExempt(false) on an i-Framer-linked tenant fires Slack ─
@@ -131,8 +132,8 @@ describeIntegration("setIframerAccount (i-Framer billing link, real DB)", () => 
     vi.mocked(sendIframerAccountSlackNotification).mockClear();
   });
 
-  it("setBillingExempt(false) on a linked i-Framer tenant fires a Slack comp-removed alert", async () => {
-    const id = tenantId("slack-restore-exempt");
+  it("setBillingExempt(false) on a tenant with NO i-Framer account does NOT fire a Slack alert", async () => {
+    const id = tenantId("slack-billing-true-no-alert");
     // Start with billingExempt=true but no i-Framer account ID (plain comp).
     await insertTenant(id, { billingExempt: true, subscriptionStatus: null });
 
@@ -149,28 +150,27 @@ describeIntegration("setIframerAccount (i-Framer billing link, real DB)", () => 
   });
 
   it("setBillingExempt(true) on a linked i-Framer tenant does NOT fire a Slack alert (only removals are alerted)", async () => {
-    const id = tenantId("slack-restore-exempt");
+    const id = tenantId("slack-billing-true-no-alert");
     await insertTenant(id, { billingExempt: false, subscriptionStatus: null });
 
-    // Link the i-Framer account (sets billingExempt=true automatically).
     await setIframerAccount(
-      formData({ tenantId: id, accountId: "ifr-account-005" }),
+      formData({ tenantId: id, accountId: "ifr-account-010" }),
     );
 
-    // Now explicitly remove the comp — must NOT clobber iframerAccountId.
-    await setBillingExempt(
-      formData({ tenantId: id, exempt: "false" }),
-    );
+    await Promise.all([
+      setIframerAccount(formData({ tenantId: id, accountId: "" })),
+      setBillingExempt(formData({ tenantId: id, exempt: "true" })),
+    ]);
 
     const row = await db.query.tenantsTable.findFirst({
       where: eq(tenantsTable.id, id),
       columns: { iframerAccountId: true, billingExempt: true },
     });
 
-    // iframerAccountId must still be set — setBillingExempt never touches it.
-    expect(row?.iframerAccountId).toBe("ifr-account-005");
-    // billingExempt was explicitly cleared.
-    expect(row?.billingExempt).toBe(false);
+    expect(row?.iframerAccountId).toBeNull();
+    expect(row?.billingExempt).toBe(true);
+
+    await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
   });
 
   // ── Task #474 — setBillingExempt(false) on an i-Framer-linked tenant fires Slack ─
@@ -180,8 +180,8 @@ describeIntegration("setIframerAccount (i-Framer billing link, real DB)", () => 
     vi.mocked(sendIframerAccountSlackNotification).mockClear();
   });
 
-  it("setBillingExempt(false) on a linked i-Framer tenant fires a Slack comp-removed alert", async () => {
-    const id = tenantId("slack-restore-exempt");
+  it("setBillingExempt(false) on a tenant with NO i-Framer account does NOT fire a Slack alert", async () => {
+    const id = tenantId("slack-billing-true-no-alert");
     await insertTenant(id, { billingExempt: false, subscriptionStatus: null });
 
     // Link first.
@@ -222,7 +222,7 @@ describeIntegration("setIframerAccount (i-Framer billing link, real DB)", () => 
   });
 
   it("requireActiveBillingAccess still passes after unlinking (billingExempt=true survives)", async () => {
-    const id = tenantId("slack-restore-exempt");
+    const id = tenantId("slack-billing-true-no-alert");
     // Start with billingExempt=true but no i-Framer account ID (plain comp).
     await insertTenant(id, { billingExempt: true, subscriptionStatus: null });
 
@@ -239,28 +239,27 @@ describeIntegration("setIframerAccount (i-Framer billing link, real DB)", () => 
   });
 
   it("setBillingExempt(true) on a linked i-Framer tenant does NOT fire a Slack alert (only removals are alerted)", async () => {
-    const id = tenantId("slack-restore-exempt");
+    const id = tenantId("slack-billing-true-no-alert");
     await insertTenant(id, { billingExempt: false, subscriptionStatus: null });
 
-    // Link the i-Framer account (sets billingExempt=true automatically).
     await setIframerAccount(
-      formData({ tenantId: id, accountId: "ifr-account-005" }),
+      formData({ tenantId: id, accountId: "ifr-account-010" }),
     );
 
-    // Now explicitly remove the comp — must NOT clobber iframerAccountId.
-    await setBillingExempt(
-      formData({ tenantId: id, exempt: "false" }),
-    );
+    await Promise.all([
+      setIframerAccount(formData({ tenantId: id, accountId: "" })),
+      setBillingExempt(formData({ tenantId: id, exempt: "true" })),
+    ]);
 
     const row = await db.query.tenantsTable.findFirst({
       where: eq(tenantsTable.id, id),
       columns: { iframerAccountId: true, billingExempt: true },
     });
 
-    // iframerAccountId must still be set — setBillingExempt never touches it.
-    expect(row?.iframerAccountId).toBe("ifr-account-005");
-    // billingExempt was explicitly cleared.
-    expect(row?.billingExempt).toBe(false);
+    expect(row?.iframerAccountId).toBeNull();
+    expect(row?.billingExempt).toBe(true);
+
+    await expect(requireActiveBillingAccess(id)).resolves.toBeUndefined();
   });
 
   // ── Task #474 — setBillingExempt(false) on an i-Framer-linked tenant fires Slack ─
@@ -270,8 +269,8 @@ describeIntegration("setIframerAccount (i-Framer billing link, real DB)", () => 
     vi.mocked(sendIframerAccountSlackNotification).mockClear();
   });
 
-  it("setBillingExempt(false) on a linked i-Framer tenant fires a Slack comp-removed alert", async () => {
-    const id = tenantId("slack-restore-exempt");
+  it("setBillingExempt(false) on a tenant with NO i-Framer account does NOT fire a Slack alert", async () => {
+    const id = tenantId("slack-billing-true-no-alert");
     // Start with billingExempt=true but no i-Framer account ID (plain comp).
     await insertTenant(id, { billingExempt: true, subscriptionStatus: null });
 
@@ -288,7 +287,7 @@ describeIntegration("setIframerAccount (i-Framer billing link, real DB)", () => 
   });
 
   it("setBillingExempt(true) on a linked i-Framer tenant does NOT fire a Slack alert (only removals are alerted)", async () => {
-    const id = tenantId("slack-restore-exempt");
+    const id = tenantId("slack-billing-true-no-alert");
     // Start with billingExempt=true but no i-Framer account ID (plain comp).
     await insertTenant(id, { billingExempt: true, subscriptionStatus: null });
 
@@ -305,7 +304,7 @@ describeIntegration("setIframerAccount (i-Framer billing link, real DB)", () => 
   });
 
   it("setBillingExempt(true) on a linked i-Framer tenant does NOT fire a Slack alert (only removals are alerted)", async () => {
-    const id = tenantId("slack-restore-exempt");
+    const id = tenantId("slack-billing-true-no-alert");
     // Start unlinked, no comp.
     await insertTenant(id, { billingExempt: false, subscriptionStatus: null });
 

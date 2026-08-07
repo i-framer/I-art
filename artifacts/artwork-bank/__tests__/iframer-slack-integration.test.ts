@@ -1,6 +1,6 @@
 /**
- * Task #472 — Confirm the i-Framer Slack alert reaches the operator on a real
- * database.
+ * Task #472 / Task #477 — Confirm the i-Framer Slack alert reaches the
+ * operator on a real database, and that failures are persisted for replay.
  *
  * The unit tests in platform-admin-actions.test.ts mock both the DB and Slack.
  * These integration tests run against a real Postgres DB to confirm that:
@@ -12,6 +12,13 @@
  *  2. setIframerAccount (unlink path) calls sendIframerAccountSlackNotification
  *     with action="unlinked" and the correct DB-sourced tenant slug,
  *     businessName, and admin email.
+ *
+ *  3. When sendIframerAccountSlackNotification returns { ok: false }, the
+ *     iframerSlackPostFailed column is set on the tenant row so the platform
+ *     admin panel can surface and replay it.
+ *
+ *  4. replayFailedIframerSlackAlerts re-attempts the notification and clears
+ *     iframerSlackPostFailed on success.
  *
  * sendIframerAccountSlackNotification is mocked so no real Slack call is made;
  * the test verifies the arguments passed to it.  requirePlatformAdmin and
@@ -50,7 +57,7 @@ vi.mock("@/lib/slack", () => ({
 }));
 
 // Import after mocks so vi.mock() hoisting applies correctly.
-import { setIframerAccount } from "@/app/platform/actions";
+import { setIframerAccount, replayFailedIframerSlackAlerts } from "@/app/platform/actions";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -181,6 +188,151 @@ describeIntegration(
           accountId: "ifr-slack-trim",
         }),
       );
+    });
+
+    it("sets iframerSlackPostFailed on the tenant row when the Slack call returns { ok: false }", async () => {
+      const id = tenantId("slack-fail");
+      const slug = `gallery-slack-fail-${RUN}`;
+      const businessName = "Slack Fail Test Gallery";
+
+      await insertTenant(id, slug, businessName);
+
+      sendIframerAccountSlackNotification.mockResolvedValue({
+        ok: false,
+        error: "channel_not_found",
+      });
+
+      await setIframerAccount(
+        formData({ tenantId: id, accountId: "ifr-fail-001" }),
+      );
+      await flushPromises();
+
+      const [row] = await db
+        .select({
+          iframerSlackPostFailed: tenantsTable.iframerSlackPostFailed,
+          iframerSlackFailedPayload: tenantsTable.iframerSlackFailedPayload,
+        })
+        .from(tenantsTable)
+        .where(eq(tenantsTable.id, id));
+
+      expect(row.iframerSlackPostFailed).not.toBeNull();
+      expect(row.iframerSlackFailedPayload).not.toBeNull();
+
+      const payload = JSON.parse(row.iframerSlackFailedPayload!);
+      expect(payload).toMatchObject({
+        action: "linked",
+        accountId: "ifr-fail-001",
+        adminEmail: "platform-admin@example.com",
+      });
+    });
+
+    it("clears iframerSlackPostFailed when the Slack call succeeds", async () => {
+      const id = tenantId("slack-recover");
+      const slug = `gallery-slack-recover-${RUN}`;
+      const businessName = "Slack Recover Test Gallery";
+
+      await insertTenant(id, slug, businessName);
+
+      // First call: Slack fails → flag is set.
+      sendIframerAccountSlackNotification.mockResolvedValue({
+        ok: false,
+        error: "channel_not_found",
+      });
+      await setIframerAccount(
+        formData({ tenantId: id, accountId: "ifr-recover-001" }),
+      );
+      await flushPromises();
+
+      // Verify flag was set.
+      const [before] = await db
+        .select({ iframerSlackPostFailed: tenantsTable.iframerSlackPostFailed })
+        .from(tenantsTable)
+        .where(eq(tenantsTable.id, id));
+      expect(before.iframerSlackPostFailed).not.toBeNull();
+
+      // Second call: Slack succeeds → flag is cleared.
+      sendIframerAccountSlackNotification.mockResolvedValue({ ok: true });
+      await setIframerAccount(
+        formData({ tenantId: id, accountId: "ifr-recover-001" }),
+      );
+      await flushPromises();
+
+      const [after] = await db
+        .select({ iframerSlackPostFailed: tenantsTable.iframerSlackPostFailed })
+        .from(tenantsTable)
+        .where(eq(tenantsTable.id, id));
+      expect(after.iframerSlackPostFailed).toBeNull();
+    });
+
+    it("replayFailedIframerSlackAlerts re-attempts and clears the flag on success", async () => {
+      const id = tenantId("slack-replay");
+      const slug = `gallery-slack-replay-${RUN}`;
+      const businessName = "Slack Replay Test Gallery";
+
+      await insertTenant(id, slug, businessName);
+
+      // Seed a failure state directly in the DB.
+      await db
+        .update(tenantsTable)
+        .set({
+          iframerSlackPostFailed: new Date(),
+          iframerSlackFailedPayload: JSON.stringify({
+            action: "linked",
+            accountId: "ifr-replay-001",
+            adminEmail: "platform-admin@example.com",
+          }),
+        })
+        .where(eq(tenantsTable.id, id));
+
+      sendIframerAccountSlackNotification.mockResolvedValue({ ok: true });
+
+      const result = await replayFailedIframerSlackAlerts();
+
+      // At least one notification was replayed (there may be others from
+      // concurrent test runs — just verify the count is positive).
+      expect(result.replayed).toBeGreaterThanOrEqual(1);
+
+      const [row] = await db
+        .select({ iframerSlackPostFailed: tenantsTable.iframerSlackPostFailed })
+        .from(tenantsTable)
+        .where(eq(tenantsTable.id, id));
+      expect(row.iframerSlackPostFailed).toBeNull();
+    });
+
+    it("replayFailedIframerSlackAlerts counts as failed when Slack still fails on retry", async () => {
+      const id = tenantId("slack-replay-fail");
+      const slug = `gallery-slack-replay-fail-${RUN}`;
+      const businessName = "Slack Replay Fail Gallery";
+
+      await insertTenant(id, slug, businessName);
+
+      await db
+        .update(tenantsTable)
+        .set({
+          iframerSlackPostFailed: new Date(),
+          iframerSlackFailedPayload: JSON.stringify({
+            action: "unlinked",
+            accountId: null,
+            adminEmail: "platform-admin@example.com",
+          }),
+        })
+        .where(eq(tenantsTable.id, id));
+
+      sendIframerAccountSlackNotification.mockResolvedValue({
+        ok: false,
+        error: "channel_not_found",
+      });
+
+      const result = await replayFailedIframerSlackAlerts();
+
+      expect(result.failed).toBeGreaterThanOrEqual(1);
+
+      // Flag must remain set — the failure was not resolved.
+      const [row] = await db
+        .select({ iframerSlackPostFailed: tenantsTable.iframerSlackPostFailed })
+        .from(tenantsTable)
+        .where(eq(tenantsTable.id, id));
+      expect(row.iframerSlackPostFailed).not.toBeNull();
     });
   },
 );

@@ -1,12 +1,13 @@
 import { redirect, notFound } from "next/navigation";
 import { Suspense } from "react";
-import { asc, desc, isNull } from "drizzle-orm";
+import { asc, desc, isNotNull, isNull } from "drizzle-orm";
 import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
 import { getSession } from "@/lib/auth";
 import { isPlatformAdmin, tenantBillingStatus } from "@/lib/platform-admin";
 import { setBillingExempt, setIframerAccount } from "./actions";
 import { ShieldCheck } from "lucide-react";
 import { BillingAlerts } from "./_components/BillingAlerts";
+import { IframerSlackAlerts } from "./_components/IframerSlackAlerts";
 import {
   StripeEnvironmentPanel,
   StripeEnvironmentPanelSkeleton,
@@ -31,7 +32,7 @@ export default async function PlatformAdminPage() {
 
   // Fetch DB data in parallel — Stripe diagnostic is streamed in separately
   // via Suspense so Stripe latency never blocks the tenant table.
-  const [unresolvedAlerts, tenants] = await Promise.all([
+  const [unresolvedAlerts, tenants, iframerSlackFailures] = await Promise.all([
     db
       .select()
       .from(stripeAlertsTable)
@@ -50,6 +51,16 @@ export default async function PlatformAdminPage() {
         iframerAccountId: true,
         iframerAccountLinkedBy: true,
         iframerAccountLinkedAt: true,
+      },
+    }),
+    db.query.tenantsTable.findMany({
+      where: isNotNull(tenantsTable.iframerSlackPostFailed),
+      orderBy: [asc(tenantsTable.businessName)],
+      columns: {
+        id: true,
+        businessName: true,
+        slug: true,
+        iframerSlackPostFailed: true,
       },
     }),
   ]);
@@ -229,6 +240,17 @@ export default async function PlatformAdminPage() {
         </p>
 
         <BillingAlerts alerts={unresolvedAlerts} />
+
+        <IframerSlackAlerts
+          failedTenants={iframerSlackFailures.filter(
+            (t) => t.iframerSlackPostFailed !== null,
+          ) as Array<{
+            id: string;
+            businessName: string;
+            slug: string;
+            iframerSlackPostFailed: Date | string;
+          }>}
+        />
       </main>
     </div>
   );

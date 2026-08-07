@@ -10,6 +10,7 @@ import {
   sendBillingAlertSlackNotification,
   sendIframerAccountSlackNotification,
 } from "@/lib/slack";
+import type { SlackNotificationResult } from "@/lib/slack";
 
 /**
  * Toggle a tenant's billing_exempt flag (comp/uncomp an account).
@@ -133,23 +134,162 @@ export async function setIframerAccount(formData: FormData): Promise<void> {
     throw new Error("Tenant not found");
   }
 
-  revalidatePath("/platform");
+  const action = trimmed ? "linked" : "unlinked";
+  const linkedAccountId = trimmed || null;
 
-  // Fire-and-forget Slack audit notification — never blocks or throws to caller.
-  sendIframerAccountSlackNotification({
-    action: trimmed ? "linked" : "unlinked",
-    tenantName: result[0].businessName,
-    tenantSlug: result[0].slug,
-    accountId: trimmed || null,
-    adminEmail,
-  }).catch((err) => {
+  // Attempt Slack audit notification — failures are recorded in the DB so the
+  // operator can replay them from the platform panel; we never throw to caller.
+  let slackResult: SlackNotificationResult;
+  try {
+    slackResult = await sendIframerAccountSlackNotification({
+      action,
+      tenantName: result[0].businessName,
+      tenantSlug: result[0].slug,
+      accountId: linkedAccountId,
+      adminEmail,
+    });
+  } catch (err) {
     console.error(
       "[i-Framer account Slack] Unexpected error:",
       (err as any)?.message ?? String(err),
     );
-  });
+    slackResult = { ok: false, error: (err as any)?.message ?? String(err) };
+  }
+
+  if (!slackResult.ok) {
+    // Persist the failure so the platform panel can surface and replay it.
+    const payload = JSON.stringify({ action, accountId: linkedAccountId, adminEmail });
+    try {
+      await db
+        .update(tenantsTable)
+        .set({
+          iframerSlackPostFailed: new Date(),
+          iframerSlackFailedPayload: payload,
+        })
+        .where(eq(tenantsTable.id, tenantId as string));
+    } catch (dbErr) {
+      console.error(
+        "[i-Framer account Slack] Failed to persist Slack failure flag:",
+        (dbErr as any)?.message ?? String(dbErr),
+      );
+    }
+  } else {
+    // Clear any stale failure flag from a previous attempt.
+    try {
+      await db
+        .update(tenantsTable)
+        .set({ iframerSlackPostFailed: null, iframerSlackFailedPayload: null })
+        .where(eq(tenantsTable.id, tenantId as string));
+    } catch (dbErr) {
+      console.error(
+        "[i-Framer account Slack] Failed to clear stale Slack failure flag:",
+        (dbErr as any)?.message ?? String(dbErr),
+      );
+    }
+  }
+
+  revalidatePath("/platform");
 }
 
+/**
+ * Replay all i-Framer audit notifications whose Slack post previously failed.
+ *
+ * For each tenant where iframerSlackPostFailed IS NOT NULL, this re-attempts
+ * sendIframerAccountSlackNotification using the payload stored alongside the
+ * failure flag. On success the flag and payload are cleared so the tenant is
+ * no longer highlighted in the platform panel.
+ *
+ * Platform-admin only.
+ *
+ * Returns counts so the caller can surface a summary to the operator.
+ */
+export async function replayFailedIframerSlackAlerts(): Promise<{
+  replayed: number;
+  failed: number;
+  skipped: number;
+}> {
+  await requirePlatformAdmin();
+
+  const pending = await db
+    .select()
+    .from(tenantsTable)
+    .where(isNotNull(tenantsTable.iframerSlackPostFailed));
+
+  let replayed = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const tenant of pending) {
+    if (!tenant.iframerSlackFailedPayload) {
+      // No payload to reconstruct — skip and leave flag in place.
+      skipped++;
+      continue;
+    }
+
+    // Check channel before attempting so that tenants where Slack is not yet
+    // configured are counted as skipped rather than failed.
+    const channel = process.env.SLACK_BILLING_ALERTS_CHANNEL?.trim();
+    if (!channel) {
+      skipped++;
+      continue;
+    }
+
+    let parsed: {
+      action: "linked" | "unlinked";
+      accountId: string | null;
+      adminEmail: string | undefined;
+    };
+    try {
+      parsed = JSON.parse(tenant.iframerSlackFailedPayload);
+    } catch {
+      console.error(
+        `[i-Framer Slack replay] Could not parse payload for tenantId=${tenant.id}`,
+      );
+      failed++;
+      continue;
+    }
+
+    let result: SlackNotificationResult;
+    try {
+      result = await sendIframerAccountSlackNotification({
+        action: parsed.action,
+        tenantName: tenant.businessName,
+        tenantSlug: tenant.slug,
+        accountId: parsed.accountId,
+        adminEmail: parsed.adminEmail,
+      });
+    } catch (err) {
+      console.error(
+        `[i-Framer Slack replay] Unexpected error for tenantId=${tenant.id}:`,
+        (err as any)?.message ?? String(err),
+      );
+      failed++;
+      continue;
+    }
+
+    if (result.ok) {
+      try {
+        await db
+          .update(tenantsTable)
+          .set({ iframerSlackPostFailed: null, iframerSlackFailedPayload: null })
+          .where(eq(tenantsTable.id, tenant.id));
+      } catch (updateErr) {
+        console.error(
+          `[i-Framer Slack replay] Failed to clear flag for tenantId=${tenant.id}:`,
+          (updateErr as any)?.message ?? String(updateErr),
+        );
+        // Message was delivered even if the flag wasn't cleared — harmless
+        // duplicate on next replay attempt.
+      }
+      replayed++;
+    } else {
+      failed++;
+    }
+  }
+
+  revalidatePath("/platform");
+  return { replayed, failed, skipped };
+}
 /**
  * Dismiss a billing alert once the operator has investigated and resolved it.
  * Platform-admin only — no tenant user may clear global alerts.

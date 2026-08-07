@@ -36,12 +36,16 @@ vi.mock("@/lib/platform-admin", () => ({ requirePlatformAdmin }));
 // ── DB mock ───────────────────────────────────────────────────────────────────
 let dbUpdateReturning: unknown[] = [];
 let dbUpdateVals: Record<string, unknown> = {};
+// Tracks every set() call in order so tests can inspect the primary
+// account update (index 0) separately from follow-up Slack-flag updates.
+let dbUpdateCalls: Record<string, unknown>[] = [];
 
 vi.mock("@workspace/db", () => ({
   db: {
     update: () => ({
       set: (vals: Record<string, unknown>) => {
         dbUpdateVals = vals;
+        dbUpdateCalls.push(vals);
         return {
           where: () => ({
             returning: async (_cols?: unknown) => dbUpdateReturning,
@@ -105,6 +109,7 @@ beforeEach(() => {
   sendIframerAccountSlackNotification.mockResolvedValue({ ok: true });
   dbUpdateReturning = [{ id: "tenant-1", slug: "gallery-one", businessName: "Gallery One" }];
   dbUpdateVals = {};
+  dbUpdateCalls = [];
 });
 
 // ── setBillingExempt ──────────────────────────────────────────────────────────
@@ -197,7 +202,8 @@ describe("setIframerAccount", () => {
 
   it("links: sets iframerAccountId and billingExempt=true when accountId is non-empty", async () => {
     await setIframerAccount(formData({ tenantId: "t-1", accountId: "ifr-abc" }));
-    expect(dbUpdateVals).toMatchObject({
+    // dbUpdateCalls[0] is the primary account update; later calls clear Slack flags.
+    expect(dbUpdateCalls[0]).toMatchObject({
       iframerAccountId: "ifr-abc",
       billingExempt: true,
     });
@@ -205,23 +211,23 @@ describe("setIframerAccount", () => {
 
   it("links: trims whitespace from accountId", async () => {
     await setIframerAccount(formData({ tenantId: "t-1", accountId: "  ifr-abc  " }));
-    expect(dbUpdateVals).toMatchObject({ iframerAccountId: "ifr-abc" });
+    expect(dbUpdateCalls[0]).toMatchObject({ iframerAccountId: "ifr-abc" });
   });
 
   it("unlinks: sets iframerAccountId=null when accountId is empty string", async () => {
     await setIframerAccount(formData({ tenantId: "t-1", accountId: "" }));
-    expect(dbUpdateVals).toMatchObject({ iframerAccountId: null });
+    expect(dbUpdateCalls[0]).toMatchObject({ iframerAccountId: null });
   });
 
   it("unlinks: does NOT set billingExempt when accountId is empty", async () => {
     await setIframerAccount(formData({ tenantId: "t-1", accountId: "" }));
-    expect(dbUpdateVals).not.toHaveProperty("billingExempt");
+    expect(dbUpdateCalls[0]).not.toHaveProperty("billingExempt");
   });
 
   it("unlinks: treats whitespace-only accountId as empty (unlink)", async () => {
     await setIframerAccount(formData({ tenantId: "t-1", accountId: "   " }));
-    expect(dbUpdateVals).toMatchObject({ iframerAccountId: null });
-    expect(dbUpdateVals).not.toHaveProperty("billingExempt");
+    expect(dbUpdateCalls[0]).toMatchObject({ iframerAccountId: null });
+    expect(dbUpdateCalls[0]).not.toHaveProperty("billingExempt");
   });
 
   it('sends a Slack "linked" notification with tenant and admin details on link', async () => {
