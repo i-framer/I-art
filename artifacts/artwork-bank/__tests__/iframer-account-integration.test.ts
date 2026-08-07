@@ -55,7 +55,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 // Import actions AFTER mocks so vi.mock() hoisting applies correctly.
 import { setIframerAccount, setBillingExempt } from "@/app/platform/actions";
-import { requireActiveBillingAccess as _requireActiveBillingAccess } from "@/lib/billing";
+import { requireActiveBillingAccess } from "@/lib/billing";
 import { sendIframerAccountSlackNotification } from "@/lib/slack";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
