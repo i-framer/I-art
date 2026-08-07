@@ -377,6 +377,22 @@ describeIntegration("reservation-sweep route — CRON_SECRET auth parity (Task #
     expect(ReservationSweepLib.sweepStaleReservations).not.toHaveBeenCalled();
   });
 
+  it("POST returns 401 when CRON_SECRET is configured but an incorrect Bearer token is sent", async () => {
+    // A regression that partially broke the guard and only accepted wrong tokens
+    // on POST would slip past all other auth tests. This closes that gap for POST.
+    setRouteEnv({ CRON_SECRET: "cron-only-secret-xyz" });
+
+    const req = new Request("http://localhost/api/reservation-sweep", {
+      method: "POST",
+      headers: { authorization: "Bearer wrong-token-abc" },
+    });
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(401);
+    expect(ReservationSweepLib.sweepStaleReservations).not.toHaveBeenCalled();
+  });
+
   it("GET returns 401 when CRON_SECRET is configured but an incorrect Bearer token is sent", async () => {
     // A regression that accepts any non-empty Bearer string would pass the
     // "correct token → 200" and "no token → 401" tests above but fail here.
