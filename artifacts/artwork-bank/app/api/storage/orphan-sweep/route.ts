@@ -90,6 +90,7 @@ async function runSweep(request: Request) {
       // sendOrphanSweepErrorNotification re-throws on transport failure — catch
       // here so a notification error never masks the sweep result or changes the
       // HTTP status code.
+      let emailFailure: string | undefined;
       try {
         await sendOrphanSweepErrorNotification({
           errors: result.errors,
@@ -97,9 +98,28 @@ async function runSweep(request: Request) {
           slackFailure,
         });
       } catch (notifyErr) {
+        emailFailure =
+          notifyErr instanceof Error ? notifyErr.message : String(notifyErr);
         console.error(
           "[orphan-sweep] Email notification failed (sweep result unaffected):",
-          notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+          emailFailure,
+        );
+      }
+
+      // When BOTH channels failed the operator has no way to learn about the
+      // sweep errors from Slack or email — surface the delivery failures
+      // explicitly in the 207 response body so a caller polling the endpoint
+      // can detect the situation without tailing server logs.
+      if (slackFailure !== undefined && emailFailure !== undefined) {
+        return NextResponse.json(
+          {
+            ...result,
+            notificationFailure: {
+              slack: slackFailure,
+              email: emailFailure,
+            },
+          },
+          { status: 207 },
         );
       }
     }

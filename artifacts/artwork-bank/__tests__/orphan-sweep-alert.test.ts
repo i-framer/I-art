@@ -267,8 +267,14 @@ describe("orphan-sweep route — operator alert on errors (Task #205)", () => {
     // HTTP status must be 207, not 500 — both notification channels throwing
     // simultaneously must not change the response code or mask the sweep result.
     expect(res.status).toBe(207);
-    // The body must carry the original sweep counts unchanged.
-    expect(res.body).toEqual(sweepResult);
+    // The body must carry the original sweep counts.
+    expect(res.body).toMatchObject(sweepResult);
+    // notificationFailure must be present so the caller knows alerts were not delivered.
+    const body1 = res.body as unknown as Record<string, unknown>;
+    expect(body1.notificationFailure).toEqual({
+      slack: "Slack network timeout",
+      email: "SMTP connection refused",
+    });
   });
 
   it("still returns 207 with correct sweep body when both Slack returns { ok: false } AND email throws", async () => {
@@ -292,7 +298,56 @@ describe("orphan-sweep route — operator alert on errors (Task #205)", () => {
     // HTTP status must be 207, not 500 — dual notification failure must not
     // change the response code or mask the sweep result.
     expect(res.status).toBe(207);
-    // The body must carry the original sweep counts unchanged.
-    expect(res.body).toEqual(sweepResult);
+    // The body must carry the original sweep counts.
+    expect(res.body).toMatchObject(sweepResult);
+    // notificationFailure must be present so the caller knows alerts were not delivered.
+    const body2 = res.body as unknown as Record<string, unknown>;
+    expect(body2.notificationFailure).toEqual({
+      slack: "slack_not_configured",
+      email: "SMTP connection refused",
+    });
+  });
+
+  it("notificationFailure is absent when Slack fails but email succeeds", async () => {
+    sweepOrphanedImageFiles.mockResolvedValue({
+      orphaned: 2,
+      deleted: 0,
+      errors: 2,
+      failedPaths: ["/objects/uploads/x.jpg"],
+    });
+    sendOrphanSweepSlackNotification.mockResolvedValue({
+      ok: false,
+      error: "channel_not_found",
+    });
+    // Email succeeds
+    sendOrphanSweepErrorNotification.mockResolvedValue(undefined);
+
+    const res = await GET(makeRequest());
+
+    expect(res.status).toBe(207);
+    // At least one channel delivered — no notificationFailure in the body.
+    const body3 = res.body as unknown as Record<string, unknown>;
+    expect(body3.notificationFailure).toBeUndefined();
+  });
+
+  it("notificationFailure is absent when email fails but Slack succeeds", async () => {
+    sweepOrphanedImageFiles.mockResolvedValue({
+      orphaned: 2,
+      deleted: 0,
+      errors: 2,
+      failedPaths: ["/objects/uploads/y.jpg"],
+    });
+    // Slack succeeds
+    sendOrphanSweepSlackNotification.mockResolvedValue({ ok: true });
+    sendOrphanSweepErrorNotification.mockRejectedValue(
+      new Error("SMTP connection refused"),
+    );
+
+    const res = await GET(makeRequest());
+
+    expect(res.status).toBe(207);
+    // Slack delivered — no notificationFailure in the body.
+    const body4 = res.body as unknown as Record<string, unknown>;
+    expect(body4.notificationFailure).toBeUndefined();
   });
 });
