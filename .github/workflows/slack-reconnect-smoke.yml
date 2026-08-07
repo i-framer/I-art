@@ -275,6 +275,11 @@ jobs:
             with urllib.request.urlopen(req) as resp:
               body = resp.read().decode()
               print(f"✅  Resend alert sent (HTTP {resp.status}): {body}")
+              # Write a sentinel so the tsx notifier below knows Resend was
+              # already used and can skip its own Resend attempt (preventing
+              # the operator from receiving two identical failure emails).
+              with open("/tmp/resend_sent", "w") as f:
+                f.write("1")
           except urllib.error.HTTPError as e:
             body = e.read().decode()
             print(f"⚠️  Resend returned HTTP {e.code}: {body}", file=sys.stderr)
@@ -289,9 +294,9 @@ jobs:
       # These steps handle own-mail-server delivery via SMTP_HOST/SMTP_USER/SMTP_PASS.
       # They are skipped automatically when the tsx notifier finds no SMTP
       # transport configured (it exits 0 with an informational message).
-      # If the curl step above already sent via Resend, the tsx notifier will
-      # also attempt Resend — that second send is harmless since each delivery
-      # is independent.
+      # If the curl step above already sent via Resend, RESEND_ALREADY_SENT=1
+      # is passed to the tsx notifier so it skips its own Resend attempt and
+      # avoids sending the operator a duplicate failure email.
 
       - name: Checkout (failure only)
         if: failure()
@@ -331,5 +336,13 @@ jobs:
           if [ -f /tmp/slack_smoke_body.json ]; then
             BODY=$(cat /tmp/slack_smoke_body.json)
           fi
+          # If the curl/Python step already confirmed a successful Resend send,
+          # tell the tsx notifier so it can skip its own Resend attempt and
+          # avoid sending the operator a duplicate failure email.
+          RESEND_SENT_FLAG=""
+          if [ -f /tmp/resend_sent ]; then
+            RESEND_SENT_FLAG="1"
+          fi
           PROBE_RESPONSE_BODY="$BODY" \
+          RESEND_ALREADY_SENT="$RESEND_SENT_FLAG" \
             pnpm --filter @workspace/artwork-bank exec tsx scripts/notify-smoke-failure.ts || true

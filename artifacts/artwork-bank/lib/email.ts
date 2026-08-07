@@ -832,6 +832,19 @@ export async function sendSmokeTestFailureEmail({
     return false;
   }
 
+  // When the CI workflow's curl/Python step already confirmed a successful
+  // Resend send, skip our own Resend attempt to avoid sending the operator
+  // two identical failure emails.  SMTP is a separate transport — it is never
+  // affected by this guard (the duplicate risk only exists when Resend is the
+  // only transport and both paths run back-to-back in the same workflow job).
+  if (process.env.RESEND_ALREADY_SENT === "1" && !smtpConfigured()) {
+    console.error(
+      "[slack-smoke notifier] Resend alert already sent by the curl step — " +
+        "skipping tsx Resend attempt to prevent duplicate email.",
+    );
+    return true;
+  }
+
   // Truncate very long bodies so the email stays readable.
   const MAX_CHARS = 4000;
   const truncatedBody =
