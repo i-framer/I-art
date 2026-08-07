@@ -5,6 +5,8 @@
  * Coverage:
  *  - No PLATFORM_ADMIN_EMAIL + no transport → resolves silently, fetch/nodemailer not called
  *  - RESEND_API_KEY set but no PLATFORM_ADMIN_EMAIL → same silent skip
+ *  - RESEND_API_KEY + PLATFORM_ADMIN_EMAIL → fetch called once with correct subject & body
+ *  - SMTP_HOST + PLATFORM_ADMIN_EMAIL → nodemailer sendMail called once with correct subject
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -88,5 +90,50 @@ describe("sendOrphanSweepErrorNotification — PLATFORM_ADMIN_EMAIL guard", () =
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(sendMailMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("sendOrphanSweepErrorNotification — delivery when configured", () => {
+  it("calls fetch once with the correct subject when RESEND_API_KEY and PLATFORM_ADMIN_EMAIL are both set", async () => {
+    process.env.RESEND_API_KEY = "re_test_key";
+    process.env.PLATFORM_ADMIN_EMAIL = "admin@example.com";
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ id: "resend-test-id" }), { status: 200 }),
+    );
+
+    await sendOrphanSweepErrorNotification(ARGS);
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.resend.com/emails");
+
+    const body = JSON.parse(init.body as string);
+    expect(body.to).toBe("admin@example.com");
+    // Subject mentions the error count
+    expect(body.subject).toContain("3");
+    // HTML body lists at least the first failed path
+    expect(body.html).toContain("uploads/img1.jpg");
+  });
+
+  it("calls nodemailer sendMail once with the correct subject when SMTP_HOST and PLATFORM_ADMIN_EMAIL are both set", async () => {
+    process.env.SMTP_HOST = "smtp.example.com";
+    process.env.PLATFORM_ADMIN_EMAIL = "admin@example.com";
+
+    await sendOrphanSweepErrorNotification(ARGS);
+
+    expect(sendMailMock).toHaveBeenCalledOnce();
+
+    const mailArgs = sendMailMock.mock.calls[0][0] as {
+      to: string;
+      subject: string;
+      html: string;
+    };
+    expect(mailArgs.to).toBe("admin@example.com");
+    // Subject mentions the error count
+    expect(mailArgs.subject).toContain("3");
+    // HTML body lists at least the first failed path
+    expect(mailArgs.html).toContain("uploads/img1.jpg");
   });
 });
