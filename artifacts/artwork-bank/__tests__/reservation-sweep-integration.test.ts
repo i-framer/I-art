@@ -12,11 +12,24 @@
  *
  * Uses describeIntegration() so suites are skipped when DATABASE_URL is absent.
  */
-import { afterAll, beforeAll, it, expect } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, artworksTable, tenantsTable, ordersTable, orderItemsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { sweepStaleReservations } from "@/lib/reservation-sweep";
+import * as ReservationSweepLib from "@/lib/reservation-sweep";
+import { POST } from "@/app/api/reservation-sweep/route";
+
+// ── next/server mock (used only by the route-level tests below) ───────────────
+vi.mock("next/server", () => ({
+  NextResponse: {
+    json: (body: unknown, init?: ResponseInit) =>
+      new Response(JSON.stringify(body), {
+        status: init?.status ?? 200,
+        headers: { "content-type": "application/json" },
+      }),
+  },
+}));
 
 // ── Unique prefixes so parallel test runs don't collide ──────────────────────
 const RUN = Date.now();
@@ -266,5 +279,82 @@ describeIntegration("sweepStaleReservations — real DB (Task #72)", () => {
       if (savedEnv === undefined) delete process.env.RESERVATION_SWEEP_MAX_AGE_MS;
       else process.env.RESERVATION_SWEEP_MAX_AGE_MS = savedEnv;
     }
+  });
+});
+
+// ── Task #520: reservation-sweep route — CRON_SECRET auth parity ──────────────
+
+describeIntegration("reservation-sweep route — CRON_SECRET auth parity (Task #520)", () => {
+  // Env-var helpers scoped to this block only.
+  const savedRouteEnv: Record<string, string | undefined> = {};
+  function setRouteEnv(o: Record<string, string | undefined>) {
+    for (const [k, v] of Object.entries(o)) {
+      savedRouteEnv[k] = process.env[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+  function restoreRouteEnv() {
+    for (const [k, v] of Object.entries(savedRouteEnv))
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    for (const k of Object.keys(savedRouteEnv)) delete savedRouteEnv[k];
+  }
+
+  beforeEach(() => {
+    // Prevent the real sweep from touching the database during auth-level tests.
+    vi.spyOn(ReservationSweepLib, "sweepStaleReservations").mockResolvedValue({
+      released: 0,
+      ids: [],
+    });
+    setRouteEnv({ RESERVATION_SWEEP_SECRET: undefined, CRON_SECRET: undefined });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    restoreRouteEnv();
+  });
+
+  it("POST accepts CRON_SECRET as the only configured secret → 200", async () => {
+    // Operators who rely on a single shared CRON_SECRET (without
+    // RESERVATION_SWEEP_SECRET) must be able to trigger the sweep via POST.
+    setRouteEnv({ CRON_SECRET: "cron-only-secret-xyz" });
+
+    const req = new Request("http://localhost/api/reservation-sweep", {
+      method: "POST",
+      headers: { authorization: "Bearer cron-only-secret-xyz" },
+    });
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(200);
+    expect(ReservationSweepLib.sweepStaleReservations).toHaveBeenCalledOnce();
+  });
+
+  it("POST returns 401 when a secret is configured and no auth header is sent", async () => {
+    // Ensure the no-secret-in-production path is not accidentally opened.
+    setRouteEnv({ CRON_SECRET: "cron-only-secret-xyz" });
+
+    const req = new Request("http://localhost/api/reservation-sweep", {
+      method: "POST",
+    });
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(401);
+    expect(ReservationSweepLib.sweepStaleReservations).not.toHaveBeenCalled();
+  });
+
+  describe("no-secret dev mode", () => {
+    it("POST is open when neither RESERVATION_SWEEP_SECRET nor CRON_SECRET is set", async () => {
+      // Both secrets absent → dev/open mode → no auth required.
+      const req = new Request("http://localhost/api/reservation-sweep", {
+        method: "POST",
+      });
+
+      const res = await POST(req);
+
+      expect(res.status).toBe(200);
+    });
   });
 });
