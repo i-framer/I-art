@@ -174,16 +174,124 @@ jobs:
       # ── Email fallback alert on failure ──────────────────────────────────────
       # When the probe fails, Slack itself may be unreachable, so we cannot
       # alert the operator through the same broken channel.  This step sends a
-      # fallback email via SMTP or Resend so the operator is notified even when
-      # Slack is completely down.
+      # fallback email via Resend (using a direct curl/Python HTTP call — no
+      # checkout or pnpm install required) so the operator is notified even
+      # when pnpm/Node cannot be installed.
       #
-      # Requires at least one email transport secret:
-      #   PLATFORM_ADMIN_EMAIL — recipient address
-      #   RESEND_API_KEY       — Resend API key (preferred for GitHub Actions)
+      # Primary path (this step):
+      #   RESEND_API_KEY + PLATFORM_ADMIN_EMAIL — pure Python urllib, no deps
+      #
+      # Secondary path (checkout/install/tsx steps below):
       #   SMTP_HOST + SMTP_PORT + SMTP_USER + SMTP_PASS — own mail server
+      #   (Also retries Resend via the tsx notifier if the curl step was skipped.)
       #
-      # Steps below run only on failure and are skipped on success, so they add
-      # zero overhead to passing runs.
+      # All steps exit 0 — notification failures must not mask the original
+      # smoke-test failure. Steps run only on failure, adding zero overhead to
+      # passing runs.
+
+      - name: Send failure email via Resend (no install required)
+        if: failure()
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          PLATFORM_ADMIN_EMAIL: ${{ secrets.PLATFORM_ADMIN_EMAIL }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys, urllib.request, urllib.error
+
+          api_key   = os.environ.get("RESEND_API_KEY", "")
+          to_email  = os.environ.get("PLATFORM_ADMIN_EMAIL", "")
+          from_addr = os.environ.get("EMAIL_FROM", "onboarding@resend.dev")
+          run_url   = os.environ.get("WORKFLOW_RUN_URL", "")
+
+          if not api_key or not to_email:
+            print(
+              "ℹ️  RESEND_API_KEY or PLATFORM_ADMIN_EMAIL not set — "
+              "skipping curl-based Resend alert.\n"
+              "    The tsx-based notifier below will attempt SMTP fallback."
+            )
+            sys.exit(0)
+
+          probe_body = ""
+          try:
+            with open("/tmp/slack_smoke_body.json") as f:
+              probe_body = f.read(4000)
+          except FileNotFoundError:
+            pass
+
+          link_html = (
+            f'<p><a href="{run_url}"'
+            ' style="display:inline-block;padding:10px 20px;background:#1c1917;'
+            'color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">'
+            "View failed workflow run →</a></p>"
+          ) if run_url else ""
+
+          probe_html = (
+            "<details><summary>Probe response body</summary>"
+            '<pre style="background:#f3f4f6;padding:12px;border-radius:6px;overflow:auto;">'
+            f"{probe_body}</pre></details>"
+          ) if probe_body else ""
+
+          html = f"""
+          <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+            <h2 style="color:#b91c1c;">Slack smoke test failed</h2>
+            <p>The automated Slack smoke test detected that one or more Slack alert
+            paths are not working. This may mean the Slack connector token has
+            expired, the bot was removed from the channel, or Slack itself is
+            experiencing an outage.</p>
+            <div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
+              <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">Action required</p>
+              <ul style="margin:0;padding-left:20px;color:#7f1d1d;">
+                <li>Check the failed workflow run linked below for the full error output.</li>
+                <li>Follow the <strong>Slack connector reconnect</strong> steps in
+                    <code>RUNBOOK.md</code> to restore the Slack integration.</li>
+                <li>Re-run the smoke test after reconnecting to confirm delivery is restored.</li>
+              </ul>
+            </div>
+            {link_html}
+            {probe_html}
+          </div>
+          """
+
+          payload = json.dumps({
+            "from":    from_addr,
+            "to":      [to_email],
+            "subject": "Action needed — Slack smoke test failed (weekly check)",
+            "html":    html,
+          }).encode()
+
+          req = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            headers={
+              "Authorization": f"Bearer {api_key}",
+              "Content-Type":  "application/json",
+            },
+            method="POST",
+          )
+
+          try:
+            with urllib.request.urlopen(req) as resp:
+              body = resp.read().decode()
+              print(f"✅  Resend alert sent (HTTP {resp.status}): {body}")
+          except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            print(f"⚠️  Resend returned HTTP {e.code}: {body}", file=sys.stderr)
+            # Exit 0 — notification failures must not mask the original failure.
+          except Exception as e:
+            print(f"⚠️  Resend request failed: {e}", file=sys.stderr)
+
+          sys.exit(0)
+          PYEOF
+
+      # ── SMTP fallback (requires checkout + pnpm install) ──────────────────
+      # These steps handle own-mail-server delivery via SMTP_HOST/SMTP_USER/SMTP_PASS.
+      # They are skipped automatically when the tsx notifier finds no SMTP
+      # transport configured (it exits 0 with an informational message).
+      # If the curl step above already sent via Resend, the tsx notifier will
+      # also attempt Resend — that second send is harmless since each delivery
+      # is independent.
 
       - name: Checkout (failure only)
         if: failure()
