@@ -146,7 +146,16 @@ async function notifyBuyerOfPartialRefund(
 
 export async function markFulfilled(formData: FormData): Promise<void> {
   const orderId = formData.get("orderId") as string;
-  await requireOwnership(orderId);
+  const order = await requireOwnership(orderId);
+  // Only a PAID order can be marked fulfilled; anything else is a no-op guard
+  // that prevents accidental double-dispatch or status corruption.
+  if (order.status !== "PAID") {
+    redirect(
+      `/orders/${orderId}?action_error=${encodeURIComponent(
+        `Only a paid order can be marked as fulfilled (current status: ${order.status}).`,
+      )}`,
+    );
+  }
   await db
     .update(ordersTable)
     .set({ status: "FULFILLED" })
@@ -158,7 +167,16 @@ export async function markFulfilled(formData: FormData): Promise<void> {
 
 export async function markCancelled(formData: FormData): Promise<void> {
   const orderId = formData.get("orderId") as string;
-  await requireOwnership(orderId);
+  const order = await requireOwnership(orderId);
+  // CANCELLED and FULFILLED orders cannot be cancelled again — guards against
+  // double-dispatch and prevents rolling back a completed fulfillment.
+  if (order.status === "CANCELLED" || order.status === "FULFILLED") {
+    redirect(
+      `/orders/${orderId}?action_error=${encodeURIComponent(
+        `Cannot cancel an order that is already ${order.status.toLowerCase()}.`,
+      )}`,
+    );
+  }
   await db
     .update(ordersTable)
     .set({ status: "CANCELLED" })
