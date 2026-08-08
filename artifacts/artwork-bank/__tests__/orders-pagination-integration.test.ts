@@ -20,7 +20,7 @@ import {
   ordersTable,
   orderItemsTable,
 } from "@workspace/db";
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
@@ -119,6 +119,40 @@ async function queryOrdersPage(
     total,
     totalPages: Math.ceil(total / PAGE_SIZE),
   };
+}
+
+async function queryOrdersPageWithDateRange(
+  tenantId: string,
+  page: number,
+  statusFilter?: string,
+  dateFrom?: string,
+  dateTo?: string,
+) {
+  const offset = (page - 1) * PAGE_SIZE;
+  const conditions: ReturnType<typeof eq>[] = [eq(ordersTable.tenantId, tenantId) as any];
+  if (statusFilter && statusFilter !== "ALL") {
+    conditions.push(eq(ordersTable.status, statusFilter as any) as any);
+  }
+  if (dateFrom) {
+    conditions.push(gte(ordersTable.createdAt, new Date(`${dateFrom}T00:00:00.000Z`)) as any);
+  }
+  if (dateTo) {
+    conditions.push(lte(ordersTable.createdAt, new Date(`${dateTo}T23:59:59.999Z`)) as any);
+  }
+  const where = and(...conditions);
+
+  const [rows, countRows] = await Promise.all([
+    db.select({ id: ordersTable.id, status: ordersTable.status, createdAt: ordersTable.createdAt })
+      .from(ordersTable)
+      .where(where)
+      .orderBy(desc(ordersTable.createdAt))
+      .limit(PAGE_SIZE)
+      .offset(offset),
+    db.select({ count: count() }).from(ordersTable).where(where),
+  ]);
+
+  const total = countRows[0]?.count ?? 0;
+  return { rows, total };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,5 +257,84 @@ describeIntegration("Orders admin listing — pagination — real-DB integration
         result.rows[i].createdAt.getTime(),
       );
     }
+  });
+
+  // ── Date-range filter ─────────────────────────────────────────────────────
+
+  it("dateFrom lower-bound: orders on/after the date are included; older orders are excluded", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+
+    // Insert an order with a specific createdAt by setting it after insert.
+    const oldId = await createOrder(tenantId, artworkId);
+    const newId = await createOrder(tenantId, artworkId);
+
+    // Backdate the older order to 10 days ago.
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+    await db.update(ordersTable)
+      .set({ createdAt: tenDaysAgo })
+      .where(eq(ordersTable.id, oldId));
+
+    // dateFrom = yesterday → only newer order qualifies.
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const dateFrom = yesterday.toISOString().slice(0, 10); // YYYY-MM-DD
+
+    const result = await queryOrdersPageWithDateRange(tenantId, 1, undefined, dateFrom);
+
+    const ids = result.rows.map(r => r.id);
+    expect(ids).toContain(newId);
+    expect(ids).not.toContain(oldId);
+  });
+
+  it("dateTo upper-bound: orders on/before the date are included; newer orders are excluded", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+
+    const oldId = await createOrder(tenantId, artworkId);
+    const newId = await createOrder(tenantId, artworkId);
+
+    // Backdate the older order to 10 days ago.
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+    await db.update(ordersTable)
+      .set({ createdAt: tenDaysAgo })
+      .where(eq(ordersTable.id, oldId));
+
+    // dateTo = 5 days ago → only old order qualifies.
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    const dateTo = fiveDaysAgo.toISOString().slice(0, 10);
+
+    const result = await queryOrdersPageWithDateRange(tenantId, 1, undefined, undefined, dateTo);
+
+    const ids = result.rows.map(r => r.id);
+    expect(ids).toContain(oldId);
+    expect(ids).not.toContain(newId);
+  });
+
+  it("dateFrom + dateTo together: only orders in the range are included", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+
+    const tooOldId = await createOrder(tenantId, artworkId);
+    const inRangeId = await createOrder(tenantId, artworkId);
+    const tooNewId = await createOrder(tenantId, artworkId);
+
+    // Backdate tooOld to 30 days ago, inRange to 15 days ago, tooNew stays current.
+    await db.update(ordersTable)
+      .set({ createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) })
+      .where(eq(ordersTable.id, tooOldId));
+    await db.update(ordersTable)
+      .set({ createdAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000) })
+      .where(eq(ordersTable.id, inRangeId));
+
+    // dateFrom = 20 days ago, dateTo = 10 days ago → only inRange qualifies.
+    const dateFrom = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const dateTo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const result = await queryOrdersPageWithDateRange(tenantId, 1, undefined, dateFrom, dateTo);
+
+    const ids = result.rows.map(r => r.id);
+    expect(ids).toContain(inRangeId);
+    expect(ids).not.toContain(tooOldId);
+    expect(ids).not.toContain(tooNewId);
   });
 });
