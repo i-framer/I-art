@@ -275,4 +275,90 @@ describeIntegration("Artwork CRUD — real-DB integration", () => {
     });
     expect(row).toBeDefined();
   });
+
+  // ── Form validation (createArtwork / updateArtwork) ───────────────────────
+
+  it("createArtwork: returns error when title is blank; no row written", async () => {
+    const tenantId = await createTenant();
+
+    const result = await createArtwork(
+      { error: "" },
+      fd({ title: "", sku: "SKU-001", status: "AVAILABLE" }),
+    );
+
+    expect(result).toMatchObject({ error: expect.stringMatching(/title/i) });
+
+    // No artwork should have been written.
+    const rows = await db.query.artworksTable.findMany({
+      where: eq(artworksTable.tenantId, tenantId),
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  it("createArtwork: returns error when SKU is blank; no row written", async () => {
+    const tenantId = await createTenant();
+
+    const result = await createArtwork(
+      { error: "" },
+      fd({ title: "Valid Title", sku: "", status: "AVAILABLE" }),
+    );
+
+    expect(result).toMatchObject({ error: expect.stringMatching(/sku/i) });
+
+    const rows = await db.query.artworksTable.findMany({
+      where: eq(artworksTable.tenantId, tenantId),
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  it("createArtwork: returns error when status is invalid; no row written", async () => {
+    const tenantId = await createTenant();
+
+    const result = await createArtwork(
+      { error: "" },
+      fd({ title: "Valid Title", sku: "SKU-002", status: "BOGUS" }),
+    );
+
+    expect(result).toMatchObject({ error: expect.any(String) });
+
+    const rows = await db.query.artworksTable.findMany({
+      where: eq(artworksTable.tenantId, tenantId),
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  it("createArtwork: returns error when condition is invalid; no row written", async () => {
+    const tenantId = await createTenant();
+
+    const result = await createArtwork(
+      { error: "" },
+      fd({ title: "Valid Title", sku: "SKU-003", status: "AVAILABLE", condition: "MINT" }),
+    );
+
+    expect(result).toMatchObject({ error: expect.any(String) });
+
+    const rows = await db.query.artworksTable.findMany({
+      where: eq(artworksTable.tenantId, tenantId),
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  it("updateArtwork: returns error when title is blank; existing row unchanged", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await insertArtwork(tenantId);
+
+    const result = await updateArtwork(
+      artworkId,
+      { error: "" },
+      fd({ title: "", sku: "SKU-NEW", status: "AVAILABLE" }),
+    );
+
+    expect(result).toMatchObject({ error: expect.stringMatching(/title/i) });
+
+    // Original row should still have the old title.
+    const row = await db.query.artworksTable.findFirst({
+      where: eq(artworksTable.id, artworkId),
+    });
+    expect(row?.title).toBe("Existing");
+  });
 });
