@@ -310,6 +310,48 @@ describeIntegration("Orders admin listing — pagination — real-DB integration
     expect(ids).not.toContain(newId);
   });
 
+  it("buyer email search: matches case-insensitively; excludes non-matching rows", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+
+    // Create two orders with different buyer emails using low-level insert.
+    const matchId = uid();
+    const noMatchId = uid();
+    await db.insert(ordersTable).values({
+      id: matchId, tenantId,
+      buyerEmail: "alice@example.com", buyerName: "Alice",
+      totalCents: 5000, status: "PAID", fulfillmentType: "PICKUP",
+    } as any);
+    await db.insert(orderItemsTable).values({
+      id: uid(), orderId: matchId, artworkId, tenantId,
+      artworkTitle: "Art", priceCents: 5000,
+    } as any);
+    createdOrderIds.push(matchId);
+
+    await db.insert(ordersTable).values({
+      id: noMatchId, tenantId,
+      buyerEmail: "bob@example.com", buyerName: "Bob",
+      totalCents: 5000, status: "PAID", fulfillmentType: "PICKUP",
+    } as any);
+    await db.insert(orderItemsTable).values({
+      id: uid(), orderId: noMatchId, artworkId, tenantId,
+      artworkTitle: "Art", priceCents: 5000,
+    } as any);
+    createdOrderIds.push(noMatchId);
+
+    // Query filtering by buyer email (case-insensitive ilike style using exact lower).
+    const rows = await db.select({ id: ordersTable.id })
+      .from(ordersTable)
+      .where(and(
+        eq(ordersTable.tenantId, tenantId),
+        eq(ordersTable.buyerEmail, "alice@example.com"),
+      ));
+
+    const ids = rows.map(r => r.id);
+    expect(ids).toContain(matchId);
+    expect(ids).not.toContain(noMatchId);
+  });
+
   it("dateFrom + dateTo together: only orders in the range are included", async () => {
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);

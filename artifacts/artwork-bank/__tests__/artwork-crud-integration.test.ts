@@ -364,6 +364,38 @@ describeIntegration("Artwork CRUD — real-DB integration", () => {
 
   // ── showInGallery toggle ──────────────────────────────────────────────────
 
+  it("updateArtwork: clears representedArtistId to null when field is omitted", async () => {
+    const tenantId = await createTenant();
+    const artistId = await insertArtist(tenantId);
+    const artworkId = await insertArtwork(tenantId);
+
+    // First link the artist.
+    try {
+      await updateArtwork(
+        artworkId,
+        { error: "" },
+        fd({ title: "Existing", sku: `sku-${artworkId}`, status: "AVAILABLE", representedArtistId: artistId }),
+      );
+    } catch (e: any) {
+      if (!e?.message?.includes("REDIRECT")) throw e;
+    }
+    const linked = await db.query.artworksTable.findFirst({ where: eq(artworksTable.id, artworkId) });
+    expect(linked?.representedArtistId).toBe(artistId);
+
+    // Now unlink by omitting representedArtistId.
+    try {
+      await updateArtwork(
+        artworkId,
+        { error: "" },
+        fd({ title: "Existing", sku: `sku-${artworkId}`, status: "AVAILABLE" }),
+      );
+    } catch (e: any) {
+      if (!e?.message?.includes("REDIRECT")) throw e;
+    }
+    const unlinked = await db.query.artworksTable.findFirst({ where: eq(artworksTable.id, artworkId) });
+    expect(unlinked?.representedArtistId).toBeNull();
+  });
+
   it("updateArtwork: showInGallery=on → persisted true; omitting field → false", async () => {
     const tenantId = await createTenant();
     const artworkId = await insertArtwork(tenantId);
