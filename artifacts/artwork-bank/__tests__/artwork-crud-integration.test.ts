@@ -361,4 +361,41 @@ describeIntegration("Artwork CRUD — real-DB integration", () => {
     });
     expect(row?.title).toBe("Existing");
   });
+
+  // ── showInGallery toggle ──────────────────────────────────────────────────
+
+  it("updateArtwork: showInGallery=on → persisted true; omitting field → false", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await insertArtwork(tenantId);
+
+    // Enable gallery visibility.
+    try {
+      await updateArtwork(
+        artworkId,
+        { error: "" },
+        fd({ title: "Existing", sku: `sku-${artworkId}`, status: "AVAILABLE", showInGallery: "on" }),
+      );
+    } catch (e: any) {
+      if (!e?.message?.includes("REDIRECT")) throw e;
+    }
+    const rowOn = await db.query.artworksTable.findFirst({
+      where: eq(artworksTable.id, artworkId),
+    });
+    expect(rowOn?.showInGallery).toBe(true);
+
+    // Disable by omitting the field (unchecked checkbox sends no value).
+    try {
+      await updateArtwork(
+        artworkId,
+        { error: "" },
+        fd({ title: "Existing", sku: `sku-${artworkId}`, status: "AVAILABLE" }),
+      );
+    } catch (e: any) {
+      if (!e?.message?.includes("REDIRECT")) throw e;
+    }
+    const rowOff = await db.query.artworksTable.findFirst({
+      where: eq(artworksTable.id, artworkId),
+    });
+    expect(rowOff?.showInGallery).toBe(false);
+  });
 });
