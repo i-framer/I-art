@@ -201,7 +201,7 @@ describeIntegration("sweepUnsentConfirmationEmails — real-DB integration", () 
     expect(row?.emailAttempts).toBe(1); // not incremented
   });
 
-  it("order at MAX_EMAIL_ATTEMPTS → not selected", async () => {
+  it("order at MAX_EMAIL_ATTEMPTS → our order state unchanged", async () => {
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);
     const orderId = await createOrder(tenantId, artworkId, {
@@ -210,35 +210,39 @@ describeIntegration("sweepUnsentConfirmationEmails — real-DB integration", () 
 
     await sweepUnsentConfirmationEmails(new Date());
 
-    expect(sendOrderConfirmation).not.toHaveBeenCalled();
+    // Our exhausted order must not be incremented further.
     const row = await db.query.ordersTable.findFirst({ where: eq(ordersTable.id, orderId) });
     expect(row?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS); // unchanged
+    expect(row?.emailSentAt).toBeNull(); // never sent
   });
 
-  it("non-PAID order → not selected", async () => {
+  it("non-PAID order → our order state unchanged (not selected)", async () => {
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);
     const orderId = await createOrder(tenantId, artworkId, { status: "PENDING" });
 
     await sweepUnsentConfirmationEmails(new Date());
 
-    expect(sendOrderConfirmation).not.toHaveBeenCalled();
+    // PENDING orders must not be touched.
     const row = await db.query.ordersTable.findFirst({ where: eq(ordersTable.id, orderId) });
-    expect(row?.emailAttempts).toBe(0);
+    expect(row?.emailAttempts).toBe(0); // unchanged
+    expect(row?.emailSentAt).toBeNull();
   });
 
-  it("already-sent order → not selected", async () => {
+  it("already-sent order → our order state unchanged (not re-sent)", async () => {
+    const sentAt = new Date(Date.now() - 60_000);
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);
     const orderId = await createOrder(tenantId, artworkId, {
-      emailSentAt: new Date(Date.now() - 60_000),
+      emailSentAt: sentAt,
     });
 
     await sweepUnsentConfirmationEmails(new Date());
 
-    expect(sendOrderConfirmation).not.toHaveBeenCalled();
+    // emailSentAt must remain the original value — not cleared or updated.
     const row = await db.query.ordersTable.findFirst({ where: eq(ordersTable.id, orderId) });
-    expect(row?.emailAttempts).toBe(0);
+    expect(row?.emailAttempts).toBe(0); // unchanged
+    expect(row?.emailSentAt?.getTime()).toBeCloseTo(sentAt.getTime(), -3);
   });
 });
 
@@ -331,7 +335,7 @@ describeIntegration("sweepUnsentStatusEmails — real-DB integration", () => {
     expect(row?.statusEmailError).toMatch(/SMTP down/);
   });
 
-  it("status email at MAX_EMAIL_ATTEMPTS → not selected", async () => {
+  it("status email at MAX_EMAIL_ATTEMPTS → our order state unchanged", async () => {
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);
     const orderId = await createOrder(tenantId, artworkId, {
@@ -343,7 +347,9 @@ describeIntegration("sweepUnsentStatusEmails — real-DB integration", () => {
 
     await sweepUnsentStatusEmails(new Date());
 
-    expect(sendOrderStatusUpdate).not.toHaveBeenCalled();
+    // Our exhausted order must not be incremented further.
+    // (Other orders from parallel suites may still be swept; we only
+    // assert on our specific order's state.)
     const row = await db.query.ordersTable.findFirst({ where: eq(ordersTable.id, orderId) });
     expect(row?.statusEmailAttempts).toBe(MAX_EMAIL_ATTEMPTS); // unchanged
   });
