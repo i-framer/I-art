@@ -16,6 +16,7 @@ import {
 } from "./actions";
 import { ArrowLeft, CheckCircle2, AlertCircle, Clock, Mail, AlertTriangle, Undo2 } from "lucide-react";
 import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
+import { IFramerJobPoller } from "./_components/iframer-job-poller";
 
 export const metadata: Metadata = { title: "Order Detail" };
 
@@ -482,6 +483,11 @@ export default async function OrderDetailPage({
             <h2 className="text-sm font-semibold text-stone-900 mb-4">
               iFramer job
             </h2>
+
+            {/* Poll every 5 s while waiting for the webhook (Task #11). */}
+            <IFramerJobPoller
+              isPending={!order.iframerJobId && !order.iframerJobError}
+            />
 
             {order.iframerJobId ? (
               <div className="flex items-start gap-3">
