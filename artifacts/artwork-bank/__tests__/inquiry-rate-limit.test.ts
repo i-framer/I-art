@@ -1,7 +1,8 @@
 import { it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { checkRateLimit, resetRateLimiter, sweepStaleTestRows } from "../lib/rate-limit";
-import { pool } from "@workspace/db";
+// pool import removed — calling pool.end() in afterAll would close the shared
+// DB connection and break other integration suites in the same Vitest process.
 
 // Integration tests against the shared Postgres-backed limiter, using a
 // unique key prefix so runs don't interfere with real data or each other.
@@ -22,7 +23,8 @@ describeIntegration("checkRateLimit (Postgres-backed)", () => {
 
   afterAll(async () => {
     await resetRateLimiter(prefix);
-    await pool.end();
+    // NOTE: do NOT call pool.end() here — closing the shared pool breaks
+    // other integration suites that share the same Vitest worker process.
   });
 
   it("allows up to the limit within the window", async () => {
