@@ -196,6 +196,42 @@ describeIntegration("lookupOrder (public storefront) — real-DB integration", (
     expect(result.status).toBe("not_found");
   });
 
+  it("ref shorter than 8 hex chars → validation error returned (Task #48)", async () => {
+    const { tenantId, slug } = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+    const orderId = await createOrder(tenantId, "buyer@example.com");
+    await addOrderItem(orderId, artworkId, tenantId);
+
+    // The action validates ^[0-9a-fA-F]{8}$ — 7 chars fails Zod, returns 'error'
+    // rather than leaking a partial match via 'not_found'.
+    const shortRef = orderId.slice(0, 7);
+
+    const result = await lookupOrder(
+      slug,
+      { status: "idle", error: "", order: null },
+      fd({ email: "buyer@example.com", ref: shortRef }),
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.order).toBeNull();
+    // Error message must NOT reveal whether the order exists.
+    expect(result.error).not.toMatch(/found|exist/i);
+  });
+
+  it("empty ref → validation error returned (enumeration protection)", async () => {
+    const { tenantId, slug } = await createTenant();
+    await createOrder(tenantId, "buyer@example.com");
+
+    const result = await lookupOrder(
+      slug,
+      { status: "idle", error: "", order: null },
+      fd({ email: "buyer@example.com", ref: "" }),
+    );
+
+    expect(result.status).toBe("error");
+    expect(result.order).toBeNull();
+  });
+
   it("order with no items → artworkTitle is null", async () => {
     const { tenantId, slug } = await createTenant();
     const orderId = await createOrder(tenantId, "buyer@example.com");
