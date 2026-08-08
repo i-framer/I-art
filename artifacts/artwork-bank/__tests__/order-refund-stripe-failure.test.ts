@@ -1,6 +1,7 @@
 /**
- * Task #322 — Prevent a Stripe refund from being falsely recorded when
- * Stripe rejects it.
+ * Tasks #322 and #93 — Prevent a Stripe refund from being falsely recorded
+ * when Stripe rejects it; and specifically, a full-refund failure must never
+ * mark the order as CANCELLED.
  *
  * The refundOrder action calls getStripeClient() then stripe.refunds.create().
  * If either throws, the action redirects with an error message — no DB update
@@ -265,6 +266,66 @@ describe("refundOrder — invalid order state (Task #322)", () => {
     const url = getRedirectUrl();
     expect(url).toContain("refund_error=");
     expect(getStripeClient).not.toHaveBeenCalled();
+    expect(state.updates).toHaveLength(0);
+  });
+});
+
+// ── Task #93 — Full-refund Stripe failure must never cancel the order ─────────
+
+describe("refundOrder — full-refund failure must NOT cancel the order (Task #93)", () => {
+  it("does NOT write status=CANCELLED when a full-refund Stripe call fails", async () => {
+    // Simulate a full refund: refundAmountDollars == totalCents/100
+    state.order = { ...defaultOrder, status: "PAID", refundedAmountCents: null };
+    orderFindFirst.mockResolvedValue(state.order);
+
+    stripeRefundCreate.mockRejectedValueOnce(
+      Object.assign(new Error("Stripe network error"), { type: "StripeConnectionError" }),
+    );
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "100.00" })),
+    ).rejects.toThrow("REDIRECT:");
+
+    // No DB update at all must have been written.
+    expect(state.updates).toHaveLength(0);
+    // Explicitly confirm status=CANCELLED was never queued (regression guard).
+    const cancelUpdate = state.updates.find((u) => u.vals.status === "CANCELLED");
+    expect(cancelUpdate).toBeUndefined();
+  });
+
+  it("does NOT write status=CANCELLED when getStripeClient throws on a full-refund attempt", async () => {
+    state.order = { ...defaultOrder, status: "PAID", refundedAmountCents: null };
+    orderFindFirst.mockResolvedValue(state.order);
+
+    getStripeClient.mockRejectedValueOnce(
+      new FakeStripeNotConfiguredError("Stripe not set up"),
+    );
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "100.00" })),
+    ).rejects.toThrow("REDIRECT:");
+
+    expect(state.updates).toHaveLength(0);
+    const cancelUpdate = state.updates.find((u) => u.vals.status === "CANCELLED");
+    expect(cancelUpdate).toBeUndefined();
+  });
+
+  it("order status remains PAID in the response redirect, not CANCELLED, after full-refund Stripe failure", async () => {
+    state.order = { ...defaultOrder, status: "PAID", refundedAmountCents: null };
+    orderFindFirst.mockResolvedValue(state.order);
+
+    stripeRefundCreate.mockRejectedValueOnce(new Error("Insufficient funds on platform"));
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "100.00" })),
+    ).rejects.toThrow("REDIRECT:");
+
+    // The redirect URL must contain refund_error, not any cancellation indication.
+    const url = getRedirectUrl();
+    expect(url).toContain("refund_error=");
+    expect(url).not.toContain("cancelled");
+    expect(url).not.toContain("CANCELLED");
+    // And definitely no DB mutation.
     expect(state.updates).toHaveLength(0);
   });
 });
