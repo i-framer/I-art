@@ -238,4 +238,22 @@ describeIntegration("Represented artist CRUD — real-DB integration", () => {
     });
     expect(row).toBeDefined();
   });
+
+  it("cannot delete a foreign tenant's artist even if that artist has no local linked artworks", async () => {
+    // Own tenant has no artworks linked to the foreign artist.
+    const ownTenantId = await createTenant();
+    const foreignTenantId = await createTenant();
+    const foreignArtistId = await insertArtist(foreignTenantId, "Foreign Artist Unlinked");
+
+    // Authenticated as ownTenant — should not delete the foreign artist.
+    mockTenantId.value = ownTenantId;
+    const result = await deleteRepresentedArtist(foreignArtistId, null, new FormData());
+
+    // The action should succeed silently or report an error — but critically
+    // the foreign artist row must still exist.
+    const row = await db.query.representedArtistsTable.findFirst({
+      where: eq(representedArtistsTable.id, foreignArtistId),
+    });
+    expect(row).toBeDefined(); // NOT deleted
+  });
 });

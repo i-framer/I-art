@@ -169,4 +169,39 @@ describeIntegration("bulkUpdateStatus — real-DB integration", () => {
     const row = await db.query.artworksTable.findFirst({ where: eq(artworksTable.id, id) });
     expect(row?.status).toBe(status);
   });
+
+  it("SOLD artwork can be bulk-transitioned back to AVAILABLE", async () => {
+    const tenantId = await createTenant();
+    const id = await createArtwork(tenantId, "SOLD");
+
+    await bulkUpdateStatus([id], "AVAILABLE");
+
+    const row = await db.query.artworksTable.findFirst({ where: eq(artworksTable.id, id) });
+    expect(row?.status).toBe("AVAILABLE");
+  });
+
+  it("RESERVED artwork can be bulk-transitioned back to AVAILABLE", async () => {
+    const tenantId = await createTenant();
+    const id = await createArtwork(tenantId, "RESERVED");
+
+    await bulkUpdateStatus([id], "AVAILABLE");
+
+    const row = await db.query.artworksTable.findFirst({ where: eq(artworksTable.id, id) });
+    expect(row?.status).toBe("AVAILABLE");
+  });
+
+  it("mixed starting statuses all update correctly in one batch", async () => {
+    const tenantId = await createTenant();
+    const availId = await createArtwork(tenantId, "AVAILABLE");
+    const soldId = await createArtwork(tenantId, "SOLD");
+    const reservedId = await createArtwork(tenantId, "RESERVED");
+    const hiddenId = await createArtwork(tenantId, "HIDDEN");
+
+    await bulkUpdateStatus([availId, soldId, reservedId, hiddenId], "HIDDEN");
+
+    for (const id of [availId, soldId, reservedId, hiddenId]) {
+      const row = await db.query.artworksTable.findFirst({ where: eq(artworksTable.id, id) });
+      expect(row?.status).toBe("HIDDEN");
+    }
+  });
 });
