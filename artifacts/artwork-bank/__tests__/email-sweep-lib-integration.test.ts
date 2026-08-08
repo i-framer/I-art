@@ -182,7 +182,7 @@ describeIntegration("sweepUnsentConfirmationEmails — real-DB integration", () 
     expect(row?.emailError).toMatch(/SMTP timeout/);
   });
 
-  it("order inside backoff window → skipped (no email sent)", async () => {
+  it("order inside backoff window → skipped (order state unchanged)", async () => {
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);
     const recentAttempt = new Date(); // now = inside 5-min window for 1 prior attempt
@@ -191,13 +191,14 @@ describeIntegration("sweepUnsentConfirmationEmails — real-DB integration", () 
       emailLastAttemptAt: recentAttempt,
     });
 
-    const result = await sweepUnsentConfirmationEmails(new Date());
+    await sweepUnsentConfirmationEmails(new Date());
 
-    expect(result.skipped).toBeGreaterThanOrEqual(1);
-    expect(sendOrderConfirmation).not.toHaveBeenCalled();
-
+    // The ORDER must be untouched — it was inside the backoff window.
+    // (Other orders in the DB from parallel suites may still be swept;
+    // we only assert on our specific order.)
     const row = await db.query.ordersTable.findFirst({ where: eq(ordersTable.id, orderId) });
     expect(row?.emailSentAt).toBeNull(); // unchanged
+    expect(row?.emailAttempts).toBe(1); // not incremented
   });
 
   it("order at MAX_EMAIL_ATTEMPTS → not selected", async () => {
