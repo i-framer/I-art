@@ -246,4 +246,19 @@ describeIntegration("Category CRUD — real-DB integration", () => {
     const filtered = await getCategories();
     expect(filtered.find((c) => c.id === otherCatId)).toBeUndefined();
   });
+
+  it("getCategories: results are ordered alphabetically by name (ASC)", async () => {
+    const tenantId = await createTenant();
+    const zebId = await insertCategory(tenantId, "Zebra Works");
+    const alphaId = await insertCategory(tenantId, "Abstract");
+    const midId = await insertCategory(tenantId, "Mixed Media");
+
+    const categories = await getCategories();
+    const ours = categories.filter((c) => [zebId, alphaId, midId].includes(c.id));
+
+    expect(ours).toHaveLength(3);
+    expect(ours[0].name).toBe("Abstract");
+    expect(ours[1].name).toBe("Mixed Media");
+    expect(ours[2].name).toBe("Zebra Works");
+  });
 });
