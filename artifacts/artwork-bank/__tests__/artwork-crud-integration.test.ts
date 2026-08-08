@@ -396,6 +396,114 @@ describeIntegration("Artwork CRUD — real-DB integration", () => {
     expect(unlinked?.representedArtistId).toBeNull();
   });
 
+  // ── Dimensions / medium / notes optional-field round-trips ───────────────
+
+  it("createArtwork: persists dimensions W/H/D and medium when provided", async () => {
+    const tenantId = await createTenant();
+
+    let createdId: string | null = null;
+    try {
+      await createArtwork(
+        { error: "" },
+        fd({
+          title: "Dimensional Artwork",
+          sku: `sku-dim-${randomUUID()}`,
+          status: "AVAILABLE",
+          medium: "Oil on canvas",
+          dimensionsW: "40",
+          dimensionsH: "60",
+          dimensionsD: "2",
+        }),
+      );
+    } catch (e: any) {
+      if (!e?.message?.startsWith("REDIRECT:")) throw e;
+    }
+
+    const rows = await db.query.artworksTable.findMany({
+      where: eq(artworksTable.tenantId, tenantId),
+    });
+    const row = rows.find(r => r.title === "Dimensional Artwork");
+    expect(row).toBeDefined();
+    createdId = row?.id ?? null;
+    expect(row?.medium).toBe("Oil on canvas");
+    expect(row?.dimensionsW).toBe(40);
+    expect(row?.dimensionsH).toBe(60);
+    expect(row?.dimensionsD).toBe(2);
+
+    if (createdId) {
+      await db.delete(artworksTable).where(eq(artworksTable.id, createdId)).catch(() => {});
+    }
+  });
+
+  it("createArtwork: persists notes when provided", async () => {
+    const tenantId = await createTenant();
+    const sku = `sku-notes-${randomUUID()}`;
+
+    try {
+      await createArtwork(
+        { error: "" },
+        fd({
+          title: "Artwork with Notes",
+          sku,
+          status: "AVAILABLE",
+          notes: "Framed behind UV-protective glass.",
+        }),
+      );
+    } catch (e: any) {
+      if (!e?.message?.startsWith("REDIRECT:")) throw e;
+    }
+
+    const rows = await db.query.artworksTable.findMany({
+      where: eq(artworksTable.tenantId, tenantId),
+    });
+    const row = rows.find(r => r.sku === sku);
+    expect(row).toBeDefined();
+    expect(row?.notes).toBe("Framed behind UV-protective glass.");
+
+    if (row?.id) {
+      await db.delete(artworksTable).where(eq(artworksTable.id, row.id)).catch(() => {});
+    }
+  });
+
+  it("updateArtwork: persists changed medium and clears dimensions when omitted", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await insertArtwork(tenantId);
+
+    // Set initial dimensions and medium.
+    try {
+      await updateArtwork(
+        artworkId,
+        { error: "" },
+        fd({ title: "Existing", sku: `sku-${artworkId}`, status: "AVAILABLE",
+          medium: "Watercolour", dimensionsW: "50", dimensionsH: "70" }),
+      );
+    } catch (e: any) {
+      if (!e?.message?.startsWith("REDIRECT:")) throw e;
+    }
+
+    const before = await db.query.artworksTable.findFirst({ where: eq(artworksTable.id, artworkId) });
+    expect(before?.medium).toBe("Watercolour");
+    expect(before?.dimensionsW).toBe(50);
+
+    // Update medium; omit dimensions (should clear them).
+    try {
+      await updateArtwork(
+        artworkId,
+        { error: "" },
+        fd({ title: "Existing", sku: `sku-${artworkId}`, status: "AVAILABLE",
+          medium: "Acrylic" }),
+      );
+    } catch (e: any) {
+      if (!e?.message?.startsWith("REDIRECT:")) throw e;
+    }
+
+    const after = await db.query.artworksTable.findFirst({ where: eq(artworksTable.id, artworkId) });
+    expect(after?.medium).toBe("Acrylic");
+    // Dimensions omitted → cleared to null.
+    expect(after?.dimensionsW).toBeNull();
+    expect(after?.dimensionsH).toBeNull();
+  });
+
   it("updateArtwork: showInGallery=on → persisted true; omitting field → false", async () => {
     const tenantId = await createTenant();
     const artworkId = await insertArtwork(tenantId);
