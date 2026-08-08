@@ -1,17 +1,14 @@
 /**
- * saveTrackingNote — status-email retry restart — real-DB integration.
+ * markCancelled — buyer notification — real-DB integration.
  *
- * Task #50: "Tracking-note change restarts status-email retries."
+ * The mocked unit test (order-cancel-notification.test.ts) verifies the call
+ * sequence.  This integration suite verifies DB-side behaviour against real
+ * PostgreSQL:
  *
- * `tracking-note-restart-retry.test.ts` uses a mocked DB.  This integration
- * suite verifies the retry-restart behavior against real PostgreSQL:
- *
- *  1. Changed note + failed send → statusEmailQueuedAt set (non-null), error
- *     persisted, attempts >= 1.
- *  2. Changed note + successful send → statusEmailQueuedAt cleared (null),
- *     statusEmailError null, attempts >= 1, note persisted.
- *  3. Unchanged note → no status-email queue fields touched; note unchanged.
- *  4. Note changed from non-null to null → treated as change; queue restarts.
+ *  1. Successful send → order is CANCELLED, statusEmailQueuedAt cleared, no error.
+ *  2. Email failure → order is still CANCELLED, statusEmailError persisted.
+ *  3. Foreign-tenant orderId → throws; order is unchanged (no status mutation).
+ *  4. Already-CANCELLED order → redirects (guard fires); no double-mutation.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -26,7 +23,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-const mockSession = { userId: "u-track-owner", tenantId: "PLACEHOLDER", role: "owner" };
+const mockSession = { userId: "u-cancel-owner", tenantId: "PLACEHOLDER", role: "owner" };
 vi.mock("@/lib/auth", () => ({
   getSession: vi.fn(async () => ({ ...mockSession })),
 }));
@@ -41,27 +38,32 @@ vi.mock("@/lib/email", async (importOriginal) => {
   return { ...actual, sendOrderStatusUpdate };
 });
 
+// ── Misc mocks ────────────────────────────────────────────────────────────────
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  redirect: vi.fn((url: string) => { throw new Error(`REDIRECT:${url}`); }),
+}));
+vi.mock("@/lib/base-url", () => ({
+  getTenantUrl: vi.fn().mockReturnValue("https://gallery.test/orders"),
+}));
 
-import { saveTrackingNote } from "@/app/(admin)/(gated)/orders/[id]/actions";
+import { markCancelled } from "@/app/(admin)/(gated)/orders/[id]/actions";
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
-
 const RUN = Date.now();
 let seq = 0;
 const createdTenantIds: string[] = [];
 const createdArtworkIds: string[] = [];
 const createdOrderIds: string[] = [];
 
-function uid() { return `${randomUUID()}-trk-${RUN}-${++seq}`; }
+function uid() { return `${randomUUID()}-cancnotif-${RUN}-${++seq}`; }
 
 async function createTenant() {
   const id = uid();
   await db.insert(tenantsTable).values({
     id, slug: id,
-    businessName: "Tracking Retry Test Gallery",
-    type: "ARTIST",
-    billingExempt: true,
+    businessName: "Cancel Notify Test Gallery",
+    type: "ARTIST", billingExempt: true,
     subscriptionStatus: "active",
   } as any);
   createdTenantIds.push(id);
@@ -72,31 +74,38 @@ async function createTenant() {
 async function createArtwork(tenantId: string) {
   const id = uid();
   await db.insert(artworksTable).values({
-    id, tenantId, title: "Tracked Artwork", sku: `sku-${id}`, status: "SOLD",
+    id, tenantId, title: "Cancelable Artwork", sku: `sku-${id}`, status: "SOLD",
   } as any);
   createdArtworkIds.push(id);
   return id;
 }
 
-async function createOrder(tenantId: string, artworkId: string, opts: {
-  trackingNote?: string | null;
-} = {}) {
+async function createOrder(
+  tenantId: string,
+  artworkId: string,
+  status: "PAID" | "PENDING" | "CANCELLED" | "FULFILLED" = "PAID",
+) {
   const id = uid();
   await db.insert(ordersTable).values({
     id, tenantId,
     buyerEmail: "buyer@example.com",
     buyerName: "Test Buyer",
-    totalCents: 8000,
-    status: "PAID",
+    totalCents: 5000,
+    status,
     fulfillmentType: "PICKUP",
-    trackingNote: opts.trackingNote ?? null,
   } as any);
   await db.insert(orderItemsTable).values({
     id: uid(), orderId: id, artworkId, tenantId,
-    artworkTitle: "Tracked Artwork", priceCents: 8000,
+    artworkTitle: "Cancelable Artwork", priceCents: 5000,
   } as any);
   createdOrderIds.push(id);
   return id;
+}
+
+function fd(orderId: string) {
+  const f = new FormData();
+  f.set("orderId", orderId);
+  return f;
 }
 
 async function cleanup() {
@@ -115,110 +124,89 @@ async function cleanup() {
 afterEach(async () => { sendOrderStatusUpdate.mockReset(); await cleanup(); });
 afterAll(cleanup);
 
-function fd(orderId: string, note: string) {
-  const f = new FormData();
-  f.set("orderId", orderId);
-  f.set("note", note);
-  return f;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 
-describeIntegration("saveTrackingNote — retry restart — real-DB integration", () => {
-  it("changed note + failed send → statusEmailQueuedAt non-null, error persisted", async () => {
+describeIntegration("markCancelled — buyer notification — real-DB integration", () => {
+  it("PAID order → persists CANCELLED status; email send clears queue fields", async () => {
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);
-    const orderId = await createOrder(tenantId, artworkId);
+    const orderId = await createOrder(tenantId, artworkId, "PAID");
 
-    sendOrderStatusUpdate.mockRejectedValueOnce(new Error("SMTP down"));
-
-    await saveTrackingNote(fd(orderId, "Dispatched via courier"));
+    await markCancelled(fd(orderId));
 
     const row = await db.query.ordersTable.findFirst({
       where: eq(ordersTable.id, orderId),
     });
-
-    expect(row?.trackingNote).toBe("Dispatched via courier");
-    // Failed send → queue remains set so sweep can retry.
-    expect(row?.statusEmailQueuedAt).not.toBeNull();
-    expect(row?.statusEmailError).toBeTruthy();
-    expect(row?.statusEmailAttempts).toBeGreaterThanOrEqual(1);
-  });
-
-  it("changed note + successful send → queue cleared, note persisted, error null", async () => {
-    const tenantId = await createTenant();
-    const artworkId = await createArtwork(tenantId);
-    const orderId = await createOrder(tenantId, artworkId);
-
-    sendOrderStatusUpdate.mockResolvedValueOnce(undefined);
-
-    await saveTrackingNote(fd(orderId, "Ready for pickup"));
-
-    const row = await db.query.ordersTable.findFirst({
-      where: eq(ordersTable.id, orderId),
-    });
-
-    expect(row?.trackingNote).toBe("Ready for pickup");
-    // Successful send → queue cleared.
+    expect(row?.status).toBe("CANCELLED");
+    // Successful send clears the queue.
     expect(row?.statusEmailQueuedAt).toBeNull();
     expect(row?.statusEmailError).toBeNull();
-    expect(row?.statusEmailAttempts).toBeGreaterThanOrEqual(1);
-  });
-
-  it("unchanged note → no email sent, queue fields untouched", async () => {
-    const tenantId = await createTenant();
-    const artworkId = await createArtwork(tenantId);
-    const orderId = await createOrder(tenantId, artworkId, { trackingNote: "Same note" });
-
-    await saveTrackingNote(fd(orderId, "Same note"));
-
-    expect(sendOrderStatusUpdate).not.toHaveBeenCalled();
-
-    const row = await db.query.ordersTable.findFirst({
-      where: eq(ordersTable.id, orderId),
-    });
-
-    expect(row?.trackingNote).toBe("Same note");
-    expect(row?.statusEmailQueuedAt).toBeNull();
-    expect(row?.statusEmailError).toBeNull();
-  });
-
-  it("note cleared (changed to empty) → treated as change, queue restarts", async () => {
-    const tenantId = await createTenant();
-    const artworkId = await createArtwork(tenantId);
-    const orderId = await createOrder(tenantId, artworkId, { trackingNote: "Old note" });
-
-    sendOrderStatusUpdate.mockRejectedValueOnce(new Error("transient"));
-
-    await saveTrackingNote(fd(orderId, ""));
-
-    const row = await db.query.ordersTable.findFirst({
-      where: eq(ordersTable.id, orderId),
-    });
-
-    // Empty string stored as null by the action (note || null).
-    expect(row?.trackingNote).toBeNull();
-    // Clearing the note is a change → queue was kicked.
     expect(sendOrderStatusUpdate).toHaveBeenCalledOnce();
   });
 
-  it("foreign-tenant orderId → throws 'Order not found'; no note mutation", async () => {
-    // Tenant A owns the order.
-    const tenantA = await createTenant();
-    const artworkId = await createArtwork(tenantA);
-    const orderId = await createOrder(tenantA, artworkId, { trackingNote: "Original" });
+  it("email failure → order still CANCELLED; error persisted, attempts incremented", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+    const orderId = await createOrder(tenantId, artworkId, "PAID");
 
-    // Tenant B tries to update the note.
-    const tenantB = await createTenant();
-    mockSession.tenantId = tenantB;
+    sendOrderStatusUpdate.mockRejectedValueOnce(new Error("SMTP down"));
 
-    await expect(saveTrackingNote(fd(orderId, "Injected note"))).rejects.toThrow();
+    await markCancelled(fd(orderId));
 
-    // The original note must be unchanged.
     const row = await db.query.ordersTable.findFirst({
       where: eq(ordersTable.id, orderId),
     });
-    expect(row?.trackingNote).toBe("Original");
+    // Status must still be CANCELLED even though email failed.
+    expect(row?.status).toBe("CANCELLED");
+    // Queue is set so the sweep can retry.
+    expect(row?.statusEmailQueuedAt).not.toBeNull();
+    expect(row?.statusEmailError).toBeTruthy();
+  });
+
+  it("PENDING order → persists CANCELLED status and sends buyer notification", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+    const orderId = await createOrder(tenantId, artworkId, "PENDING");
+
+    await markCancelled(fd(orderId));
+
+    const row = await db.query.ordersTable.findFirst({
+      where: eq(ordersTable.id, orderId),
+    });
+    expect(row?.status).toBe("CANCELLED");
+    expect(sendOrderStatusUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("already-CANCELLED order → redirects; no additional status update or email", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+    const orderId = await createOrder(tenantId, artworkId, "CANCELLED");
+
+    await expect(markCancelled(fd(orderId))).rejects.toThrow(/REDIRECT/);
+
+    const row = await db.query.ordersTable.findFirst({
+      where: eq(ordersTable.id, orderId),
+    });
+    expect(row?.status).toBe("CANCELLED"); // unchanged
+    expect(sendOrderStatusUpdate).not.toHaveBeenCalled();
+  });
+
+  it("foreign-tenant orderId → throws 'Order not found'; order status unchanged", async () => {
+    const tenantA = await createTenant();
+    const artworkId = await createArtwork(tenantA);
+    const orderId = await createOrder(tenantA, artworkId, "PAID");
+
+    // Switch to tenant B.
+    const tenantB = await createTenant();
+    mockSession.tenantId = tenantB;
+
+    await expect(markCancelled(fd(orderId))).rejects.toThrow();
+
+    // Original order is still PAID.
+    const row = await db.query.ordersTable.findFirst({
+      where: eq(ordersTable.id, orderId),
+    });
+    expect(row?.status).toBe("PAID");
     expect(sendOrderStatusUpdate).not.toHaveBeenCalled();
   });
 });
