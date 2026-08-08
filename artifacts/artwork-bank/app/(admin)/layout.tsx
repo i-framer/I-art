@@ -14,6 +14,7 @@ import {
   LogOut,
   Palette,
 } from "lucide-react";
+import { InquiryBadge } from "@/app/(admin)/_components/inquiry-badge";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -91,10 +92,8 @@ export default async function AdminLayout({
             >
               <Icon className="h-4 w-4 shrink-0" />
               <span className="flex-1">{label}</span>
-              {href === "/inquiries" && newInquiries > 0 && (
-                <span className="ml-auto inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-amber-400 px-1.5 py-0.5 text-[10px] font-semibold text-stone-900">
-                  {newInquiries > 99 ? "99+" : newInquiries}
-                </span>
+              {href === "/inquiries" && (
+                <InquiryBadge initialCount={newInquiries} />
               )}
             </Link>
           ))}
