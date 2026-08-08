@@ -430,6 +430,43 @@ describeIntegration(
       vi.mocked(deleteObject).mockResolvedValue(undefined);
     });
 
+    it("returns HTTP 207 with notificationSkipped=true when no channel is configured (Task #512)", async () => {
+      // Arrange: an orphan row so the sweep enters the error path, then both
+      // notification mocks silently succeed (no-op) to simulate unconfigured channels.
+      // isAnyNotificationChannelConfigured() checks env vars directly; stub them out.
+      vi.stubEnv("SLACK_BILLING_ALERTS_CHANNEL", "");
+      vi.stubEnv("PLATFORM_ADMIN_EMAIL", "");
+      vi.stubEnv("SMTP_HOST", "");
+      vi.stubEnv("RESEND_API_KEY", "");
+
+      // Mocks return success silently (channel "skipped" without error).
+      sendOrphanSweepSlackNotification.mockResolvedValue({ ok: true });
+      sendOrphanSweepErrorNotification.mockResolvedValue(undefined);
+
+      const tenantId = await createTenant();
+      const { id } = await insertOrphanImageRow(tenantId, uid());
+
+      // deleteObject succeeds (orphan found) but the sweep still records a
+      // storage-level error because the deletion itself succeeds while the
+      // row cleanup fails — we need errors > 0 to enter the notify path.
+      // Force deleteObject to throw so errors > 0 without needing a DB error.
+      vi.mocked(deleteObject).mockRejectedValue(new Error("Storage unavailable"));
+
+      const response = await fetch(`${baseUrl}/api/storage/orphan-sweep`);
+
+      expect(response.status).toBe(207);
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(body.notificationSkipped).toBe(true);
+      expect(body.errors).toBeGreaterThanOrEqual(1);
+
+      // Cleanup orphan row that was not deleted due to the mocked storage error.
+      await db.delete(artworkImagesTable).where(eq(artworkImagesTable.id, id)).catch(() => {});
+      const idx = insertedOrphanImageIds.indexOf(id);
+      if (idx !== -1) insertedOrphanImageIds.splice(idx, 1);
+
+      vi.unstubAllEnvs();
+    });
+
     it("returns HTTP 200 when one orphan succeeds and another gets a 404 (mixed outcomes, no errors)", async () => {
       // Arrange: two orphan rows — one will be deleted cleanly, the other will
       // get a 404-style "already gone" response.  Both paths count as deleted++;

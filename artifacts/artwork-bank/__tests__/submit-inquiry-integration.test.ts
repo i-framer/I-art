@@ -35,12 +35,14 @@ vi.mock("next/headers", () => ({
   headers: vi.fn(() => new Headers()),
 }));
 
-// ── Email — no-op so delivery doesn't block tests ────────────────────────────
+// ── Controlled sendArtworkInquiry mock — returns true by default (success).
+// Individual tests can override to false to test the email-failure path.
+const sendArtworkInquiry = vi.hoisted(() => vi.fn(async () => true));
 vi.mock("@/lib/email", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/email")>();
   return {
     ...actual,
-    sendArtworkInquiry: vi.fn(async () => {}),
+    sendArtworkInquiry,
     sendInquiryNotification: vi.fn(async () => {}),
     sendInquiryConfirmation: vi.fn(async () => {}),
   };
@@ -192,6 +194,33 @@ describeIntegration("submitInquiry (public storefront) — real-DB integration",
       where: eq(inquiriesTable.artworkId, artworkId),
     });
     expect(row).toBeUndefined();
+  });
+
+  it("email delivery failure → inquiry still persisted; emailError field set; status=sent", async () => {
+    const { tenantId, slug } = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+
+    // Simulate email failure by returning false.
+    sendArtworkInquiry.mockResolvedValueOnce(false);
+
+    const result = await submitInquiry(
+      slug,
+      artworkId,
+      { status: "idle", error: "" },
+      fd({ name: "Jane Buyer", email: "jane@buyer.com", message: "Available?", website: "" }),
+    );
+
+    // Lead must not be lost — action returns "sent" so the buyer isn't alarmed.
+    expect(result.status).toBe("sent");
+    expect(result.error).toBe("");
+
+    // The inquiry row must be persisted with the delivery failure flag set.
+    const row = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.artworkId, artworkId),
+    });
+    expect(row).toBeDefined();
+    expect(row?.buyerEmail).toBe("jane@buyer.com");
+    expect(row?.emailError).toBe("Email delivery failed");
   });
 
   it("honeypot field set → returns sent without inserting a row", async () => {
