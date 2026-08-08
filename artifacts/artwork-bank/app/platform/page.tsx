@@ -5,7 +5,9 @@ import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
 import { getSession } from "@/lib/auth";
 import { isPlatformAdmin, tenantBillingStatus } from "@/lib/platform-admin";
 import { setBillingExempt, setIframerAccount } from "./actions";
-import { ShieldCheck } from "lucide-react";
+import Link from "next/link";
+import { ShieldCheck, BarChart3 } from "lucide-react";
+import { formatDate, subscriptionDetail } from "./_lib/format";
 import { BillingAlerts } from "./_components/BillingAlerts";
 import { IframerSlackAlerts } from "./_components/IframerSlackAlerts";
 import {
@@ -48,6 +50,8 @@ export default async function PlatformAdminPage() {
         contactEmail: true,
         subscriptionStatus: true,
         billingExempt: true,
+        trialEnd: true,
+        createdAt: true,
         iframerAccountId: true,
         iframerAccountLinkedBy: true,
         iframerAccountLinkedAt: true,
@@ -73,9 +77,13 @@ export default async function PlatformAdminPage() {
           <h1 className="text-sm font-semibold text-white">
             Platform Admin — Tenant Billing
           </h1>
-          <span className="ml-auto text-xs text-stone-400">
-            {session.email}
-          </span>
+          <Link
+            href="/platform/reports"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-stone-800 px-3 py-1.5 text-xs font-medium text-stone-200 transition-colors hover:bg-stone-700 hover:text-white"
+          >
+            <BarChart3 className="h-3.5 w-3.5" /> Reports
+          </Link>
+          <span className="text-xs text-stone-400">{session.email}</span>
         </div>
       </header>
 
@@ -96,6 +104,7 @@ export default async function PlatformAdminPage() {
               <tr>
                 <th className="px-4 py-3 font-medium">Tenant</th>
                 <th className="px-4 py-3 font-medium">Type</th>
+                <th className="px-4 py-3 font-medium">Signed up</th>
                 <th className="px-4 py-3 font-medium">Subscription</th>
                 <th className="px-4 py-3 font-medium">Billing exempt</th>
                 <th className="px-4 py-3 font-medium">i-Framer Premium</th>
@@ -106,7 +115,7 @@ export default async function PlatformAdminPage() {
               {tenants.length === 0 && (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     className="px-4 py-8 text-center text-stone-500"
                   >
                     No tenants yet.
@@ -118,23 +127,33 @@ export default async function PlatformAdminPage() {
                 return (
                   <tr key={tenant.id}>
                     <td className="px-4 py-3">
-                      <p className="font-medium text-stone-900">
+                      <Link
+                        href={`/platform/tenants/${tenant.id}`}
+                        className="font-medium text-stone-900 hover:text-indigo-700 hover:underline"
+                      >
                         {tenant.businessName}
-                      </p>
+                      </Link>
                       <p className="text-xs text-stone-500">
                         /{tenant.slug}
                         {tenant.contactEmail ? ` · ${tenant.contactEmail}` : ""}
                       </p>
                     </td>
                     <td className="px-4 py-3 text-stone-600">{tenant.type}</td>
+                    <td className="px-4 py-3 text-stone-600">
+                      {formatDate(tenant.createdAt)}
+                    </td>
                     <td className="px-4 py-3">
                       <span
                         className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
                           STATUS_STYLES[status] ?? STATUS_STYLES.none
                         }`}
+                        title={subscriptionDetail(tenant)}
                       >
                         {status}
                       </span>
+                      <p className="mt-0.5 text-[10px] text-stone-400">
+                        {subscriptionDetail(tenant)}
+                      </p>
                     </td>
                     <td className="px-4 py-3 text-stone-600">
                       {tenant.billingExempt ? "Yes" : "No"}
