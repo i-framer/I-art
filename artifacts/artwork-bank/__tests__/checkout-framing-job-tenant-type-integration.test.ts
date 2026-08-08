@@ -43,17 +43,18 @@ vi.mock("@/lib/tenant-cache", () => ({
     return db.query.tenantsTable.findFirst({ where: eq(tenantsTable.slug, slug) });
   }),
 }));
+vi.mock("@/lib/rate-limit", () => ({
+  checkRateLimit: vi.fn(async () => true),
+}));
 
 import { POST as checkoutPOST } from "@/app/api/stripe/checkout/route";
-import { checkRateLimit } from "@/lib/rate-limit";
 
-// Bypass rate limit by using a distinct IP per test.
-function post(artworkId: string, slug: string, fulfillmentType: string, testSeq: number) {
+function post(artworkId: string, slug: string, fulfillmentType: string, _testSeq?: number) {
   return checkoutPOST(new Request("http://localhost/api/stripe/checkout", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-forwarded-for": `192.168.${testSeq % 256}.${(testSeq >> 8) % 256}`,
+      "x-forwarded-for": "127.0.0.1",
     },
     body: JSON.stringify({ artworkId, slug, fulfillmentType }),
   }));
