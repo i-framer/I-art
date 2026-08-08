@@ -250,4 +250,39 @@ describe("lookupOrder (guest order lookup auth)", () => {
     expect(res.error).not.toContain("db down");
     expect(res.order).toBeNull();
   });
+
+  // Task #48 — order lookup enumeration protection during DB outage.
+  // The second DB call (orderItemsTable) must also return a generic response
+  // without leaking any raw database error message.
+  it("returns a generic error when orderItemsTable.findFirst fails after the order is found, leaking nothing", async () => {
+    // ordersTable.findFirst succeeds and returns a matching row.
+    // orderItemsTable.findFirst then rejects — simulating a partial DB outage.
+    vi.mocked(db.query.orderItemsTable.findFirst).mockRejectedValueOnce(
+      new Error("connection pool exhausted"),
+    );
+    const res = await lookupOrder(
+      "gallery-one",
+      idle,
+      form("buyer@example.com", "abcd1234"),
+    );
+    expect(res.status).toBe("error");
+    // Must not leak any raw DB error text.
+    expect(res.error).not.toContain("connection pool exhausted");
+    expect(res.order).toBeNull();
+  });
+
+  it("returns a generic error (not not_found) when the item lookup fails, so callers cannot distinguish a missing item from a DB outage", async () => {
+    vi.mocked(db.query.orderItemsTable.findFirst).mockRejectedValueOnce(
+      new Error("timeout"),
+    );
+    const res = await lookupOrder(
+      "gallery-one",
+      idle,
+      form("buyer@example.com", "abcd1234"),
+    );
+    // "error" is the correct generic response — "not_found" must not be
+    // returned because that would reveal order existence to an attacker.
+    expect(res.status).toBe("error");
+    expect(res.order).toBeNull();
+  });
 });

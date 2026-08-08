@@ -1,4 +1,12 @@
 /**
+ * Tasks #50 and others — Background confirmation-email sweep:
+ *
+ * #50 — Buyer confirmation email must survive a second database write failure
+ *       after the Stripe payment.  When email send succeeds but the follow-up
+ *       DB update (setting emailSentAt) fails, the sweep must not crash or
+ *       swallow the error silently.  The order remains re-selectable so the
+ *       sweep can retry and mark it sent next run.
+ *
  * Covers the background confirmation-email sweep: it picks up PAID orders
  * with no emailSentAt, re-sends and marks them sent, records failures with
  * incremented attempt counts, respects exponential backoff, and never
@@ -240,6 +248,103 @@ describe("sweepUnsentConfirmationEmails", () => {
     expect(MAX_EMAIL_ATTEMPTS).toBe(5);
     expect(backoffMs(1)).toBe(BASE_BACKOFF_MS);
     expect(backoffMs(3)).toBe(BASE_BACKOFF_MS * 4);
+  });
+
+  // ── Task #50 — post-email DB write failure ────────────────────────────────
+  //
+  // The confirmation email is sent BEFORE the DB is updated.  If the DB
+  // update rejects (e.g. Neon connection dropped right after the SMTP call),
+  // the sweep must not crash and must leave the order re-selectable so the
+  // next run can mark it sent.  The email is counted as failed (not sent),
+  // and the failure is logged — not silently swallowed.
+
+  it("(#50) does not crash when the post-email DB update fails", async () => {
+    const { db } = await import("@workspace/db");
+    state.candidates = [order()];
+    sendOrderConfirmation.mockResolvedValueOnce(undefined);
+
+    // Make the first db.update call (emailSentAt write) reject.
+    vi.mocked(db.update).mockImplementationOnce(() => ({
+      set: (_vals: any) => ({
+        where: () => Promise.reject(new Error("DB connection lost")),
+      }),
+    }) as any);
+
+    // Sweep must not throw even though the DB write failed after email send.
+    await expect(sweepUnsentConfirmationEmails(NOW)).resolves.toBeDefined();
+  });
+
+  it("(#50) reports the order as failed (not sent) when the post-email DB write fails", async () => {
+    const { db } = await import("@workspace/db");
+    state.candidates = [order()];
+    sendOrderConfirmation.mockResolvedValueOnce(undefined);
+
+    // First update (emailSentAt) fails; second update (error bookkeeping) succeeds.
+    vi.mocked(db.update)
+      .mockImplementationOnce(() => ({
+        set: (_vals: any) => ({
+          where: () => Promise.reject(new Error("DB connection lost")),
+        }),
+      }) as any)
+      .mockImplementationOnce(() => ({
+        set: (vals: any) => {
+          state.updates.push(vals);
+          return { where: () => Promise.resolve() };
+        },
+      }) as any);
+
+    const result = await sweepUnsentConfirmationEmails(NOW);
+
+    // The send is counted as a failure because emailSentAt was not persisted.
+    expect(result.sent).toBe(0);
+    expect(result.failed).toBe(1);
+  });
+
+  it("(#50) the email was genuinely sent even though DB write failed — order is re-selectable for the next sweep", async () => {
+    // Documents the observable contract: if emailSentAt is never written,
+    // the order stays in the sweep candidate query (emailSentAt IS NULL).
+    // The sweep re-selects and re-sends on the next run.  That duplication
+    // risk is accepted by the current impl; this test pins the behaviour so
+    // any change to "send-once" idempotency is deliberate.
+    const { db } = await import("@workspace/db");
+    state.candidates = [order()];
+    sendOrderConfirmation.mockResolvedValue(undefined);
+
+    // First sweep: email send succeeds but BOTH subsequent DB updates fail
+    // (the emailSentAt write AND the fallback error-bookkeeping write).
+    // Using mockImplementationOnce so the mock auto-restores to the default
+    // after these two calls — no persistent leak.
+    vi.mocked(db.update)
+      .mockImplementationOnce(
+        () =>
+          ({
+            set: (_vals: any) => ({
+              where: () => Promise.reject(new Error("DB outage")),
+            }),
+          }) as any,
+      )
+      .mockImplementationOnce(
+        () =>
+          ({
+            set: (_vals: any) => ({
+              where: () => Promise.reject(new Error("DB outage")),
+            }),
+          }) as any,
+      );
+
+    const result1 = await sweepUnsentConfirmationEmails(NOW);
+    expect(result1.failed).toBe(1);
+
+    // Second sweep — DB back to normal (mockImplementationOnce exhausted,
+    // falls back to vi.mock default).  Order still a candidate because
+    // emailSentAt was never written.
+    state.candidates = [order()];
+    sendOrderConfirmation.mockResolvedValueOnce(undefined);
+    const result2 = await sweepUnsentConfirmationEmails(NOW);
+    expect(result2.sent).toBe(1);
+    const sentUpdate = state.updates.find((u) => u.emailSentAt !== undefined);
+    expect(sentUpdate).toBeDefined();
+    expect(sentUpdate!.emailSentAt).toBe(NOW);
   });
 });
 

@@ -108,14 +108,23 @@ export async function sweepUnsentConfirmationEmails(
         `Email sweep: confirmation failed for order ${order.id} (attempt ${order.emailAttempts + 1}/${MAX_EMAIL_ATTEMPTS}):`,
         message,
       );
-      await db
-        .update(ordersTable)
-        .set({
-          emailError: message,
-          emailAttempts: order.emailAttempts + 1,
-          emailLastAttemptAt: now,
-        })
-        .where(eq(ordersTable.id, order.id));
+      // Guard the bookkeeping write independently — a DB outage must not
+      // crash the whole sweep; the order stays re-selectable for the next run.
+      try {
+        await db
+          .update(ordersTable)
+          .set({
+            emailError: message,
+            emailAttempts: order.emailAttempts + 1,
+            emailLastAttemptAt: now,
+          })
+          .where(eq(ordersTable.id, order.id));
+      } catch (dbErr) {
+        console.error(
+          `Email sweep: could not persist failure state for order ${order.id}:`,
+          (dbErr as any)?.message ?? String(dbErr),
+        );
+      }
       result.failed++;
 
       // Final attempt just failed — notify the gallery once so they can
@@ -309,14 +318,23 @@ export async function sweepUnsentStatusEmails(
         `Email sweep: status update failed for order ${order.id} (attempt ${order.statusEmailAttempts + 1}/${MAX_EMAIL_ATTEMPTS}):`,
         message,
       );
-      await db
-        .update(ordersTable)
-        .set({
-          statusEmailError: message,
-          statusEmailAttempts: order.statusEmailAttempts + 1,
-          statusEmailLastAttemptAt: now,
-        })
-        .where(eq(ordersTable.id, order.id));
+      // Guard the bookkeeping write independently — a DB outage must not
+      // crash the whole sweep; the order stays re-selectable for the next run.
+      try {
+        await db
+          .update(ordersTable)
+          .set({
+            statusEmailError: message,
+            statusEmailAttempts: order.statusEmailAttempts + 1,
+            statusEmailLastAttemptAt: now,
+          })
+          .where(eq(ordersTable.id, order.id));
+      } catch (dbErr) {
+        console.error(
+          `Email sweep: could not persist status-email failure state for order ${order.id}:`,
+          (dbErr as any)?.message ?? String(dbErr),
+        );
+      }
       result.failed++;
     }
   }
