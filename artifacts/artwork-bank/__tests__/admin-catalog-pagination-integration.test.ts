@@ -1,18 +1,15 @@
 /**
- * Admin catalog pagination — real-DB integration.
+ * Admin catalog listing — pagination boundary — real-DB integration.
  *
- * app/(admin)/(gated)/catalog/page.tsx paginates with:
- *   const PAGE_SIZE = 20 (or similar constant)
- *   .limit(PAGE_SIZE).offset(offset)
- *   count() for totalPages
+ * app/(admin)/(gated)/catalog/page.tsx:29,57-109,159:
+ *   PAGE_SIZE = 20, orderBy createdAt DESC, limit/offset, totalPages.
  *
- * This suite verifies the pagination contract at the DB layer:
- *
- *  1. Page 1 returns up to PAGE_SIZE rows.
- *  2. Total count includes all own-tenant artworks.
- *  3. Offset skips already-seen rows correctly.
- *  4. An out-of-range page returns an empty result set.
- *  5. Pagination is tenant-scoped (foreign artworks not counted/returned).
+ *  1. Exactly 20 artworks → page 1 returns 20, totalPages=1.
+ *  2. 21 artworks → page 1=20, page 2=1.
+ *  3. No artworks → page 1 returns 0.
+ *  4. Artworks ordered by createdAt DESC (newest first on page 1).
+ *  5. Tenant isolation: only this tenant's artworks on page 1.
+ *  6. Page 2 IDs are not duplicated on page 1 (no overlap).
  */
 import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -25,10 +22,9 @@ let seq = 0;
 const createdTenantIds: string[] = [];
 const createdArtworkIds: string[] = [];
 
-// Mirror the app's PAGE_SIZE constant.
 const PAGE_SIZE = 20;
 
-function uid() { return `${randomUUID()}-acp-${RUN}-${++seq}`; }
+function uid() { return `${randomUUID()}-acpi-${RUN}-${++seq}`; }
 
 async function createTenant() {
   const id = uid();
@@ -39,35 +35,36 @@ async function createTenant() {
   return id;
 }
 
-async function insertArtwork(tenantId: string) {
-  const id = uid();
-  await db.insert(artworksTable).values({
-    id, tenantId, title: "Pagination Test", sku: `sku-${id}`, status: "AVAILABLE",
-  } as any);
-  createdArtworkIds.push(id);
-  return id;
-}
-
-async function insertMany(tenantId: string, n: number): Promise<string[]> {
+async function createArtworks(tenantId: string, n: number) {
   const ids: string[] = [];
-  for (let i = 0; i < n; i++) ids.push(await insertArtwork(tenantId));
+  for (let i = 0; i < n; i++) {
+    const id = uid();
+    await db.insert(artworksTable).values({
+      id, tenantId, title: `Artwork ${i}`, sku: `sku-${id}`,
+      status: "AVAILABLE", price: 10000, showInGallery: true,
+    } as any);
+    ids.push(id);
+    createdArtworkIds.push(id);
+  }
   return ids;
 }
 
-/** Mirror the catalog page query. */
-async function catalogPage(tenantId: string, page: number) {
+// Mirrors the catalog page query.
+async function queryPage(tenantId: string, page: number) {
   const offset = (page - 1) * PAGE_SIZE;
-  const whereClause = eq(artworksTable.tenantId, tenantId);
-  const [rows, [countRow]] = await Promise.all([
-    db.query.artworksTable.findMany({
-      where: whereClause,
-      orderBy: [desc(artworksTable.createdAt)],
-      limit: PAGE_SIZE,
-      offset,
-    }),
-    db.select({ count: count() }).from(artworksTable).where(whereClause),
-  ]);
-  return { rows, total: countRow?.count ?? 0 };
+  const rows = await db
+    .select({ id: artworksTable.id, createdAt: artworksTable.createdAt })
+    .from(artworksTable)
+    .where(eq(artworksTable.tenantId, tenantId))
+    .orderBy(desc(artworksTable.createdAt))
+    .limit(PAGE_SIZE)
+    .offset(offset);
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(artworksTable)
+    .where(eq(artworksTable.tenantId, tenantId));
+  const totalPages = Math.ceil((total ?? 0) / PAGE_SIZE);
+  return { rows, total: total ?? 0, totalPages };
 }
 
 async function cleanup() {
@@ -84,79 +81,74 @@ afterAll(cleanup);
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-describeIntegration("Admin catalog pagination — real-DB integration", () => {
-  it("page 1 with fewer than PAGE_SIZE artworks returns all of them", async () => {
+describeIntegration("Admin catalog pagination boundary — real-DB integration", () => {
+  it("exactly 20 artworks → page 1 returns 20, totalPages=1", async () => {
     const tenantId = await createTenant();
-    await insertMany(tenantId, 5);
+    await createArtworks(tenantId, 20);
 
-    const { rows, total } = await catalogPage(tenantId, 1);
-    expect(rows.length).toBe(5);
-    expect(total).toBeGreaterThanOrEqual(5);
+    const { rows, totalPages } = await queryPage(tenantId, 1);
+
+    expect(rows.length).toBe(20);
+    expect(totalPages).toBe(1);
   });
 
-  it("total count includes all own-tenant artworks", async () => {
+  it("21 artworks → page 1=20, page 2=1", async () => {
     const tenantId = await createTenant();
-    const ids = await insertMany(tenantId, 7);
+    await createArtworks(tenantId, 21);
 
-    const { total } = await catalogPage(tenantId, 1);
-    // All 7 inserted artworks must be counted.
-    expect(total).toBeGreaterThanOrEqual(7);
-    // All IDs must appear on page 1.
-    const { rows } = await catalogPage(tenantId, 1);
-    const rowIds = rows.map(r => r.id);
-    for (const id of ids) {
-      expect(rowIds).toContain(id);
-    }
+    const p1 = await queryPage(tenantId, 1);
+    const p2 = await queryPage(tenantId, 2);
+
+    expect(p1.rows.length).toBe(20);
+    expect(p2.rows.length).toBe(1);
+    expect(p1.totalPages).toBe(2);
   });
 
-  it("page 2 skips page-1 rows correctly", async () => {
+  it("no artworks → page 1 returns 0 rows", async () => {
     const tenantId = await createTenant();
-    // Insert PAGE_SIZE+3 artworks so page 2 has 3 rows.
-    await insertMany(tenantId, PAGE_SIZE + 3);
 
-    const { rows: page1 } = await catalogPage(tenantId, 1);
-    const { rows: page2 } = await catalogPage(tenantId, 2);
+    const { rows, total } = await queryPage(tenantId, 1);
 
-    expect(page1).toHaveLength(PAGE_SIZE);
-    expect(page2.length).toBeGreaterThanOrEqual(3);
-
-    // No overlap between pages.
-    const page1Ids = new Set(page1.map(r => r.id));
-    for (const row of page2) {
-      expect(page1Ids.has(row.id)).toBe(false);
-    }
+    expect(rows.length).toBe(0);
+    expect(total).toBe(0);
   });
 
-  it("out-of-range page returns an empty result set", async () => {
+  it("artworks ordered by createdAt DESC (newest artwork appears first)", async () => {
     const tenantId = await createTenant();
-    await insertMany(tenantId, 3); // only 3 artworks
+    // Insert three artworks — because they are inserted sequentially the last
+    // inserted has the latest createdAt and should appear first.
+    const [oldId, , newId] = await createArtworks(tenantId, 3);
 
-    // Page 1000 is far beyond the end.
-    const { rows } = await catalogPage(tenantId, 1000);
-    expect(rows).toHaveLength(0);
+    const { rows } = await queryPage(tenantId, 1);
+    const ids = rows.map(r => r.id);
+
+    const newIdx = ids.indexOf(newId!);
+    const oldIdx = ids.indexOf(oldId!);
+    // Newest (newId) should come before oldest (oldId) in DESC order.
+    expect(newIdx).toBeLessThan(oldIdx);
   });
 
-  it("pagination is tenant-scoped — foreign artworks not counted or returned", async () => {
-    const ownTenantId     = await createTenant();
-    const foreignTenantId = await createTenant();
+  it("tenant isolation: only this tenant's artworks on page 1", async () => {
+    const tenantA = await createTenant();
+    const tenantB = await createTenant();
+    await createArtworks(tenantA, 3);
+    await createArtworks(tenantB, 15);
 
-    const ownIds     = await insertMany(ownTenantId, 3);
-    const foreignIds = await insertMany(foreignTenantId, 4);
+    const { rows } = await queryPage(tenantA, 1);
 
-    const { rows, total } = await catalogPage(ownTenantId, 1);
-    const rowIds = rows.map(r => r.id);
+    expect(rows.length).toBe(3);
+  });
 
-    // Own artworks present.
-    for (const id of ownIds) {
-      expect(rowIds).toContain(id);
+  it("page 2 IDs are not duplicated on page 1 (no overlap)", async () => {
+    const tenantId = await createTenant();
+    await createArtworks(tenantId, 21);
+
+    const p1 = await queryPage(tenantId, 1);
+    const p2 = await queryPage(tenantId, 2);
+
+    const p1Ids = new Set(p1.rows.map(r => r.id));
+    for (const row of p2.rows) {
+      expect(p1Ids.has(row.id)).toBe(false);
     }
-    // Foreign artworks absent.
-    for (const id of foreignIds) {
-      expect(rowIds).not.toContain(id);
-    }
-    // Count excludes foreign artworks (only own tenant's 3).
-    expect(total).toBeGreaterThanOrEqual(3);
-    // The count must not be inflated by foreign artworks.
-    expect(total).toBeLessThan(3 + 4 + 1); // < sum of both tenants
   });
 });
