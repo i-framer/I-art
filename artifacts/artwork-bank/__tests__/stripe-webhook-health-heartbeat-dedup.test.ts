@@ -165,6 +165,100 @@ describe("stripe-webhook-health.yml — heartbeat dedup wiring (structural)", ()
     // Restore, Send heartbeat, Mark sent, Save cache, Silence step = at least 4
     expect(occurrences).toBeGreaterThanOrEqual(4);
   });
+
+  it("the heartbeat dedup key rotates daily (not hourly)", () => {
+    const block = extractStepBlock("Compute heartbeat dedup key");
+    // Daily key uses %Y-%m-%d (no hour component)
+    expect(block).toContain("%Y-%m-%d");
+    // Must NOT include the hour component used by the alert dedup key
+    expect(block).not.toContain("%Y-%m-%d-%H");
+  });
+
+  it("the heartbeat dedup key uses 'date -u' (UTC flag) not bare 'date'", () => {
+    const block = extractStepBlock("Compute heartbeat dedup key");
+    // The -u flag forces UTC regardless of the runner's local timezone.
+    // Without -u, a runner in e.g. AEST (+10) would rotate the key 10 hours
+    // earlier than UTC midnight, causing duplicate or missing daily heartbeats.
+    expect(block).toContain("date -u");
+    // Sanity: the full expected command fragment is present
+    expect(block).toContain("date -u +%Y-%m-%d");
+  });
+
+  it("the 'Restore heartbeat-sent cache' uses the heartbeat-dedup step's key output", () => {
+    const block = extractStepBlock("Restore heartbeat-sent cache");
+    expect(block).toContain("steps.heartbeat-dedup.outputs.key");
+  });
+
+  it("the 'Save heartbeat-sent cache' uses the heartbeat-dedup step's key output", () => {
+    const block = extractStepBlock("Save heartbeat-sent cache");
+    expect(block).toContain("steps.heartbeat-dedup.outputs.key");
+  });
+});
+
+// ── 1b. Bash simulation — UTC date flag produces same key regardless of TZ ─────
+//
+// Confirms that `date -u +%Y-%m-%d` yields an identical key when the TZ
+// environment variable is set to a timezone far from UTC (e.g. Australia/Sydney,
+// UTC+10/+11).  Without the -u flag, the date command would use local time and
+// the key could rotate up to 14 hours before or after UTC midnight, causing
+// duplicate or missed daily heartbeats when the runner is not in UTC.
+
+describe("bash simulation — heartbeat dedup key is UTC-pinned", () => {
+  /**
+   * Run the exact bash fragment from the "Compute heartbeat dedup key" step
+   * and return the generated KEY value, with the given TZ.
+   */
+  function computeKey(tz: string): string {
+    // Mirror the exact bash from the workflow step (healthy / non-dispatch path):
+    //   KEY="webhook-heartbeat-$(date -u +%Y-%m-%d)"
+    const script = `
+KEY="webhook-heartbeat-$(date -u +%Y-%m-%d)"
+echo "$KEY"
+`;
+    const { stdout, exitCode } = runBash(script, { TZ: tz });
+    expect(exitCode).toBe(0);
+    return stdout.trim();
+  }
+
+  it("same UTC date key is produced when TZ=UTC", () => {
+    const key = computeKey("UTC");
+    expect(key).toMatch(/^webhook-heartbeat-\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("same UTC date key is produced when TZ=Australia/Sydney (UTC+10/+11)", () => {
+    const utcKey = computeKey("UTC");
+    const sydneyKey = computeKey("Australia/Sydney");
+    // Both must produce the same key — date -u ignores TZ.
+    expect(sydneyKey).toBe(utcKey);
+  });
+
+  it("same UTC date key is produced when TZ=America/New_York (UTC-5/-4)", () => {
+    const utcKey = computeKey("UTC");
+    const nyKey = computeKey("America/New_York");
+    expect(nyKey).toBe(utcKey);
+  });
+
+  it("same UTC date key is produced when TZ=Asia/Tokyo (UTC+9)", () => {
+    const utcKey = computeKey("UTC");
+    const tokyoKey = computeKey("Asia/Tokyo");
+    expect(tokyoKey).toBe(utcKey);
+  });
+
+  it("key format is webhook-heartbeat-YYYY-MM-DD (daily granularity, no hour)", () => {
+    const key = computeKey("UTC");
+    // Must match daily granularity exactly — no hour component.
+    expect(key).toMatch(/^webhook-heartbeat-\d{4}-\d{2}-\d{2}$/);
+    // Must NOT have a fourth hyphen-separated numeric segment (which would be
+    // the hour component used by the alert dedup key).
+    expect(key).not.toMatch(/^webhook-heartbeat-\d{4}-\d{2}-\d{2}-\d{2}/);
+  });
+
+  it("two simulated runs on the same UTC date produce identical keys", () => {
+    // Run the key computation twice; since date -u is used, both must agree.
+    const key1 = computeKey("UTC");
+    const key2 = computeKey("Australia/Sydney");
+    expect(key1).toBe(key2);
+  });
 });
 
 // ── 2. Bash simulation of the step-guard logic ────────────────────────────────
