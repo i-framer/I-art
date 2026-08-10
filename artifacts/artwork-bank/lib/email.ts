@@ -906,6 +906,106 @@ export async function sendSmokeTestFailureEmail({
   }
 }
 
+/**
+ * Sends an operator alert when the scheduled Stripe webhook health probe
+ * detects that the endpoint is redirecting (3xx) instead of accepting the POST.
+ *
+ * Called by `scripts/notify-webhook-redirect.ts` which is invoked by the
+ * `stripe-webhook-health` GitHub Actions workflow on failure.
+ *
+ * Skipped silently when PLATFORM_ADMIN_EMAIL or a transport is not configured.
+ */
+export async function sendWebhookRedirectEmail({
+  webhookUrl,
+  httpCode,
+  location,
+  workflowRunUrl,
+  slackFailure,
+}: {
+  /** The probed webhook URL. */
+  webhookUrl: string;
+  /** The HTTP status code returned (e.g. "308"). */
+  httpCode: string;
+  /** The Location header value from the redirect response, if any. */
+  location?: string;
+  /** Direct link to the failed GitHub Actions run. */
+  workflowRunUrl: string;
+  /** When the Slack notification also failed, pass the error here. */
+  slackFailure?: string;
+}): Promise<boolean> {
+  const adminEmail = process.env.PLATFORM_ADMIN_EMAIL;
+
+  if (!isEmailTransportConfigured() || !adminEmail) {
+    console.log(
+      `[Webhook redirect email skipped — ${!isEmailTransportConfigured() ? "email transport (SMTP_HOST or RESEND_API_KEY)" : "PLATFORM_ADMIN_EMAIL"} not set]`,
+    );
+    return false;
+  }
+
+  try {
+    await deliverEmail({
+      from: getOrdersFrom(),
+      to: adminEmail,
+      subject: `🚨 Action needed — Stripe webhook endpoint is redirecting (HTTP ${httpCode})`,
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+          <h2 style="color:#b91c1c;">Stripe webhook endpoint is redirecting</h2>
+          <p>The scheduled webhook health probe detected that your Stripe webhook
+          endpoint is returning a <strong>redirect (HTTP ${htmlEscape(httpCode)})</strong>
+          instead of accepting the request directly.</p>
+          <p><strong>Stripe does not follow redirects.</strong> Every webhook delivery
+          is being counted as a failure. Orders and subscription events are silently lost
+          until this is fixed.</p>
+          <div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
+            <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">Details</p>
+            <ul style="margin:0;padding-left:20px;color:#7f1d1d;">
+              <li>Probed URL: <code>${htmlEscape(webhookUrl)}</code></li>
+              <li>HTTP status: <strong>${htmlEscape(httpCode)}</strong></li>
+              ${location ? `<li>Redirects to: <code>${htmlEscape(location)}</code></li>` : ""}
+            </ul>
+          </div>
+          <div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
+            <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">Fix (DEPLOY.md §4, Option A — recommended)</p>
+            <ol style="margin:0;padding-left:20px;color:#7f1d1d;">
+              <li>Vercel → Project → Settings → Domains → click ⋮ next to <code>i-art.com.au</code> → <strong>Set as primary</strong>.</li>
+              <li>Ensure <code>NEXT_PUBLIC_SITE_URL=https://i-art.com.au</code> (no www).</li>
+              <li>Re-register the Stripe webhook as <code>https://i-art.com.au/api/stripe/webhook</code>.</li>
+              <li>Run <code>bash scripts/check-webhook-redirect.sh</code> and confirm ✅ No redirect.</li>
+              <li>Send a test event from Stripe Dashboard and confirm 200 in the delivery log.</li>
+            </ol>
+          </div>
+          ${
+            workflowRunUrl
+              ? `<p style="margin:16px 0;">
+                  <a href="${htmlEscape(workflowRunUrl)}"
+                     style="display:inline-block;padding:10px 20px;background:#1c1917;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">
+                    View failed workflow run →
+                  </a>
+                </p>`
+              : ""
+          }
+          ${
+            slackFailure
+              ? `<div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
+                <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">⚠️ Slack notification also failed</p>
+                <p style="margin:0;color:#7f1d1d;font-size:13px;">The Slack alert could not be delivered. Your Slack connector may need to be reconnected.</p>
+                <p style="margin:8px 0 0;color:#7f1d1d;font-size:12px;font-family:monospace;">${htmlEscape(slackFailure.slice(0, 300))}</p>
+              </div>`
+              : ""
+          }
+        </div>
+      `,
+    });
+    return true;
+  } catch (err) {
+    console.error(
+      "[Webhook redirect email] Failed to send operator notification:",
+      (err as any)?.message ?? String(err),
+    );
+    return false;
+  }
+}
+
 export async function sendOrderConfirmation({
   buyerEmail,
   buyerName,

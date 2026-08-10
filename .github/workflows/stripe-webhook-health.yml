@@ -1,0 +1,216 @@
+name: Stripe webhook health probe
+
+# Probes https://i-art.com.au/api/stripe/webhook every 5 minutes.
+# If the endpoint returns a 3xx redirect (which Stripe does NOT follow),
+# the operator is alerted immediately via Slack and email so the issue is
+# caught within 10 minutes instead of being discovered manually.
+#
+# Background: Vercel's default behaviour redirects the apex domain
+# (i-art.com.au) to www.i-art.com.au when www is set as the primary domain.
+# Stripe webhooks registered at the apex URL then fail silently because
+# Stripe counts the 3xx as a delivery failure and does not retry the POST
+# at the redirect target.  See DEPLOY.md §4 for the fix.
+#
+# Notification channels (tried in order by the notifier script):
+#   1. Slack — SLACK_BILLING_ALERTS_CHANNEL + SLACK_BOT_TOKEN
+#   2. Slack — SLACK_WEBHOOK_URL (incoming webhook)
+#   3. Email — RESEND_API_KEY or SMTP_* + PLATFORM_ADMIN_EMAIL
+#   4. Prominent CI log banner (always, even without any channel configured)
+#
+# Required GitHub Actions repository secrets:
+#   (none — the probe runs without secrets; alerts use optional ones below)
+#
+# Optional secrets (configure at least one Slack option for timely alerts):
+#   SLACK_BILLING_ALERTS_CHANNEL  — channel name or ID (e.g. "ops-alerts")
+#   SLACK_BOT_TOKEN               — Slack bot OAuth token (xoxb-...)
+#   SLACK_WEBHOOK_URL             — Slack incoming webhook URL
+#   PLATFORM_ADMIN_EMAIL          — fallback email recipient
+#   RESEND_API_KEY                — Resend API key for email fallback
+#   SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS — SMTP email fallback
+
+on:
+  schedule:
+    # Every 5 minutes — ensures the operator is alerted within 10 minutes of
+    # a redirect being introduced (GitHub Actions scheduling has ~1 min jitter).
+    - cron: "*/5 * * * *"
+
+  # Allow manual trigger from the GitHub Actions UI for on-demand checks.
+  workflow_dispatch:
+    inputs:
+      webhook_url:
+        description: >
+          Webhook URL to probe (defaults to https://i-art.com.au/api/stripe/webhook).
+          Override this to test a staging or preview URL.
+        required: false
+        type: string
+
+jobs:
+  webhook-health:
+    name: Probe Stripe webhook endpoint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve target URL
+        id: resolve
+        env:
+          INPUT_URL: ${{ github.event.inputs.webhook_url }}
+        run: |
+          URL="${INPUT_URL:-https://i-art.com.au/api/stripe/webhook}"
+          # Validate scheme — only https:// is accepted.
+          if [[ "$URL" != https://* ]]; then
+            echo "❌  webhook_url must begin with https://"
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Probe target: $URL"
+
+      - name: Probe endpoint for redirect
+        id: probe
+        env:
+          TARGET_URL: ${{ steps.resolve.outputs.url }}
+        run: |
+          URL="$TARGET_URL"
+
+          echo "→ Probing $URL"
+          echo "  (checking for 3xx redirect — Stripe does not follow redirects)"
+          echo ""
+
+          # --max-redirs 0  prevents curl from following any redirect.
+          # -s              suppresses the progress meter.
+          # -o /dev/null    discards the body.
+          # -w "%{http_code}" prints just the status code.
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-redirs 0 \
+            --connect-timeout 10 \
+            --max-time 15 \
+            "$URL" 2>/tmp/probe_curl_err || true)
+
+          # Capture curl stderr (DNS/network errors).
+          if [ -s /tmp/probe_curl_err ]; then
+            echo "curl error:"
+            cat /tmp/probe_curl_err
+          fi
+
+          echo "HTTP status: $HTTP_CODE"
+
+          # Capture the Location header for the alert message.
+          LOCATION=$(curl -sI \
+            --max-redirs 0 \
+            --connect-timeout 10 \
+            --max-time 15 \
+            "$URL" 2>/dev/null \
+            | grep -i "^location:" | tr -d '\r' | awk '{print $2}') || true
+
+          if [[ -n "$LOCATION" ]]; then
+            echo "Location:    $LOCATION"
+          fi
+
+          echo ""
+          echo "http_code=$HTTP_CODE"     >> "$GITHUB_OUTPUT"
+          echo "location=$LOCATION"       >> "$GITHUB_OUTPUT"
+
+          if [[ "$HTTP_CODE" =~ ^3 ]]; then
+            echo "❌  REDIRECT DETECTED — Stripe will NOT follow this ${HTTP_CODE}."
+            echo "    Webhook deliveries to $URL are failing silently."
+            echo "    See DEPLOY.md §4 for the fix (set i-art.com.au as primary domain)."
+            echo "redirect=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "redirect=false" >> "$GITHUB_OUTPUT"
+            if [[ "$HTTP_CODE" == "405" || "$HTTP_CODE" == "400" || "$HTTP_CODE" == "200" ]]; then
+              echo "✅  No redirect — endpoint returned HTTP $HTTP_CODE."
+              echo "    Stripe webhook deliveries should succeed."
+            elif [[ -z "$HTTP_CODE" || "$HTTP_CODE" == "000" ]]; then
+              echo "⚠️  curl could not reach $URL (empty status code)."
+              echo "    Check DNS and network connectivity."
+              echo "    This probe is treated as inconclusive — no alert sent."
+            else
+              echo "⚠️  Unexpected HTTP $HTTP_CODE — no redirect but endpoint may not be reachable."
+              echo "    Investigate before assuming webhooks are working."
+            fi
+          fi
+
+      # ── Alert: only fires when a redirect is detected ────────────────────────
+      # Runs only on redirect detection (not on network failures or unexpected
+      # non-3xx codes) to avoid noisy false-positive alerts during transient
+      # outages.  The notifier script tries Slack then email then stderr banner.
+
+      - name: Checkout (alert only)
+        if: steps.probe.outputs.redirect == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm (alert only)
+        if: steps.probe.outputs.redirect == 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js (alert only)
+        if: steps.probe.outputs.redirect == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies (alert only)
+        if: steps.probe.outputs.redirect == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Send operator alert
+        if: steps.probe.outputs.redirect == 'true'
+        env:
+          WEBHOOK_URL:    ${{ steps.resolve.outputs.url }}
+          HTTP_CODE:      ${{ steps.probe.outputs.http_code }}
+          REDIRECT_LOCATION: ${{ steps.probe.outputs.location }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Slack — tried in order by the notifier:
+          SLACK_BILLING_ALERTS_CHANNEL: ${{ secrets.SLACK_BILLING_ALERTS_CHANNEL }}
+          SLACK_BOT_TOKEN:              ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_WEBHOOK_URL:            ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Email fallback:
+          PLATFORM_ADMIN_EMAIL: ${{ secrets.PLATFORM_ADMIN_EMAIL }}
+          RESEND_API_KEY:       ${{ secrets.RESEND_API_KEY }}
+          SMTP_HOST:            ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:            ${{ secrets.SMTP_PORT }}
+          SMTP_USER:            ${{ secrets.SMTP_USER }}
+          SMTP_PASS:            ${{ secrets.SMTP_PASS }}
+          EMAIL_FROM:           ${{ secrets.EMAIL_FROM }}
+        run: |
+          pnpm --filter @workspace/artwork-bank exec tsx scripts/notify-webhook-redirect.ts || true
+
+      - name: Fail the job when redirect detected
+        if: steps.probe.outputs.redirect == 'true'
+        run: |
+          echo "❌  Stripe webhook endpoint is redirecting (HTTP ${{ steps.probe.outputs.http_code }})."
+          echo "    Operator alert sent. Fix DEPLOY.md §4 to restore webhook delivery."
+          exit 1
+
+      - name: Summary
+        if: always()
+        env:
+          HTTP_CODE: ${{ steps.probe.outputs.http_code }}
+          REDIRECT:  ${{ steps.probe.outputs.redirect }}
+          LOCATION:  ${{ steps.probe.outputs.location }}
+          URL:       ${{ steps.resolve.outputs.url }}
+        run: |
+          if [ "$REDIRECT" = "true" ]; then
+            echo "### 🚨 Stripe webhook redirect detected" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Probed URL | \`$URL\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| HTTP status | **$HTTP_CODE** |" >> "$GITHUB_STEP_SUMMARY"
+            [ -n "$LOCATION" ] && echo "| Redirects to | \`$LOCATION\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Stripe does not follow redirects.** All webhook deliveries are failing silently." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Fix:** Follow DEPLOY.md §4 — set \`i-art.com.au\` as the primary domain in Vercel, then re-register the webhook." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$REDIRECT" = "false" ]; then
+            echo "### ✅ Stripe webhook health: OK" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Endpoint \`$URL\` returned HTTP **$HTTP_CODE** — no redirect detected." >> "$GITHUB_STEP_SUMMARY"
+            echo "Stripe webhook deliveries should succeed." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ⚠️ Stripe webhook health: inconclusive" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "The probe step did not complete — see job log for details." >> "$GITHUB_STEP_SUMMARY"
+          fi

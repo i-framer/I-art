@@ -169,6 +169,51 @@ This prints the reconnect steps and exits without running the smoke test.
 
 ---
 
+## Stripe webhook health probe
+
+A GitHub Actions workflow (`.github/workflows/stripe-webhook-health.yml`) runs
+every **5 minutes** and probes `https://i-art.com.au/api/stripe/webhook` for
+3xx redirects.
+
+Stripe does not follow redirects — a redirect means every webhook delivery
+counts as a failure and orders/subscription events are silently lost.
+
+### When the alert fires
+
+The operator receives a Slack message (and/or email) with the HTTP status code,
+the redirect target, and the fix steps.  The job also fails so GitHub marks the
+run red in the Actions tab.
+
+**Fix:** follow **DEPLOY.md §4, Option A**:
+1. Vercel → Project → Settings → Domains → ⋮ next to `i-art.com.au` → **Set as primary**.
+2. Ensure `NEXT_PUBLIC_SITE_URL=https://i-art.com.au` (no `www`).
+3. Re-register the Stripe webhook as `https://i-art.com.au/api/stripe/webhook`.
+4. Confirm the redirect is gone: `bash scripts/check-webhook-redirect.sh`
+5. Send a test event from the Stripe Dashboard and confirm the delivery log shows **200**.
+
+### Notification channels
+
+The notifier (`scripts/notify-webhook-redirect.ts`) tries in order:
+1. **Slack** — `SLACK_BILLING_ALERTS_CHANNEL` + `SLACK_BOT_TOKEN`
+2. **Slack incoming webhook** — `SLACK_WEBHOOK_URL`
+3. **Email** — `RESEND_API_KEY` or `SMTP_*` + `PLATFORM_ADMIN_EMAIL`
+4. **CI log banner** — always printed, even with no channel configured
+
+Add at least one Slack option as a GitHub Actions repository secret for timely
+(sub-10-minute) alerts.
+
+### Manual probe
+
+```bash
+bash scripts/check-webhook-redirect.sh
+# or with a custom URL:
+bash scripts/check-webhook-redirect.sh https://www.i-art.com.au/api/stripe/webhook
+```
+
+Exit codes: `0` = no redirect, `1` = redirect detected, `2` = curl/network error.
+
+---
+
 ## See also
 
 - `artifacts/artwork-bank/scripts/smoke-billing-alert.ts` — full smoke-test
