@@ -897,11 +897,49 @@ export async function sendSmokeTestFailureEmail({
     });
     return true;
   } catch (err) {
+    const errMsg = (err as any)?.message ?? String(err);
     // Best-effort — log but do not propagate.
     console.error(
       "[Smoke test email] Failed to send operator notification:",
-      (err as any)?.message ?? String(err),
+      errMsg,
     );
+    // Surface the SMTP/transport failure in the GitHub Actions step summary so
+    // the operator sees it in the workflow run UI even when stderr is not
+    // monitored.  GITHUB_STEP_SUMMARY is set automatically by GitHub Actions;
+    // writing to it is a no-op outside CI.
+    const summaryFile = process.env.GITHUB_STEP_SUMMARY;
+    if (summaryFile) {
+      try {
+        const { appendFileSync } = await import("fs");
+        appendFileSync(
+          summaryFile,
+          [
+            "",
+            "### ⚠️ Email transport failure — operator NOT notified by email",
+            "",
+            "The smoke-test failure alert email could **not** be delivered.",
+            "The operator will not receive an email notification until the transport is fixed.",
+            "",
+            `**Delivery error:** \`${errMsg.replace(/`/g, "'").slice(0, 300)}\``,
+            "",
+            "**Fix:** verify that the following GitHub Actions repository secrets are set",
+            "and point to a working mail server:",
+            "",
+            "| Secret | Purpose |",
+            "| --- | --- |",
+            "| `SMTP_HOST` | Mail-server hostname |",
+            "| `SMTP_PORT` | Mail-server port (default 587) |",
+            "| `SMTP_USER` | SMTP username |",
+            "| `SMTP_PASS` | SMTP password |",
+            "",
+            "Alternatively, set `RESEND_API_KEY` to use the Resend API instead.",
+            "",
+          ].join("\n"),
+        );
+      } catch {
+        // Writing to the step summary failed — nothing we can do here.
+      }
+    }
     return false;
   }
 }
