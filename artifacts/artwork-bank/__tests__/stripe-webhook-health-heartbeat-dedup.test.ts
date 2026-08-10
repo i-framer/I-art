@@ -1043,6 +1043,196 @@ describe("bash simulation — manual-dispatch heartbeat key is unique for unusua
   });
 });
 
+// ── 8b. Manual-dispatch bypass: heartbeat fires even when same-day cache exists ─
+//
+// Task 602 added a manual-dispatch branch to the heartbeat dedup key so each
+// workflow_dispatch run gets a unique cache key:
+//
+//   if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+//     KEY="webhook-heartbeat-manual-${{ github.run_id }}"
+//   else
+//     KEY="webhook-heartbeat-$(date -u +%Y-%m-%d)"
+//   fi
+//
+// The critical property being tested here is:
+//
+//   Even when a same-day scheduled heartbeat has already been sent (cache-hit=true
+//   for the daily key), a workflow_dispatch run ALWAYS has a FRESH key that
+//   cannot match the existing cache entry, so the restore step always returns
+//   cache-hit="" (miss), and the heartbeat step guard
+//     `cache-hit != 'true'`
+//   evaluates to "fires" — the Slack notification is NOT silenced.
+//
+// This is the regression test for the class of bug where the manual branch key
+// accidentally matched an existing cache entry, silencing the manual trigger.
+
+describe("bash simulation — manual-dispatch bypass: heartbeat fires even after same-day send", () => {
+  /**
+   * Compute the heartbeat dedup key exactly as the workflow step does, using
+   * the live YAML bash (extracted from the workflow file via extractStepBlock).
+   *
+   * - When eventName is "workflow_dispatch" → manual key  webhook-heartbeat-manual-<runId>
+   * - When eventName is "schedule"          → daily key   webhook-heartbeat-YYYY-MM-DD
+   */
+  function computeHeartbeatKey(
+    eventName: "workflow_dispatch" | "schedule",
+    runId: string,
+  ): string {
+    const stepBlock = extractStepBlock("Compute heartbeat dedup key");
+
+    const runMarker = "run: |\n";
+    const markerIdx = stepBlock.indexOf(runMarker);
+    if (markerIdx === -1)
+      throw new Error(
+        "Could not find 'run: |' in 'Compute heartbeat dedup key' step",
+      );
+
+    const afterMarker = stepBlock.slice(markerIdx + runMarker.length);
+
+    // Strip YAML indentation.
+    const firstContentLine =
+      afterMarker.split("\n").find((l) => l.trim().length > 0) ?? "";
+    const indent = firstContentLine.match(/^(\s+)/)?.[1] ?? "";
+    const lines = afterMarker
+      .split("\n")
+      .map((l) => (indent && l.startsWith(indent) ? l.slice(indent.length) : l));
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "")
+      lines.pop();
+    const rawBash = lines.join("\n");
+
+    // Substitute the two GitHub expression tokens.
+    const bash = rawBash
+      .replace(/\$\{\{\s*github\.event_name\s*\}\}/g, eventName)
+      .replace(/\$\{\{\s*github\.run_id\s*\}\}/g, runId);
+
+    const sentinel = `__HB_KEY__`;
+    const script = `GITHUB_OUTPUT=/dev/null\n${bash}\necho "${sentinel}$KEY"`;
+    const { stdout, exitCode } = runBash(script);
+    expect(exitCode).toBe(0);
+    const sentinelLine = stdout.split("\n").find((l) => l.startsWith(sentinel));
+    return (sentinelLine ?? "").slice(sentinel.length).trim();
+  }
+
+  /**
+   * Given the cache key a workflow step would use, simulate whether the
+   * cache restore would report a hit.  We model the cache as a Set of
+   * "already stored" keys.
+   *
+   * In real Actions:
+   *   - Restore finds the key → cache-hit = "true"
+   *   - Restore does not find the key → cache-hit = "" (not "false")
+   */
+  function simulateCacheRestore(
+    requestedKey: string,
+    storedKeys: Set<string>,
+  ): { cacheHit: string } {
+    return { cacheHit: storedKeys.has(requestedKey) ? "true" : "" };
+  }
+
+  /**
+   * Given cache-hit, decide whether the heartbeat step guard fires.
+   * Mirrors:  steps.probe.outputs.redirect == 'false'
+   *        && steps.heartbeat-cache.outputs.cache-hit != 'true'
+   */
+  function heartbeatGuardFires(cacheHit: string): boolean {
+    const script = `
+REDIRECT="false"
+CACHE_HIT="${cacheHit}"
+if [[ "$REDIRECT" == "false" && "$CACHE_HIT" != "true" ]]; then
+  echo "FIRES=yes"
+else
+  echo "FIRES=no"
+fi
+`;
+    const { stdout } = runBash(script);
+    return stdout.includes("FIRES=yes");
+  }
+
+  it("manual-dispatch key differs from the same-day scheduled key", () => {
+    const runId = "11111111";
+    const scheduledKey = computeHeartbeatKey("schedule", runId);
+    const manualKey = computeHeartbeatKey("workflow_dispatch", runId);
+    // The two keys must be different so the manual run cannot hit the
+    // scheduled-run cache entry.
+    expect(manualKey).not.toBe(scheduledKey);
+    expect(scheduledKey).toMatch(/^webhook-heartbeat-\d{4}-\d{2}-\d{2}$/);
+    expect(manualKey).toMatch(/^webhook-heartbeat-manual-.+$/);
+  });
+
+  it("manual-dispatch run is a cache miss even when the same-day scheduled entry is present", () => {
+    const runId = "22222222";
+    const scheduledKey = computeHeartbeatKey("schedule", runId);
+    const manualKey = computeHeartbeatKey("workflow_dispatch", runId);
+
+    // Simulate: an earlier scheduled run already stored the daily key.
+    const storedKeys = new Set([scheduledKey]);
+
+    // The manual run requests a key the cache has never seen → cache miss.
+    const { cacheHit } = simulateCacheRestore(manualKey, storedKeys);
+    expect(cacheHit).toBe("");
+  });
+
+  it("cache miss on the manual key means the heartbeat step guard fires", () => {
+    const runId = "33333333";
+    const scheduledKey = computeHeartbeatKey("schedule", runId);
+    const manualKey = computeHeartbeatKey("workflow_dispatch", runId);
+
+    // Scheduled daily entry is already in the cache (same-day heartbeat sent).
+    const storedKeys = new Set([scheduledKey]);
+
+    // Manual dispatch → unique key → cache miss → heartbeat fires.
+    const { cacheHit } = simulateCacheRestore(manualKey, storedKeys);
+    expect(heartbeatGuardFires(cacheHit)).toBe(true);
+  });
+
+  it("two distinct manual-dispatch runs on the same day both fire (each has a unique key)", () => {
+    // Two manual dispatches in quick succession: run A then run B.
+    const keyA = computeHeartbeatKey("workflow_dispatch", "44444444");
+    const keyB = computeHeartbeatKey("workflow_dispatch", "55555555");
+
+    // The keys must differ — each run gets its own unique cache key.
+    expect(keyA).not.toBe(keyB);
+
+    // After run A stores its key, run B still gets a cache miss.
+    const storedAfterA = new Set([keyA]);
+    const { cacheHit: cacheHitB } = simulateCacheRestore(keyB, storedAfterA);
+    expect(cacheHitB).toBe("");
+    expect(heartbeatGuardFires(cacheHitB)).toBe(true);
+  });
+
+  it("scheduled run after a manual run is NOT affected (daily key still in cache from scheduled)", () => {
+    // Run order: scheduled → manual → scheduled (same day).
+    // Only the first scheduled run should be silenced by cache-hit=true.
+    const scheduledKey = computeHeartbeatKey("schedule", "66666666");
+    const manualKey = computeHeartbeatKey("workflow_dispatch", "66666666");
+
+    // First scheduled run: cache miss → fires → stores the daily key.
+    const storedKeys = new Set<string>();
+    const firstScheduled = simulateCacheRestore(scheduledKey, storedKeys);
+    expect(heartbeatGuardFires(firstScheduled.cacheHit)).toBe(true);
+    storedKeys.add(scheduledKey);
+
+    // Manual dispatch: its unique key is not in the cache → fires.
+    const manual = simulateCacheRestore(manualKey, storedKeys);
+    expect(heartbeatGuardFires(manual.cacheHit)).toBe(true);
+    storedKeys.add(manualKey);
+
+    // Second scheduled run: the daily key IS in the cache → silenced.
+    const secondScheduled = simulateCacheRestore(scheduledKey, storedKeys);
+    expect(heartbeatGuardFires(secondScheduled.cacheHit)).toBe(false);
+  });
+
+  it("structural check: 'Compute heartbeat dedup key' uses github.run_id in the manual branch", () => {
+    // Confirm the YAML contains the manual branch with run_id so this
+    // property cannot be accidentally removed.
+    const block = extractStepBlock("Compute heartbeat dedup key");
+    expect(block).toContain("workflow_dispatch");
+    expect(block).toContain("github.run_id");
+    // The manual key prefix must be present.
+    expect(block).toContain("webhook-heartbeat-manual-");
+  });
+});
+
 // ── 8. Notifier script — Slack API returns an error response ──────────────────
 //
 // Confirms the heartbeat notifier exits 0 even when credentials ARE set but the
