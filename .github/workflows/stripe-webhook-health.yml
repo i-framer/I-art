@@ -11,6 +11,13 @@ name: Stripe webhook health probe
 # Stripe counts the 3xx as a delivery failure and does not retry the POST
 # at the redirect target.  See DEPLOY.md §4 for the fix.
 #
+# Deduplication: to avoid flooding Slack with up to 288 identical messages
+# per day, the notifier only fires ONCE PER HOUR.  On subsequent runs within
+# the same hour the job still fails (so the Actions tab stays red and the
+# operator can gauge duration), but no further Slack/email message is sent.
+# The dedup window is tracked via a GitHub Actions cache key that rotates
+# every UTC hour.
+#
 # Notification channels (tried in order by the notifier script):
 #   1. Slack — SLACK_BILLING_ALERTS_CHANNEL + SLACK_BOT_TOKEN
 #   2. Slack — SLACK_WEBHOOK_URL (incoming webhook)
@@ -129,34 +136,61 @@ jobs:
             fi
           fi
 
-      # ── Alert: only fires when a redirect is detected ────────────────────────
-      # Runs only on redirect detection (not on network failures or unexpected
-      # non-3xx codes) to avoid noisy false-positive alerts during transient
-      # outages.  The notifier script tries Slack then email then stderr banner.
+      # ── Deduplication guard ──────────────────────────────────────────────────
+      # The cache key rotates every UTC hour.  A cache hit means the alert was
+      # already sent during this hour — skip the notifier to avoid flooding Slack
+      # with repeated messages.  The job still fails (exit 1) every run so the
+      # Actions tab stays red and the operator can count the duration.
+
+      - name: Compute alert dedup key
+        id: dedup
+        if: steps.probe.outputs.redirect == 'true'
+        run: |
+          # Rotate hourly — alert fires at most once per UTC hour while the
+          # redirect persists.  Manual workflow_dispatch runs bypass dedup so
+          # the operator can always force an immediate re-alert.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            KEY="webhook-redirect-alerted-manual-${{ github.run_id }}"
+            echo "Manual trigger — dedup bypassed (unique key per run)."
+          else
+            KEY="webhook-redirect-alerted-$(date -u +%Y-%m-%d-%H)"
+          fi
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+          echo "Alert dedup key: $KEY"
+
+      - name: Restore alert-sent cache
+        id: alert-cache
+        if: steps.probe.outputs.redirect == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/webhook-redirect-alerted
+          key: ${{ steps.dedup.outputs.key }}
+
+      # ── Alert steps: only run on cache miss (first detection in this hour) ──
 
       - name: Checkout (alert only)
-        if: steps.probe.outputs.redirect == 'true'
+        if: steps.probe.outputs.redirect == 'true' && steps.alert-cache.outputs.cache-hit != 'true'
         uses: actions/checkout@v4
 
       - name: Set up pnpm (alert only)
-        if: steps.probe.outputs.redirect == 'true'
+        if: steps.probe.outputs.redirect == 'true' && steps.alert-cache.outputs.cache-hit != 'true'
         uses: pnpm/action-setup@v4
         with:
           version: 10
 
       - name: Set up Node.js (alert only)
-        if: steps.probe.outputs.redirect == 'true'
+        if: steps.probe.outputs.redirect == 'true' && steps.alert-cache.outputs.cache-hit != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
       - name: Install dependencies (alert only)
-        if: steps.probe.outputs.redirect == 'true'
+        if: steps.probe.outputs.redirect == 'true' && steps.alert-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Send operator alert
-        if: steps.probe.outputs.redirect == 'true'
+        if: steps.probe.outputs.redirect == 'true' && steps.alert-cache.outputs.cache-hit != 'true'
         env:
           WEBHOOK_URL:    ${{ steps.resolve.outputs.url }}
           HTTP_CODE:      ${{ steps.probe.outputs.http_code }}
@@ -177,20 +211,49 @@ jobs:
         run: |
           pnpm --filter @workspace/artwork-bank exec tsx scripts/notify-webhook-redirect.ts || true
 
+      - name: Mark alert sent (write sentinel for cache)
+        if: steps.probe.outputs.redirect == 'true' && steps.alert-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/webhook-redirect-alerted
+          date -u > /tmp/webhook-redirect-alerted/sent-at.txt
+          echo "Alert sentinel written at $(cat /tmp/webhook-redirect-alerted/sent-at.txt)"
+
+      - name: Save alert-sent cache
+        if: steps.probe.outputs.redirect == 'true' && steps.alert-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/webhook-redirect-alerted
+          key: ${{ steps.dedup.outputs.key }}
+
+      # ── Silenced-run notice (cache hit) ────────────────────────────────────
+      - name: Alert already sent this hour — skipping repeat notification
+        if: steps.probe.outputs.redirect == 'true' && steps.alert-cache.outputs.cache-hit == 'true'
+        run: |
+          echo "ℹ️  Redirect is still present but an alert was already sent this UTC hour."
+          echo "    Skipping repeat Slack/email notification to avoid flooding."
+          echo "    The job will still exit 1 so the Actions tab remains red."
+          echo "    A fresh alert will be sent at the start of the next UTC hour if"
+          echo "    the redirect has not been fixed by then."
+
+      # ── Always fail when redirect detected ─────────────────────────────────
+      # Runs whether or not the alert was deduplicated so GitHub marks the
+      # run red and the operator can count elapsed time from the Actions tab.
+
       - name: Fail the job when redirect detected
         if: steps.probe.outputs.redirect == 'true'
         run: |
           echo "❌  Stripe webhook endpoint is redirecting (HTTP ${{ steps.probe.outputs.http_code }})."
-          echo "    Operator alert sent. Fix DEPLOY.md §4 to restore webhook delivery."
+          echo "    Fix DEPLOY.md §4 to restore webhook delivery."
           exit 1
 
       - name: Summary
         if: always()
         env:
-          HTTP_CODE: ${{ steps.probe.outputs.http_code }}
-          REDIRECT:  ${{ steps.probe.outputs.redirect }}
-          LOCATION:  ${{ steps.probe.outputs.location }}
-          URL:       ${{ steps.resolve.outputs.url }}
+          HTTP_CODE:  ${{ steps.probe.outputs.http_code }}
+          REDIRECT:   ${{ steps.probe.outputs.redirect }}
+          LOCATION:   ${{ steps.probe.outputs.location }}
+          URL:        ${{ steps.resolve.outputs.url }}
+          CACHE_HIT:  ${{ steps.alert-cache.outputs.cache-hit }}
         run: |
           if [ "$REDIRECT" = "true" ]; then
             echo "### 🚨 Stripe webhook redirect detected" >> "$GITHUB_STEP_SUMMARY"
@@ -200,6 +263,11 @@ jobs:
             echo "| Probed URL | \`$URL\` |" >> "$GITHUB_STEP_SUMMARY"
             echo "| HTTP status | **$HTTP_CODE** |" >> "$GITHUB_STEP_SUMMARY"
             [ -n "$LOCATION" ] && echo "| Redirects to | \`$LOCATION\` |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$CACHE_HIT" = "true" ]; then
+              echo "| Alert status | ⏸ Deduplicated — already sent this UTC hour |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| Alert status | 🔔 Sent (Slack / email / CI banner) |" >> "$GITHUB_STEP_SUMMARY"
+            fi
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "**Stripe does not follow redirects.** All webhook deliveries are failing silently." >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
