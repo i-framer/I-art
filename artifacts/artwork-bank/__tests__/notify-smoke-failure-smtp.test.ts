@@ -162,3 +162,41 @@ describe("sendSmokeTestFailureEmail — RESEND_ALREADY_SENT=1 still attempts SMT
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+// ── Nodemailer mock-intercept canary ──────────────────────────────────────────
+//
+// WHY THIS TEST EXISTS
+// --------------------
+// email.ts imports nodemailer with a dynamic import and accesses the default
+// export: `(await import("nodemailer")).default.createTransport(...)`.
+// The vi.mock() factory at the top of this file mirrors that shape:
+//   { default: { createTransport: createTransportMock } }
+//
+// If nodemailer is upgraded and its export shape changes — e.g. switching to
+// named exports so callers use `import { createTransport } from "nodemailer"`
+// — the factory above would silently stop intercepting calls.  The other tests
+// would then either call the real nodemailer (network I/O in CI) or a no-op,
+// and could still pass.
+//
+// This canary asserts that createTransportMock is actually reached when
+// sendSmokeTestFailureEmail falls back to SMTP, so any export-shape mismatch
+// surfaces immediately as a test failure rather than an incorrect green build.
+describe("nodemailer mock-intercept canary", () => {
+  it("createTransportMock is invoked by sendSmokeTestFailureEmail — failure here means the vi.mock() wiring is broken", async () => {
+    process.env.SMTP_HOST = "smtp.example.com";
+    process.env.EMAIL_FROM = "noreply@example.com";
+    process.env.PLATFORM_ADMIN_EMAIL = "admin@example.com";
+    // RESEND_API_KEY deliberately absent so the SMTP branch is taken.
+
+    await sendSmokeTestFailureEmail(ARGS);
+
+    // createTransportMock MUST have been called.  If it was not, the mock
+    // factory is not matching the import path that email.ts uses.  Fix the
+    // factory shape at the top of this file to match the nodemailer export.
+    expect(createTransportMock).toHaveBeenCalledTimes(1);
+
+    // sendMailMock MUST also have been called — verifies the full chain is
+    // live and the transporter returned by createTransportMock is being used.
+    expect(sendMailMock).toHaveBeenCalledTimes(1);
+  });
+});
