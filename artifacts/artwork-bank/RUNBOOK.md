@@ -202,6 +202,37 @@ The notifier (`scripts/notify-webhook-redirect.ts`) tries in order:
 Add at least one Slack option as a GitHub Actions repository secret for timely
 (sub-10-minute) alerts.
 
+### Verify the alert path before go-live
+
+Before the app goes live (or after any Slack connector reconnect), confirm that
+`notify-webhook-redirect.ts` can actually reach Slack by running the
+webhook-redirect smoke probe via `POST /api/slack-smoke`:
+
+**Option A — GitHub Actions (recommended):**
+
+Trigger the `slack-reconnect-smoke` workflow from the Actions UI
+(**Actions → Slack reconnect smoke test → Run workflow**). The workflow now
+exercises three probes, including the webhook-redirect alert path. Look for
+a message beginning with:
+
+```
+🚨 [TEST] Stripe webhook endpoint is redirecting (HTTP 308)
+```
+
+in the configured Slack channel. If the probe fails, see the **Slack connector
+reconnect** section above for repair steps.
+
+**Option B — curl the probe endpoint directly:**
+
+```bash
+curl -sf -X POST \
+  -H "Authorization: Bearer YOUR_SLACK_SMOKE_SECRET" \
+  https://your-app.vercel.app/api/slack-smoke \
+| jq '.results[] | select(.test == "webhook-redirect-alert")'
+```
+
+Expected: `{ "test": "webhook-redirect-alert", "ok": true }`
+
 ### Manual probe
 
 ```bash

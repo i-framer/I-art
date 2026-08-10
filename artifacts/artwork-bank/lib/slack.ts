@@ -385,3 +385,58 @@ export async function sendBillingAlertSlackNotification({
     return { ok: false, error: errorMessage };
   }
 }
+
+/**
+ * Post a synthetic [TEST] Stripe-webhook-redirect alert to the configured
+ * Slack channel. Used by the /api/slack-smoke endpoint to confirm that the
+ * notify-webhook-redirect.ts delivery path (Replit Connectors → Slack) is
+ * wired up correctly before a real redirect incident occurs.
+ *
+ * The message is clearly labelled [TEST] so operators know it is not a live alert.
+ */
+export async function sendWebhookRedirectAlertSmoke({
+  ts,
+}: {
+  ts: number;
+}): Promise<SlackNotificationResult> {
+  const channel = process.env.SLACK_BILLING_ALERTS_CHANNEL?.trim().replace(/^#/, "");
+
+  if (!channel) {
+    return { ok: false, error: "SLACK_BILLING_ALERTS_CHANNEL not configured" };
+  }
+
+  const text =
+    `:rotating_light: *[TEST] Stripe webhook endpoint is redirecting (HTTP 308)* :rotating_light:\n` +
+    `This is a *synthetic smoke test* — no real redirect has been detected.\n\n` +
+    `*Probed URL:* \`https://i-art.com.au/api/stripe/webhook\`\n` +
+    `→ Redirects to: \`https://www.i-art.com.au/api/stripe/webhook\`\n\n` +
+    `*Why this matters:* Stripe does not follow redirects. Every webhook delivery is counted as a failure — orders and subscription events are silently lost.\n\n` +
+    `*Smoke test ID:* \`smoke-webhook-redirect-${ts}\`\n` +
+    `_If you see this message, the webhook-redirect alert path is working correctly. No action needed._`;
+
+  try {
+    const connectors = new ReplitConnectors();
+    const response = await connectors.proxy("slack", "/chat.postMessage", {
+      method: "POST",
+      body: JSON.stringify({ channel, text }),
+    });
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok || (body && !body.ok)) {
+      const errorDetail = body?.error ?? `HTTP ${response.status}`;
+      console.error(
+        `[Webhook redirect alert smoke] Post failed (HTTP ${response.status}):`,
+        body?.error ?? "(no error field)",
+      );
+      return { ok: false, error: errorDetail };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    const errorMessage = (err as any)?.message ?? String(err);
+    console.error(
+      `[Webhook redirect alert smoke] Failed to post message: ${errorMessage}`,
+    );
+    return { ok: false, error: errorMessage };
+  }
+}

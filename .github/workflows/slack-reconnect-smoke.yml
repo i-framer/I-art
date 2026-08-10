@@ -140,9 +140,10 @@ jobs:
 
           if [ "$OK" = "true" ]; then
             echo "✅  All Slack smoke probes passed."
-            echo "    Verify the two test messages arrived in the configured Slack channel:"
+            echo "    Verify the three test messages arrived in the configured Slack channel:"
             echo "      • 🚨 Unmatched Stripe billing event (customer.subscription.updated)"
             echo "      • ⛔ i-Framer Premium comp removed (tenant still linked)"
+            echo "      • 🚨 [TEST] Stripe webhook endpoint is redirecting (HTTP 308)"
           else
             echo "❌  One or more Slack smoke probes FAILED — see response body above."
             echo "    Common causes:"
@@ -160,7 +161,7 @@ jobs:
           if [ "$OK" = "true" ]; then
             echo "### ✅ Slack smoke test passed" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "Both alert paths (billing alert, comp-removed) reached Slack successfully." >> "$GITHUB_STEP_SUMMARY"
+            echo "All three alert paths (billing alert, comp-removed, webhook-redirect) reached Slack successfully." >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "**Verify** the two test messages appeared in the configured Slack channel." >> "$GITHUB_STEP_SUMMARY"
           else

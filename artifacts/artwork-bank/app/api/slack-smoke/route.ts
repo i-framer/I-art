@@ -32,6 +32,7 @@ import { NextResponse } from "next/server";
 import {
   sendBillingAlertSlackNotification,
   sendIframerAccountSlackNotification,
+  sendWebhookRedirectAlertSmoke,
 } from "@/lib/slack";
 
 export const dynamic = "force-dynamic";
@@ -136,6 +137,25 @@ export async function POST(request: Request) {
   } catch (err) {
     results.push({
       test: "comp-removed-alert",
+      ok: false,
+      error: (err as any)?.message ?? String(err),
+    });
+  }
+
+  // ── Probe 3: webhook-redirect alert ───────────────────────────────────────
+  // Exercises the same Replit Connectors path used by
+  // scripts/notify-webhook-redirect.ts so the operator can confirm the
+  // redirect-alert path is healthy before a real incident occurs.
+  try {
+    const r = await sendWebhookRedirectAlertSmoke({ ts });
+    if (r.ok) {
+      results.push({ test: "webhook-redirect-alert", ok: true });
+    } else {
+      results.push({ test: "webhook-redirect-alert", ok: false, error: r.error });
+    }
+  } catch (err) {
+    results.push({
+      test: "webhook-redirect-alert",
       ok: false,
       error: (err as any)?.message ?? String(err),
     });

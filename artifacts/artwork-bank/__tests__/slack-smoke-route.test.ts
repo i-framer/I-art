@@ -29,6 +29,7 @@ vi.mock("next/server", () => ({
 vi.mock("@/lib/slack", () => ({
   sendBillingAlertSlackNotification: vi.fn().mockResolvedValue({ ok: true }),
   sendIframerAccountSlackNotification: vi.fn().mockResolvedValue({ ok: true }),
+  sendWebhookRedirectAlertSmoke: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 // ── Import the route handlers after mocks are in place ────────────────────────

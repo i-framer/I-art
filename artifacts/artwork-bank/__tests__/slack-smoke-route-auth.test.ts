@@ -29,6 +29,7 @@ const mockSendIframerAlert = vi.hoisted(() =>
 vi.mock("@/lib/slack", () => ({
   sendBillingAlertSlackNotification: mockSendBillingAlert,
   sendIframerAccountSlackNotification: mockSendIframerAlert,
+  sendWebhookRedirectAlertSmoke: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 // ── next/server mock ──────────────────────────────────────────────────────────
