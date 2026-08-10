@@ -124,8 +124,23 @@ Vercel's default for a domain it doesn't recognise as primary is to redirect
 3. Ensure `NEXT_PUBLIC_SITE_URL=https://i-art.com.au`.
 
 > After changing the primary domain:
-> 1. Run `bash scripts/check-webhook-redirect.sh` and confirm it prints **✅ No redirect**.
+> 1. Run `bash scripts/check-webhook-redirect.sh` (no arguments) and confirm it prints **✅ ALL PASS**.
+>    The script checks all three critical endpoints in one go:
+>    - `/api/stripe/webhook` — Stripe webhook
+>    - `/api/email-sweep` — Vercel cron (every 10 min)
+>    - `/api/reservation-sweep` — Vercel cron (every 5 min)
 > 2. Send a test Stripe webhook event from the Stripe Dashboard and confirm the delivery log shows **200** (not `3xx`).
+> 3. Verify both cron endpoints respond 200 with your CRON_SECRET:
+>    ```bash
+>    curl -s -H "Authorization: Bearer $CRON_SECRET" https://i-art.com.au/api/email-sweep | jq .
+>    curl -s -H "Authorization: Bearer $CRON_SECRET" https://i-art.com.au/api/reservation-sweep | jq .
+>    ```
+>    Both should return JSON (not a redirect page). `/api/email-sweep` returns
+>    `{"scanned":N,"sent":N,"failed":N,"skipped":N,...}` and
+>    `/api/reservation-sweep` returns `{"swept":N,...}`.
+> 4. Confirm in **Vercel → Crons** that both crons show recent successful runs
+>    (not 3xx). If the panel shows no runs yet, wait up to 10 minutes after the
+>    fix for the next scheduled execution.
 
 ## 5. Stripe webhook
 
