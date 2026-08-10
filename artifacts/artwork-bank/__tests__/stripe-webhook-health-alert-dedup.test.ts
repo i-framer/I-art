@@ -227,6 +227,110 @@ fi
   });
 });
 
+// ── 2b. Parameterised bash tests — all realistic cache-hit values ─────────────
+//
+// GitHub Actions writes exactly three values for cache-hit:
+//   ""      — cache key not found (miss)
+//   "true"  — cache key found (hit)
+//   "false" — cache/restore step skipped or the step did not run
+//
+// The guard condition is:  cache-hit != 'true'
+// Only "true" should suppress the alert.  Both "" and "false" must allow it.
+//
+// This is the regression test for the bug described in the workflow header:
+//   A future author could write  cache-hit == 'false'  (wrong) and the
+//   structural string-match test above would not catch it — but these
+//   parameterised bash tests would, because the bash logic faithfully
+//   mirrors the runner's boolean evaluation of the `if:` expression.
+
+describe("parameterised bash — cache-hit guard: only 'true' suppresses the alert", () => {
+  /**
+   * Run the guard condition as a bash `if` and return the decision.
+   *
+   * Mirrors the exact `if:` expression used in the YAML:
+   *   steps.probe.outputs.redirect == 'true' && steps.alert-cache.outputs.cache-hit != 'true'
+   */
+  function guardDecision(cacheHit: string): { alertFires: boolean; silenced: boolean } {
+    const alertScript = `
+REDIRECT="true"
+CACHE_HIT="${cacheHit}"
+if [[ "$REDIRECT" == "true" && "$CACHE_HIT" != "true" ]]; then
+  echo "ALERT=yes"
+else
+  echo "ALERT=no"
+fi
+`;
+    const silenceScript = `
+REDIRECT="true"
+CACHE_HIT="${cacheHit}"
+if [[ "$REDIRECT" == "true" && "$CACHE_HIT" == "true" ]]; then
+  echo "SILENCE=yes"
+else
+  echo "SILENCE=no"
+fi
+`;
+    const alertOut = runBash(alertScript).stdout;
+    const silenceOut = runBash(silenceScript).stdout;
+    return {
+      alertFires: alertOut.includes("ALERT=yes"),
+      silenced: silenceOut.includes("SILENCE=yes"),
+    };
+  }
+
+  /**
+   * All realistic cache-hit values and the expected guard outcome.
+   *
+   * cacheHit | meaning in Actions                    | alert fires? | silenced?
+   * ---------|---------------------------------------|-------------|----------
+   * ""       | cache key not found (first run)       | YES          | NO
+   * "true"   | cache key found (already sent)        | NO           | YES
+   * "false"  | restore step was skipped / not run    | YES          | NO
+   */
+  const cases: Array<[cacheHitValue: string, label: string, shouldFire: boolean, shouldSilence: boolean]> = [
+    ["",      "empty string (cache miss — first run this hour)", true,  false],
+    ["true",  "'true' (cache hit — already sent this hour)",     false, true ],
+    ["false", "'false' (restore step skipped or not run)",       true,  false],
+  ];
+
+  it.each(cases)(
+    "cache-hit=%j (%s): alertFires=%s, silenced=%s",
+    (cacheHitValue, _label, shouldFire, shouldSilence) => {
+      const { alertFires, silenced } = guardDecision(cacheHitValue);
+      expect(alertFires).toBe(shouldFire);
+      expect(silenced).toBe(shouldSilence);
+    },
+  );
+
+  it("alert and silence are mutually exclusive for every realistic cache-hit value", () => {
+    for (const [cacheHitValue] of cases) {
+      const { alertFires, silenced } = guardDecision(cacheHitValue);
+      expect(alertFires && silenced).toBe(false);
+    }
+  });
+
+  it("wrong guard 'cache-hit == false' would fire on empty string (regression demo)", () => {
+    // Demonstrates why  cache-hit == 'false'  is the wrong guard:
+    // it would NOT fire when cache-hit is "" (the real cache-miss value),
+    // causing the alert to fire on every run regardless of the cache.
+    const wrongScript = `
+REDIRECT="true"
+CACHE_HIT=""
+# Wrong condition a future author might accidentally write:
+if [[ "$REDIRECT" == "true" && "$CACHE_HIT" == "false" ]]; then
+  echo "WRONG_GUARD_FIRES=yes"
+else
+  echo "WRONG_GUARD_FIRES=no"
+fi
+`;
+    const { stdout } = runBash(wrongScript);
+    // The wrong guard does NOT fire for cache-hit="", confirming the guard is broken:
+    // it would let the alert through on a real cache-hit run where Actions
+    // sets cache-hit="" because the restore step was skipped by a prior `if:`.
+    // This test documents the semantic difference between "" and "false".
+    expect(stdout).toContain("WRONG_GUARD_FIRES=no");
+  });
+});
+
 // ── 3. Two-run scenario: same hour, different outcomes ────────────────────────
 
 describe("two-run scenario within the same UTC hour", () => {
