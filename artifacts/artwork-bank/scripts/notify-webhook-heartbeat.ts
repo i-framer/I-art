@@ -149,3 +149,5 @@ main().catch((err) => {
   console.error("[Webhook heartbeat] Unexpected error in heartbeat notifier:", err);
   process.exit(0);
 });
+
+export {};
