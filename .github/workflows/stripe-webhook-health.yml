@@ -1,9 +1,9 @@
 name: Stripe webhook health probe
 
-# Probes https://i-art.com.au/api/stripe/webhook every 5 minutes.
+# Probes https://i-art.com.au/api/stripe/webhook every 15 minutes.
 # If the endpoint returns a 3xx redirect (which Stripe does NOT follow),
-# the operator is alerted immediately via Slack and email so the issue is
-# caught within 10 minutes instead of being discovered manually.
+# the operator is alerted via Slack and email so the issue is caught within
+# ~16 minutes instead of being discovered manually.
 #
 # Background: Vercel's default behaviour redirects the apex domain
 # (i-art.com.au) to www.i-art.com.au when www is set as the primary domain.
@@ -11,7 +11,7 @@ name: Stripe webhook health probe
 # Stripe counts the 3xx as a delivery failure and does not retry the POST
 # at the redirect target.  See DEPLOY.md §4 for the fix.
 #
-# Deduplication: to avoid flooding Slack with up to 288 identical messages
+# Deduplication: to avoid flooding Slack with up to 96 identical messages
 # per day, the notifier only fires ONCE PER HOUR.  On subsequent runs within
 # the same hour the job still fails (so the Actions tab stays red and the
 # operator can gauge duration), but no further Slack/email message is sent.
@@ -37,9 +37,9 @@ name: Stripe webhook health probe
 
 on:
   schedule:
-    # Every 5 minutes — ensures the operator is alerted within 10 minutes of
+    # Every 15 minutes — ensures the operator is alerted within ~16 minutes of
     # a redirect being introduced (GitHub Actions scheduling has ~1 min jitter).
-    - cron: "*/5 * * * *"
+    - cron: "*/15 * * * *"
 
   # Allow manual trigger from the GitHub Actions UI for on-demand checks.
   workflow_dispatch:
