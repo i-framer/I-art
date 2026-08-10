@@ -13,6 +13,9 @@
  *      script falls through to the CI banner.
  *   6. The Slack message text includes the probed URL, HTTP status, and
  *      today's UTC date.
+ *   7. The GitHub Actions workflow YAML wires all three Slack env vars in
+ *      the "Send daily heartbeat" step so a secret-name drift is caught at
+ *      edit time, not days later when the daily message stops appearing.
  *
  * The script is a standalone entry-point that reads env vars at module load
  * time and calls process.exit() liberally.  Each test resets modules and
@@ -21,6 +24,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -480,5 +485,119 @@ describe("notify-webhook-heartbeat — bot-token is skipped when channel env var
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url] = fetchMock.mock.calls[0] as [string];
     expect(url).toBe("https://hooks.slack.com/services/T/B/WEBHOOK");
+  });
+});
+
+// ── Workflow YAML structural check ─────────────────────────────────────────────
+//
+// Verifies that the "Send daily heartbeat" step in the GitHub Actions workflow
+// YAML wires all three Slack env vars from repository secrets.  This catches a
+// secret-name drift the moment stripe-webhook-health.yml is edited — not days
+// later when the daily Slack message stops appearing.
+//
+// Each test locates the env-var key on its own line and then asserts that the
+// *same* line contains the expected secrets.<NAME> reference.  This means a
+// swapped mapping (e.g. SLACK_BOT_TOKEN: ${{ secrets.SLACK_WEBHOOK_URL }})
+// is caught even though both strings would appear somewhere in the block.
+
+describe("stripe-webhook-health.yml — Send daily heartbeat step env wiring", () => {
+  /**
+   * Read the workflow YAML as plain text and return the individual lines of the
+   * env block that belongs to the "Send daily heartbeat" step.
+   *
+   * Strategy:
+   *   1. Split on lines.
+   *   2. Find the line that contains `name: Send daily heartbeat`.
+   *   3. From there, find the `env:` line that opens the step's env block.
+   *   4. Collect all indented key lines until the indentation drops back to the
+   *      step level (or EOF), which marks the end of the env block.
+   */
+  function extractHeartbeatEnvLines(): string[] {
+    const workflowPath = resolve(
+      __dirname,
+      "../../../.github/workflows/stripe-webhook-health.yml",
+    );
+    const lines = readFileSync(workflowPath, "utf8").split("\n");
+
+    // Locate the step by its name
+    const stepNameIdx = lines.findIndex((l) =>
+      l.includes("name: Send daily heartbeat"),
+    );
+    if (stepNameIdx === -1) {
+      throw new Error(
+        'Could not find "name: Send daily heartbeat" in stripe-webhook-health.yml',
+      );
+    }
+
+    // Determine the step's indentation depth from the `- name:` line
+    const stepIndent = lines[stepNameIdx].match(/^(\s*)-\s/)?.[1]?.length ?? 0;
+
+    // Find the `env:` key that belongs to this step (before the next step at
+    // the same indentation level starts)
+    let envIdx = -1;
+    for (let i = stepNameIdx + 1; i < lines.length; i++) {
+      const line = lines[i];
+      // A new step at the same level signals we've left the current step
+      const indent = line.match(/^(\s*)\S/)?.[1]?.length ?? 0;
+      if (indent <= stepIndent && line.trimStart().startsWith("- ")) break;
+      if (line.trimStart().startsWith("env:")) {
+        envIdx = i;
+        break;
+      }
+    }
+    if (envIdx === -1) {
+      throw new Error(
+        '"Send daily heartbeat" step has no env: block in stripe-webhook-health.yml',
+      );
+    }
+
+    // Collect env key lines (deeper indentation than `env:` line itself)
+    const envLineIndent = lines[envIdx].match(/^(\s*)/)?.[1]?.length ?? 0;
+    const envLines: string[] = [lines[envIdx]];
+    for (let i = envIdx + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.trim() === "") {
+        envLines.push(line);
+        continue;
+      }
+      const indent = line.match(/^(\s*)\S/)?.[1]?.length ?? 0;
+      if (indent <= envLineIndent) break;
+      envLines.push(line);
+    }
+
+    return envLines;
+  }
+
+  /**
+   * Find the line that declares the given env var key, then assert that the
+   * *same* line references the expected secret.  A cross-wired mapping such as
+   *   SLACK_BOT_TOKEN: ${{ secrets.SLACK_WEBHOOK_URL }}
+   * would fail even though both strings appear elsewhere in the block.
+   */
+  function assertEnvVarMapsToSecret(envVarName: string, secretName: string): void {
+    const envLines = extractHeartbeatEnvLines();
+    const declarationLine = envLines.find((l) =>
+      new RegExp(`\\b${envVarName}\\s*:`).test(l),
+    );
+    expect(
+      declarationLine,
+      `Expected env block to contain a line declaring ${envVarName}`,
+    ).toBeDefined();
+    expect(
+      declarationLine,
+      `Expected ${envVarName} to be mapped to secrets.${secretName} on the same line`,
+    ).toMatch(new RegExp(`secrets\\.${secretName}\\b`));
+  }
+
+  it("maps SLACK_BILLING_ALERTS_CHANNEL to secrets.SLACK_BILLING_ALERTS_CHANNEL on the same line", () => {
+    assertEnvVarMapsToSecret("SLACK_BILLING_ALERTS_CHANNEL", "SLACK_BILLING_ALERTS_CHANNEL");
+  });
+
+  it("maps SLACK_BOT_TOKEN to secrets.SLACK_BOT_TOKEN on the same line", () => {
+    assertEnvVarMapsToSecret("SLACK_BOT_TOKEN", "SLACK_BOT_TOKEN");
+  });
+
+  it("maps SLACK_WEBHOOK_URL to secrets.SLACK_WEBHOOK_URL on the same line", () => {
+    assertEnvVarMapsToSecret("SLACK_WEBHOOK_URL", "SLACK_WEBHOOK_URL");
   });
 });
