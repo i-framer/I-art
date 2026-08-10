@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.1",
-    "@vercel/blob": "^2.6.1",
+    "@vercel/blob": "^2.7.0",
     "@workspace/db": "workspace:*",
     "bcryptjs": "^2.4.3",
     "drizzle-orm": "catalog:",

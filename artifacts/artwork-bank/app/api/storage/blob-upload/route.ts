@@ -1,11 +1,19 @@
 /**
  * Client-upload token exchange for the Vercel Blob storage backend.
  *
- * The browser calls `upload()` from @vercel/blob/client pointing at this
- * route; we authenticate the session, then hand back a scoped client token
- * so the file goes straight from the browser to the Blob store (bypassing
- * the serverless request-body size limit). Only used when the storage
- * provider is "vercel-blob".
+ * Handles two request types from @vercel/blob:
+ *
+ *   blob.generate-client-token — browser request to get a scoped upload token.
+ *     Requires a valid user session; the token lets the browser PUT the file
+ *     directly to Vercel Blob (bypassing the 4.5 MB serverless body limit).
+ *
+ *   blob.upload-completed — server-to-server callback Vercel sends after a
+ *     successful upload (only present when onUploadCompleted is configured).
+ *     Must NOT require a user session — Vercel's servers have no cookie.
+ *     Authentication is handled by handleUpload via x-vercel-signature HMAC.
+ *
+ * We parse the request type before the session guard so both cases are routed
+ * correctly. Only blob.generate-client-token is gated on session auth.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
@@ -13,12 +21,25 @@ import { BlobError, BlobNotFoundError } from "@vercel/blob";
 import { getSession } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
-  const session = await getSession();
-  if (!session.userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Clone the request so handleUpload can re-read the body after we peek at it.
+  const cloned = request.clone();
+  let body: HandleUploadBody;
+  try {
+    body = (await cloned.json()) as HandleUploadBody;
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const body = (await request.json()) as HandleUploadBody;
+  // blob.generate-client-token comes from the browser — enforce session auth.
+  // blob.upload-completed comes from Vercel's servers — handled by x-vercel-signature
+  // inside handleUpload; enforcing session here would always 401 that callback.
+  if (body.type === "blob.generate-client-token") {
+    const session = await getSession();
+    if (!session.userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+  }
+
   try {
     const jsonResponse = await handleUpload({
       body,
@@ -35,7 +56,9 @@ export async function POST(request: NextRequest) {
       },
       onUploadCompleted: async () => {
         // The DB record is created by the client via addArtworkImage after
-        // the upload succeeds — nothing to do here.
+        // the upload succeeds — nothing to do here.  The handler is defined
+        // so handleUpload embeds a callbackUrl in the token; Vercel calls back
+        // and handleUpload verifies the x-vercel-signature before invoking it.
       },
     });
     return NextResponse.json(jsonResponse);
