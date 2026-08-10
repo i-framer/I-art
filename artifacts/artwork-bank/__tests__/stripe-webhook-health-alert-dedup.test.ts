@@ -40,6 +40,11 @@ const WORKFLOW_PATH = path.resolve(
   "../../../.github/workflows/stripe-webhook-health.yml",
 );
 
+const NOTIFIER_SCRIPT = path.resolve(
+  __dirname,
+  "../scripts/notify-webhook-redirect.ts",
+);
+
 let workflowText: string;
 
 beforeAll(() => {
@@ -717,5 +722,143 @@ describe("Summary step — correct label for all cache-hit values", () => {
 
     // "Sent (Slack" must appear after the else.
     expect(sentIdx).toBeGreaterThan(elseIdx);
+  });
+});
+
+// ── 6. Notifier exits 0 when Slack API returns an error ───────────────────────
+//
+// When Slack credentials ARE present but the API returns an error (transient
+// failure, misconfigured token, channel not found, etc.) the script must still
+// exit 0.  A Slack failure must never mask the probe's redirect detection — the
+// caller owns the non-zero exit for the redirect itself.
+//
+// Strategy: the sandbox blocks subprocess→loopback TCP, so we cannot use a
+// real HTTP server.  Instead we write a tiny wrapper script that installs a
+// global.fetch mock returning the target error response and then imports the
+// notifier — everything runs in a single process, no network required.
+
+describe("notify-webhook-redirect.ts — exits 0 when Slack API returns an error", () => {
+  /**
+   * Write a temp wrapper that:
+   *   1. Replaces global.fetch with a mock returning (httpStatus, responseBody).
+   *   2. Imports the notifier, which runs main() automatically.
+   *
+   * The notifier always calls process.exit(0) on the normal path, so the
+   * wrapper inherits that exit code.  spawnSync captures it.
+   *
+   * SLACK_WEBHOOK_URL is set to a non-empty placeholder so the notifier
+   * reaches sendViaSlackIncomingWebhook() and exercises the fetch path;
+   * the actual URL value is never contacted because fetch is mocked.
+   */
+  function runNotifierWithMockedFetch(opts: {
+    httpStatus: number;
+    /** JSON string the mock response body will contain. */
+    responseBody: string;
+    /** Extra env vars to layer on top of the minimal set. */
+    extraEnv?: Record<string, string>;
+  }) {
+    const tmpDir = path.join(tmpdir(), `slack-mock-${randomUUID()}`);
+    mkdirSync(tmpDir, { recursive: true });
+
+    // The wrapper is plain ESM-compatible TS that tsx can run directly.
+    const wrapperContent = `
+// Vitest is not loaded here — this runs as a standalone tsx script.
+// Patch global.fetch BEFORE the notifier module is evaluated so that
+// every fetch() call inside it hits our mock.
+const mockStatus = ${opts.httpStatus};
+const mockBody = ${JSON.stringify(opts.responseBody)};
+
+(global as any).fetch = async (_url: unknown, _init?: unknown): Promise<Response> => {
+  return new Response(mockBody, {
+    status: mockStatus,
+    headers: { "Content-Type": "application/json" },
+  });
+};
+
+// Import the notifier.  It immediately runs main() and calls process.exit(0).
+await import(${JSON.stringify(NOTIFIER_SCRIPT)});
+`;
+
+    const wrapperFile = path.join(tmpDir, "wrapper.mts");
+    writeFileSync(wrapperFile, wrapperContent);
+
+    try {
+      return spawnSync(
+        "pnpm",
+        ["--filter", "@workspace/artwork-bank", "exec", "tsx", wrapperFile],
+        {
+          env: {
+            WEBHOOK_URL: "https://i-art.com.au/api/stripe/webhook",
+            HTTP_CODE: "308",
+            REDIRECT_LOCATION: "https://www.i-art.com.au/api/stripe/webhook",
+            WORKFLOW_RUN_URL:
+              "https://github.com/owner/repo/actions/runs/99999",
+            // Non-empty so sendViaSlackIncomingWebhook() is attempted.
+            // The actual URL is never contacted because fetch is mocked.
+            SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/MOCK/MOCK/mock",
+            // No SLACK_BOT_TOKEN / channel so the Replit-connectors and
+            // bot-token paths are skipped; only the incoming-webhook path runs.
+            PATH: process.env.PATH ?? "",
+            HOME: process.env.HOME ?? "",
+            NODE_ENV: "test",
+            ...(opts.extraEnv ?? {}),
+          },
+          encoding: "utf8",
+          timeout: 30_000,
+          cwd: path.resolve(__dirname, "../../.."),
+        },
+      );
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
+
+  it("exits 0 when the Slack incoming-webhook endpoint returns HTTP 500", () => {
+    const result = runNotifierWithMockedFetch({
+      httpStatus: 500,
+      responseBody: JSON.stringify({ ok: false, error: "internal_error" }),
+    });
+
+    // Must exit 0 — Slack errors must never mask the probe result.
+    expect(result.status).toBe(0);
+
+    // The last-resort banner must still be printed so CI logs surface the issue.
+    const combined = (result.stdout ?? "") + (result.stderr ?? "");
+    expect(combined).toContain("OPERATOR ACTION REQUIRED");
+  });
+
+  it("exits 0 when the Slack incoming-webhook endpoint returns HTTP 403", () => {
+    const result = runNotifierWithMockedFetch({
+      httpStatus: 403,
+      responseBody: JSON.stringify({ ok: false, error: "invalid_auth" }),
+    });
+
+    expect(result.status).toBe(0);
+
+    const combined = (result.stdout ?? "") + (result.stderr ?? "");
+    expect(combined).toContain("OPERATOR ACTION REQUIRED");
+  });
+
+  it("exits 0 when the Slack incoming-webhook endpoint returns HTTP 429 (rate-limited)", () => {
+    const result = runNotifierWithMockedFetch({
+      httpStatus: 429,
+      responseBody: JSON.stringify({ ok: false, error: "ratelimited" }),
+    });
+
+    expect(result.status).toBe(0);
+
+    const combined = (result.stdout ?? "") + (result.stderr ?? "");
+    expect(combined).toContain("OPERATOR ACTION REQUIRED");
+  });
+
+  it("logs the Slack webhook error before falling back to the banner", () => {
+    const result = runNotifierWithMockedFetch({
+      httpStatus: 500,
+      responseBody: JSON.stringify({ ok: false, error: "internal_error" }),
+    });
+
+    // The notifier must log the failure so it is visible in CI before the banner.
+    const combined = (result.stdout ?? "") + (result.stderr ?? "");
+    expect(combined).toMatch(/Slack webhook (post )?failed/i);
   });
 });
