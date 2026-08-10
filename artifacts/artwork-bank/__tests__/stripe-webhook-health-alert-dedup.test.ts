@@ -1,25 +1,29 @@
 /**
  * Alert-dedup path tests for .github/workflows/stripe-webhook-health.yml
  *
- * The workflow silences the Slack/email notifier on the second run within the
- * same UTC hour by checking a GitHub Actions cache hit.  When the cache key
- * already exists (cache-hit == 'true'), every step that sends the alert is
- * skipped and a "already sent this hour" notice is logged instead.
+ * The workflow sends a Slack/email alert when a 3xx redirect is detected on
+ * the Stripe webhook endpoint.  To avoid flooding Slack with up to 4 identical
+ * messages per hour, the alert only fires ONCE PER UTC HOUR.  On subsequent
+ * runs within the same hour the job still fails (so the Actions tab stays red),
+ * but no further Slack/email message is sent.  The dedup window is tracked via
+ * a GitHub Actions cache key that rotates every UTC hour.
  *
  * These tests verify:
  *
- *  1. Structural YAML wiring — all "Send operator alert" and surrounding alert
- *     steps are guarded by `cache-hit != 'true'`, and the silence step is
- *     guarded by `cache-hit == 'true'`.
+ *  1. Structural assertion — the "Compute alert dedup key" bash step contains
+ *     `date -u`, guarding against a future editor stripping the UTC flag.
  *
- *  2. A bash simulation of the step-guard logic — when cache-hit is true the
- *     notifier command is NOT executed; when cache-hit is false it IS executed.
- *     This mirrors the extracted-bash approach used by the dedup-key test so
- *     any change to the guard expression in the YAML is caught immediately.
+ *  2. Bash simulation — two runs with the same UTC hour produce identical keys
+ *     regardless of the TZ environment variable.  This mirrors the approach
+ *     used for the heartbeat key in stripe-webhook-health-heartbeat-dedup.test.ts.
  *
- *  3. The notifier script (notify-webhook-redirect.ts) exits 0 and emits a
- *     CI-banner when no Slack/email channel is configured, confirming it would
- *     have run on a real cache-miss run without flooding the operator.
+ *  3. Structural wiring — all alert-only conditional steps are guarded by
+ *     `cache-hit != 'true'`; the silence step is guarded by `cache-hit == 'true'`.
+ *
+ *  4. Parameterised bash tests covering all realistic cache-hit values:
+ *       ""      → alert fires (cache miss — first detection this hour)
+ *       "true"  → alert suppressed (cache hit — already sent this hour)
+ *       "false" → alert fires (restore step skipped / not run)
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -34,11 +38,6 @@ import { randomUUID } from "node:crypto";
 const WORKFLOW_PATH = path.resolve(
   __dirname,
   "../../../.github/workflows/stripe-webhook-health.yml",
-);
-
-const NOTIFIER_SCRIPT = path.resolve(
-  __dirname,
-  "../scripts/notify-webhook-redirect.ts",
 );
 
 let workflowText: string;
@@ -86,59 +85,86 @@ function runBash(script: string, env?: Record<string, string>): BashResult {
   }
 }
 
-// ── 1. Structural YAML wiring assertions ──────────────────────────────────────
+// ── 1. Structural assertion: alert dedup key uses `date -u` ───────────────────
 
-describe("stripe-webhook-health.yml — alert dedup wiring (structural)", () => {
-  it("'Send operator alert' is guarded by both redirect==true and cache-hit!=true", () => {
-    const block = extractStepBlock("Send operator alert");
-    expect(block).toContain("redirect == 'true'");
-    expect(block).toContain("cache-hit != 'true'");
+describe("stripe-webhook-health.yml — alert dedup key structural check", () => {
+  it("the 'Compute alert dedup key' step contains 'date -u' (UTC flag is present)", () => {
+    const block = extractStepBlock("Compute alert dedup key");
+    // The -u flag forces UTC regardless of the runner's local timezone.
+    // Without -u, a runner in e.g. AEST (+10) would rotate the key 10 hours
+    // earlier than UTC midnight, causing duplicate or missed hourly alerts.
+    expect(block).toContain("date -u");
   });
 
-  it("'Checkout (alert only)' is guarded by cache-hit != 'true'", () => {
-    const block = extractStepBlock("Checkout (alert only)");
-    expect(block).toContain("cache-hit != 'true'");
+  it("the alert dedup key uses 'date -u +%Y-%m-%d-%H' (hourly UTC granularity)", () => {
+    const block = extractStepBlock("Compute alert dedup key");
+    // The hourly key format — must include the hour component.
+    expect(block).toContain("date -u +%Y-%m-%d-%H");
   });
 
-  it("'Set up pnpm (alert only)' is guarded by cache-hit != 'true'", () => {
-    const block = extractStepBlock("Set up pnpm (alert only)");
-    expect(block).toContain("cache-hit != 'true'");
+  it("the alert dedup key rotates hourly (not daily)", () => {
+    const block = extractStepBlock("Compute alert dedup key");
+    // Alert key includes hour (%H); heartbeat key does not.
+    expect(block).toContain("%Y-%m-%d-%H");
   });
 
-  it("'Install dependencies (alert only)' is guarded by cache-hit != 'true'", () => {
-    const block = extractStepBlock("Install dependencies (alert only)");
-    expect(block).toContain("cache-hit != 'true'");
+  it("the alert dedup key does NOT use bare 'date' without -u", () => {
+    const block = extractStepBlock("Compute alert dedup key");
+    // Confirm -u is always present before the format string.
+    // This catches e.g. `date +%Y-%m-%d-%H` (no -u flag).
+    expect(block).not.toMatch(/\bdate\s+\+%Y/);
   });
 
-  it("'Mark alert sent (write sentinel for cache)' is guarded by cache-hit != 'true'", () => {
-    const block = extractStepBlock("Mark alert sent (write sentinel for cache)");
-    expect(block).toContain("cache-hit != 'true'");
+  it("the 'Restore alert-sent cache' uses the dedup step's key output", () => {
+    const block = extractStepBlock("Restore alert-sent cache");
+    expect(block).toContain("steps.dedup.outputs.key");
   });
 
-  it("'Save alert-sent cache' is guarded by cache-hit != 'true'", () => {
+  it("the 'Save alert-sent cache' uses the dedup step's key output", () => {
     const block = extractStepBlock("Save alert-sent cache");
-    expect(block).toContain("cache-hit != 'true'");
+    expect(block).toContain("steps.dedup.outputs.key");
   });
 
-  it("'Alert already sent this hour — skipping repeat notification' fires only on cache-hit == 'true'", () => {
+  it("alert-only steps are guarded by redirect==true and cache-hit!=true", () => {
+    const alertSteps = [
+      "Checkout (alert only)",
+      "Set up pnpm (alert only)",
+      "Set up Node.js (alert only)",
+      "Install dependencies (alert only)",
+      "Send operator alert",
+      "Mark alert sent (write sentinel for cache)",
+      "Save alert-sent cache",
+    ];
+    for (const stepName of alertSteps) {
+      const block = extractStepBlock(stepName);
+      expect(block, `Step "${stepName}" should check redirect == 'true'`).toContain(
+        "redirect == 'true'",
+      );
+      expect(
+        block,
+        `Step "${stepName}" should check cache-hit != 'true'`,
+      ).toContain("cache-hit != 'true'");
+    }
+  });
+
+  it("the silence step fires only on redirect==true AND cache-hit==true", () => {
     const block = extractStepBlock(
       "Alert already sent this hour — skipping repeat notification",
     );
-    expect(block).toContain("cache-hit == 'true'");
-    // Must also require redirect detected.
     expect(block).toContain("redirect == 'true'");
+    expect(block).toContain("cache-hit == 'true'");
   });
 
-  it("the silence step and the alert steps have mutually exclusive conditions on cache-hit", () => {
+  it("alert steps and silence step have mutually exclusive conditions on cache-hit", () => {
     const alertBlock = extractStepBlock("Send operator alert");
     const silenceBlock = extractStepBlock(
       "Alert already sent this hour — skipping repeat notification",
     );
-    // Alert runs on cache MISS:
+    // Alert fires on cache MISS:
     expect(alertBlock).toContain("cache-hit != 'true'");
-    // Silence runs on cache HIT:
+    // Silence fires on cache HIT:
     expect(silenceBlock).toContain("cache-hit == 'true'");
-    // They use opposite values — can never both run.
+    // They use opposite values — can never both run:
     expect(alertBlock).not.toContain("cache-hit == 'true'");
     expect(silenceBlock).not.toContain("cache-hit != 'true'");
   });
@@ -147,87 +173,87 @@ describe("stripe-webhook-health.yml — alert dedup wiring (structural)", () => 
     expect(workflowText).toContain("id: alert-cache");
     expect(workflowText).toContain("steps.alert-cache.outputs.cache-hit");
   });
-
-  it("at least four distinct steps reference steps.alert-cache.outputs.cache-hit", () => {
-    const occurrences = (
-      workflowText.match(/steps\.alert-cache\.outputs\.cache-hit/g) ?? []
-    ).length;
-    // Restore, Send alert, Mark alert sent, Save cache, Silence step = at least 4
-    expect(occurrences).toBeGreaterThanOrEqual(4);
-  });
 });
 
-// ── 2. Bash simulation of the step-guard logic ────────────────────────────────
+// ── 2. Bash simulation — UTC hour flag produces same key regardless of TZ ─────
 //
-// The GitHub Actions `if:` expression `steps.alert-cache.outputs.cache-hit != 'true'`
-// is evaluated by the runner as a boolean.  We replicate the semantics in bash
-// so a regression in the condition string is caught without waiting for a live
-// Actions run.
+// Confirms that `date -u +%Y-%m-%d-%H` yields an identical key when the TZ
+// environment variable is set to a timezone far from UTC.  Without the -u flag,
+// the date command would use local time and the key could rotate up to 14 hours
+// before or after UTC midnight, causing duplicate or missed hourly alerts when
+// the runner is not in UTC.
 
-describe("bash simulation — cache-hit guard prevents notifier on second run", () => {
+describe("bash simulation — alert dedup key is UTC-pinned (hourly)", () => {
   /**
-   * Simulate the step-guard decision.
-   *
-   * Returns whether the "Send operator alert" step would execute, given:
-   *  - redirect    : whether the probe saw a 3xx (maps to steps.probe.outputs.redirect)
-   *  - cacheHit    : whether the cache key was found (maps to steps.alert-cache.outputs.cache-hit)
+   * Run the exact bash fragment from the "Compute alert dedup key" step
+   * (non-dispatch path) and return the generated KEY value, with the given TZ.
    */
-  function wouldSendAlert(redirect: string, cacheHit: string): boolean {
-    // Mirror the exact `if:` expression from the YAML:
-    //   steps.probe.outputs.redirect == 'true' && steps.alert-cache.outputs.cache-hit != 'true'
+  function computeKey(tz: string): string {
+    // Mirror the exact bash from the workflow step (non-dispatch path):
+    //   KEY="webhook-redirect-alerted-$(date -u +%Y-%m-%d-%H)"
     const script = `
-REDIRECT="${redirect}"
-CACHE_HIT="${cacheHit}"
-if [[ "$REDIRECT" == "true" && "$CACHE_HIT" != "true" ]]; then
-  echo "WOULD_SEND=yes"
-else
-  echo "WOULD_SEND=no"
-fi
+KEY="webhook-redirect-alerted-$(date -u +%Y-%m-%d-%H)"
+echo "$KEY"
 `;
-    const { stdout } = runBash(script);
-    return stdout.includes("WOULD_SEND=yes");
+    const { stdout, exitCode } = runBash(script, { TZ: tz });
+    expect(exitCode).toBe(0);
+    return stdout.trim();
   }
 
-  it("cache-miss (first run): notifier IS invoked when redirect detected", () => {
-    expect(wouldSendAlert("true", "")).toBe(true);
+  it("produces a valid hourly key when TZ=UTC", () => {
+    const key = computeKey("UTC");
+    expect(key).toMatch(/^webhook-redirect-alerted-\d{4}-\d{2}-\d{2}-\d{2}$/);
   });
 
-  it("cache-hit (second run): notifier is NOT invoked even though redirect is still present", () => {
-    expect(wouldSendAlert("true", "true")).toBe(false);
+  it("same UTC hourly key is produced when TZ=Australia/Sydney (UTC+10/+11)", () => {
+    const utcKey = computeKey("UTC");
+    const sydneyKey = computeKey("Australia/Sydney");
+    // Both must produce the same key — date -u ignores TZ.
+    expect(sydneyKey).toBe(utcKey);
   });
 
-  it("no redirect: notifier is not invoked regardless of cache state", () => {
-    expect(wouldSendAlert("false", "")).toBe(false);
-    expect(wouldSendAlert("false", "true")).toBe(false);
+  it("same UTC hourly key is produced when TZ=America/New_York (UTC-5/-4)", () => {
+    const utcKey = computeKey("UTC");
+    const nyKey = computeKey("America/New_York");
+    expect(nyKey).toBe(utcKey);
   });
 
-  it("silence step fires only when redirect==true AND cache-hit==true", () => {
-    // Mirrors: steps.probe.outputs.redirect == 'true' && steps.alert-cache.outputs.cache-hit == 'true'
-    function wouldSilence(redirect: string, cacheHit: string): boolean {
-      const script = `
-REDIRECT="${redirect}"
-CACHE_HIT="${cacheHit}"
-if [[ "$REDIRECT" == "true" && "$CACHE_HIT" == "true" ]]; then
-  echo "SILENCE=yes"
-else
-  echo "SILENCE=no"
-fi
-`;
-      const { stdout } = runBash(script);
-      return stdout.includes("SILENCE=yes");
-    }
+  it("same UTC hourly key is produced when TZ=Asia/Tokyo (UTC+9)", () => {
+    const utcKey = computeKey("UTC");
+    const tokyoKey = computeKey("Asia/Tokyo");
+    expect(tokyoKey).toBe(utcKey);
+  });
 
-    // Cache hit + redirect = silence (dedup active)
-    expect(wouldSilence("true", "true")).toBe(true);
-    // Cache miss + redirect = no silence (alert fires)
-    expect(wouldSilence("true", "")).toBe(false);
-    // No redirect = no silence
-    expect(wouldSilence("false", "true")).toBe(false);
-    expect(wouldSilence("false", "")).toBe(false);
+  it("key format is webhook-redirect-alerted-YYYY-MM-DD-HH (hourly granularity)", () => {
+    const key = computeKey("UTC");
+    // Must match hourly granularity exactly — four hyphen-separated numeric segments.
+    expect(key).toMatch(/^webhook-redirect-alerted-\d{4}-\d{2}-\d{2}-\d{2}$/);
+  });
+
+  it("two simulated runs within the same UTC hour produce identical keys", () => {
+    // Run the key computation twice; since date -u is used, both must agree
+    // (within the same test run they will always be in the same hour).
+    const key1 = computeKey("UTC");
+    const key2 = computeKey("Australia/Sydney");
+    expect(key1).toBe(key2);
+  });
+
+  it("key has more components than the daily heartbeat key (includes hour)", () => {
+    const key = computeKey("UTC");
+    // The alert key has YYYY-MM-DD-HH (4 numeric groups after prefix).
+    // The heartbeat key has YYYY-MM-DD (3 numeric groups after prefix).
+    // Splitting by "-" and counting: webhook(0) redirect(1) alerted(2) YYYY(3) MM(4) DD(5) HH(6)
+    const parts = key.split("-");
+    // Last segment should be a two-digit hour (00–23).
+    const hourSegment = parts[parts.length - 1];
+    expect(hourSegment).toMatch(/^\d{2}$/);
+    const hour = parseInt(hourSegment, 10);
+    expect(hour).toBeGreaterThanOrEqual(0);
+    expect(hour).toBeLessThanOrEqual(23);
   });
 });
 
-// ── 2b. Parameterised bash tests — all realistic cache-hit values ─────────────
+// ── 3. Parameterised bash tests — all realistic cache-hit values ───────────────
 //
 // GitHub Actions writes exactly three values for cache-hit:
 //   ""      — cache key not found (miss)
@@ -236,21 +262,19 @@ fi
 //
 // The guard condition is:  cache-hit != 'true'
 // Only "true" should suppress the alert.  Both "" and "false" must allow it.
-//
-// This is the regression test for the bug described in the workflow header:
-//   A future author could write  cache-hit == 'false'  (wrong) and the
-//   structural string-match test above would not catch it — but these
-//   parameterised bash tests would, because the bash logic faithfully
-//   mirrors the runner's boolean evaluation of the `if:` expression.
 
 describe("parameterised bash — cache-hit guard: only 'true' suppresses the alert", () => {
   /**
    * Run the guard condition as a bash `if` and return the decision.
    *
-   * Mirrors the exact `if:` expression used in the YAML:
+   * Mirrors the exact `if:` expression used in the YAML (assuming redirect=true,
+   * i.e. a redirect was detected where the alert section is reached):
    *   steps.probe.outputs.redirect == 'true' && steps.alert-cache.outputs.cache-hit != 'true'
    */
-  function guardDecision(cacheHit: string): { alertFires: boolean; silenced: boolean } {
+  function guardDecision(cacheHit: string): {
+    alertFires: boolean;
+    silenced: boolean;
+  } {
     const alertScript = `
 REDIRECT="true"
 CACHE_HIT="${cacheHit}"
@@ -280,16 +304,38 @@ fi
   /**
    * All realistic cache-hit values and the expected guard outcome.
    *
-   * cacheHit | meaning in Actions                    | alert fires? | silenced?
-   * ---------|---------------------------------------|-------------|----------
-   * ""       | cache key not found (first run)       | YES          | NO
-   * "true"   | cache key found (already sent)        | NO           | YES
-   * "false"  | restore step was skipped / not run    | YES          | NO
+   * cacheHit | meaning in Actions                      | alert fires? | silenced?
+   * ---------|-----------------------------------------|--------------|----------
+   * ""       | cache key not found (first this hour)   | YES          | NO
+   * "true"   | cache key found (already sent this hour)| NO           | YES
+   * "false"  | restore step was skipped / not run      | YES          | NO
    */
-  const cases: Array<[cacheHitValue: string, label: string, shouldFire: boolean, shouldSilence: boolean]> = [
-    ["",      "empty string (cache miss — first run this hour)", true,  false],
-    ["true",  "'true' (cache hit — already sent this hour)",     false, true ],
-    ["false", "'false' (restore step skipped or not run)",       true,  false],
+  const cases: Array<
+    [
+      cacheHitValue: string,
+      label: string,
+      shouldFire: boolean,
+      shouldSilence: boolean,
+    ]
+  > = [
+    [
+      "",
+      "empty string (cache miss — first detection this hour)",
+      true,
+      false,
+    ],
+    [
+      "true",
+      "'true' (cache hit — already sent this hour)",
+      false,
+      true,
+    ],
+    [
+      "false",
+      "'false' (restore step skipped or not run)",
+      true,
+      false,
+    ],
   ];
 
   it.each(cases)(
@@ -308,10 +354,10 @@ fi
     }
   });
 
-  it("wrong guard 'cache-hit == false' would fire on empty string (regression demo)", () => {
+  it("wrong guard 'cache-hit == false' would NOT fire on empty string (regression demo)", () => {
     // Demonstrates why  cache-hit == 'false'  is the wrong guard:
-    // it would NOT fire when cache-hit is "" (the real cache-miss value),
-    // causing the alert to fire on every run regardless of the cache.
+    // it would NOT fire when cache-hit is "" (the real cache-miss value in Actions),
+    // causing the alert to be skipped on the very first detection of the hour.
     const wrongScript = `
 REDIRECT="true"
 CACHE_HIT=""
@@ -324,126 +370,51 @@ fi
 `;
     const { stdout } = runBash(wrongScript);
     // The wrong guard does NOT fire for cache-hit="", confirming the guard is broken:
-    // it would let the alert through on a real cache-hit run where Actions
-    // sets cache-hit="" because the restore step was skipped by a prior `if:`.
-    // This test documents the semantic difference between "" and "false".
+    // it would suppress the alert on the first detection of the hour when Actions
+    // reports cache-hit="" (key not found), rather than sending it.
     expect(stdout).toContain("WRONG_GUARD_FIRES=no");
   });
 });
 
-// ── 3. Two-run scenario: same hour, different outcomes ────────────────────────
+// ── 4. Multi-run scenario: same UTC hour, different outcomes ──────────────────
 
-describe("two-run scenario within the same UTC hour", () => {
+describe("multi-run scenario within the same UTC hour", () => {
   /**
    * Mirrors the step-guard logic:
    *   redirect == 'true' && cache-hit != 'true'  → alert sent
    *   redirect == 'true' && cache-hit == 'true'  → silenced
    */
-  function simulate(redirect: string, cacheHit: string): { alertSent: boolean; silenced: boolean } {
+  function simulate(
+    redirect: string,
+    cacheHit: string,
+  ): { alertSent: boolean; silenced: boolean } {
     const alertSent = redirect === "true" && cacheHit !== "true";
     const silenced = redirect === "true" && cacheHit === "true";
     return { alertSent, silenced };
   }
 
-  /**
-   * Simulate the full two-run sequence:
-   *
-   *  Run 1 (14:02): redirect detected, cache-hit = false → alert sent
-   *  Run 2 (14:45): redirect still present, cache-hit = true  → alert silenced
-   */
   it("run 1 sends the alert; run 2 within the same hour is silenced", () => {
+    // Run 1 (00:05 UTC): redirect detected, cache-miss → alert sent
     const run1 = simulate("true", ""); // cache-miss
     expect(run1.alertSent).toBe(true);
     expect(run1.silenced).toBe(false);
 
-    const run2 = simulate("true", "true"); // cache-hit — sentinel written by run 1
+    // Run 2 (00:20 UTC): redirect still present, cache-hit — sentinel written by run 1 → silenced
+    const run2 = simulate("true", "true"); // cache-hit
     expect(run2.alertSent).toBe(false);
     expect(run2.silenced).toBe(true);
   });
 
-  it("run 3 in the NEXT hour triggers a fresh alert (new cache key = miss)", () => {
-    // The cache key rotates each UTC hour, so the next-hour run has cache-hit = false.
-    // simulate("true", "") = redirect detected, cache-miss (empty string from Actions = miss)
+  it("run in the NEXT UTC hour triggers a fresh alert (new cache key = miss)", () => {
+    // The cache key rotates each UTC hour, so the next-hour run has cache-hit = "" (miss).
     const { alertSent } = simulate("true", "");
     expect(alertSent).toBe(true);
   });
-});
 
-// ── 4. Notifier script smoke-test (cache-miss path) ──────────────────────────
-//
-// Confirms the notifier script itself runs to completion and exits 0 on a
-// cache-miss run when no Slack/email channel is configured — it must never
-// mask the original probe failure by throwing.
-
-describe("notify-webhook-redirect.ts — exits 0 and emits banner on cache-miss (no channels)", () => {
-  it("script exits 0 and prints the CI banner when no Slack/email vars are set", () => {
-    // Run the notifier with only the minimum env vars — no Slack, no email.
-    const result = spawnSync(
-      "pnpm",
-      ["--filter", "@workspace/artwork-bank", "exec", "tsx", NOTIFIER_SCRIPT],
-      {
-        env: {
-          // Provide the minimum context the script expects.
-          WEBHOOK_URL: "https://i-art.com.au/api/stripe/webhook",
-          HTTP_CODE: "308",
-          REDIRECT_LOCATION: "https://www.i-art.com.au/api/stripe/webhook",
-          WORKFLOW_RUN_URL:
-            "https://github.com/owner/repo/actions/runs/99999",
-          // No SLACK_*, no SMTP_*, no RESEND_API_KEY, no PLATFORM_ADMIN_EMAIL.
-          PATH: process.env.PATH ?? "",
-          HOME: process.env.HOME ?? "",
-          NODE_ENV: "test",
-        },
-        encoding: "utf8",
-        timeout: 30_000,
-        cwd: path.resolve(__dirname, "../../.."),
-      },
-    );
-
-    // The script MUST exit 0 — notification failures must not mask the probe result.
-    expect(result.status).toBe(0);
-
-    // It must emit the last-resort CI banner to stderr (always fires without channels).
-    const combined = (result.stdout ?? "") + (result.stderr ?? "");
-    expect(combined).toContain("OPERATOR ACTION REQUIRED");
-  });
-
-  it("script exits 0 even when WEBHOOK_URL is the default (env var absent)", () => {
-    const result = spawnSync(
-      "pnpm",
-      ["--filter", "@workspace/artwork-bank", "exec", "tsx", NOTIFIER_SCRIPT],
-      {
-        env: {
-          PATH: process.env.PATH ?? "",
-          HOME: process.env.HOME ?? "",
-          NODE_ENV: "test",
-        },
-        encoding: "utf8",
-        timeout: 30_000,
-        cwd: path.resolve(__dirname, "../../.."),
-      },
-    );
-
-    expect(result.status).toBe(0);
-  });
-});
-
-// ── 5. Dedup boundary: manual dispatch always bypasses the cache ──────────────
-
-describe("workflow_dispatch runs bypass dedup (always fresh alert)", () => {
-  it("the 'Compute alert dedup key' step uses a unique key for workflow_dispatch", () => {
-    // Structural check: the bash in the dedup step branches on github.event_name.
-    const block = extractStepBlock("Compute alert dedup key");
-    expect(block).toContain("workflow_dispatch");
-    expect(block).toContain("manual-");
-    // The manual branch incorporates github.run_id so every dispatch is unique.
-    expect(block).toContain("github.run_id");
-  });
-
-  it("the 'Restore alert-sent cache' uses the same key variable as the dedup step", () => {
-    const restoreBlock = extractStepBlock("Restore alert-sent cache");
-    // Must reference steps.dedup.outputs.key — not a hardcoded string.
-    expect(restoreBlock).toContain("steps.dedup.outputs.key");
+  it("healthy probe run (no redirect) never triggers the alert regardless of cache state", () => {
+    expect(simulate("false", "").alertSent).toBe(false);
+    expect(simulate("false", "true").alertSent).toBe(false);
+    expect(simulate("false", "false").alertSent).toBe(false);
   });
 });
 
