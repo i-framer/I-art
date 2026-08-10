@@ -28,3 +28,10 @@ uri = "file://WEEKLY_ENGINEERING_REPORT.md"
 type = "text"
 title = "Weekly Engineering Report — August 1–6, 2026"
 description = "Complete engineering timeline: 6 sessions, 186 commits, ~97 tasks merged. Includes commit-by-commit chronology, session reconstruction, deliverables by category, and full supporting evidence."
+
+[[outputs]]
+id = "x_-GyClXeLkZaYwBgudTV"
+uri = "file://artwork-bank-work-history-aug2026.md"
+type = "text"
+title = "Artwork Bank — Work History & Time Report (Aug 1–10, 2026)"
+description = "Engineering work history, external manual time estimates, and invoice preparation summary for August 1–10, 2026."
