@@ -1,0 +1,117 @@
+name: Healthcheck-skip guard
+
+# Asserts that the "Ping external healthcheck URL" step in
+# stripe-webhook-health.yml exits 0 (clean skip) when HEALTHCHECK_URL is
+# not set.
+#
+# The guard uses `yq` (pre-installed on ubuntu-latest) to extract the *actual*
+# `run:` block from that named step at test time, so any future edit to the
+# real step is immediately reflected here — there is no hardcoded copy to
+# drift out of sync.
+#
+# No external secrets are required.  The whole point is that the step must
+# succeed *without* them.
+#
+# Pattern follows schema-drift-guard.yml.
+
+on:
+  push:
+    paths:
+      - ".github/workflows/stripe-webhook-health.yml"
+      - ".github/workflows/healthcheck-skip-guard.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/stripe-webhook-health.yml"
+      - ".github/workflows/healthcheck-skip-guard.yml"
+
+jobs:
+  healthcheck-skip-guard:
+    name: Healthcheck-skip guard (no secrets required)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Check 1: the named step still exists ─────────────────────────────
+      - name: Assert "Ping external healthcheck URL" step exists
+        run: |
+          STEP_NAME="Ping external healthcheck URL"
+          COUNT=$(yq '
+            .jobs["webhook-health"].steps[]
+            | select(.name == "'"$STEP_NAME"'")
+            | .name
+          ' .github/workflows/stripe-webhook-health.yml | wc -l)
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "❌  No step named '$STEP_NAME' found in stripe-webhook-health.yml"
+            echo "    The step may have been renamed or removed."
+            echo "    Update this guard (and the step name constant) to match."
+            exit 1
+          fi
+          echo "✅  Step '$STEP_NAME' found in stripe-webhook-health.yml."
+
+      # ── Check 2: ping step exits 0 when HEALTHCHECK_URL is not set ────────
+      #
+      # yq extracts the real `run:` block from the named step and writes it
+      # to a temp script.  Executing that script with HEALTHCHECK_URL unset
+      # must exit 0 (the step is designed to skip gracefully).
+      #
+      # If the skip guard (`if [ -z "$HEALTHCHECK_URL" ]; then ... exit 0`)
+      # is removed or replaced with `exit 1`, this step catches it.
+      - name: Assert ping step exits 0 when HEALTHCHECK_URL is not set
+        run: |
+          STEP_NAME="Ping external healthcheck URL"
+          SCRIPT_FILE=$(mktemp /tmp/ping-step-XXXXXX.sh)
+
+          # Extract the run: block from the named step into a temp script.
+          yq '
+            .jobs["webhook-health"].steps[]
+            | select(.name == "'"$STEP_NAME"'")
+            | .run
+          ' .github/workflows/stripe-webhook-health.yml > "$SCRIPT_FILE"
+
+          if [ ! -s "$SCRIPT_FILE" ]; then
+            echo "❌  Could not extract a non-empty run: block for step '$STEP_NAME'."
+            echo "    The step may have no run: block, or yq failed to parse the file."
+            exit 1
+          fi
+
+          echo "── Extracted run: block from '$STEP_NAME' ──────────────────────────"
+          cat "$SCRIPT_FILE"
+          echo "────────────────────────────────────────────────────────────────────"
+          echo ""
+
+          # Execute the real block with no HEALTHCHECK_URL.
+          set +e
+          OUTPUT=$(HEALTHCHECK_URL="" bash "$SCRIPT_FILE" 2>&1)
+          EXIT_CODE=$?
+          set -e
+
+          echo "Exit code : $EXIT_CODE"
+          echo "Output    : $OUTPUT"
+
+          # Assert exit 0 — the step must skip gracefully, not fail.
+          if [ "$EXIT_CODE" -ne 0 ]; then
+            echo ""
+            echo "❌  The ping step exited $EXIT_CODE instead of 0 when HEALTHCHECK_URL is absent."
+            echo "    Repositories that have not configured the secret would see a spurious"
+            echo "    failure on every scheduled run of stripe-webhook-health.yml."
+            echo "    Restore the 'exit 0' guard in step '$STEP_NAME'."
+            exit 1
+          fi
+
+          # Assert the skip notice is still logged (so operators understand why
+          # the step was a no-op rather than seeing a silent success).
+          if [[ "$OUTPUT" != *"HEALTHCHECK_URL not set"* ]] && \
+             [[ "$OUTPUT" != *"skipping"* ]]; then
+            echo ""
+            echo "❌  The ping step exited 0 but did not log a skip notice."
+            echo "    Expected the output to mention 'HEALTHCHECK_URL not set' or 'skipping'."
+            echo "    Got: $OUTPUT"
+            echo "    Restore the informational echo in step '$STEP_NAME' so operators"
+            echo "    can tell from the log why the step was a no-op."
+            exit 1
+          fi
+
+          echo ""
+          echo "✅  Ping step correctly exits 0 with a clear skip notice when HEALTHCHECK_URL is absent."
