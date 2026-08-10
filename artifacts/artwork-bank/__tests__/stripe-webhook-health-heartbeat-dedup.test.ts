@@ -912,14 +912,18 @@ echo "$KEY"
 //
 // GitHub run IDs are currently integers, but the bash fragment embeds
 // `github.run_id` without sanitisation.  A future platform change or a
-// non-standard run ID (leading zeros, very long integer) must NOT collapse two
-// distinct run IDs into the same cache key.
+// non-standard run ID (leading zeros, very long integer, or an alphanumeric /
+// hyphenated string) must NOT collapse two distinct run IDs into the same cache
+// key.
 //
 // run_id shapes tested:
 //   "0"                    — boundary / single-digit minimum
 //   "00001"                — leading zeros (bash preserves them in a string)
 //   "99999999999999999999" — 20-digit integer (well beyond current integer range)
 //   "9834710234"           — typical 10-digit integer seen in production today
+//   "abc-123"              — hyphenated alphanumeric (possible future platform shape)
+//   "run_999"              — underscore-prefixed alphanumeric
+//   "a1b2c3"               — mixed alphanumeric without separators
 //
 // All must:
 //   a) match  ^webhook-heartbeat-manual-.+$
@@ -983,17 +987,34 @@ describe("bash simulation — manual-dispatch heartbeat key is unique for unusua
     return (sentinelLine ?? "").slice(sentinel.length).trim();
   }
 
-  // run_id shapes that probe numeric coercion / leading-zero loss:
+  // run_id shapes that probe numeric coercion / leading-zero loss / non-integer forms:
   //   "0"                    — single-digit boundary
   //   "00001"                — leading zeros; numeric value 1 but string "00001"
   //   "99999999999999999999" — 20-digit integer, beyond JS/bash safe-integer range
   //   "9834710234"           — typical 10-digit integer seen in production
+  //   "abc-123"              — hyphenated alphanumeric (possible future platform shape)
+  //   "run_999"              — underscore-prefixed alphanumeric
+  //   "a1b2c3"               — mixed alphanumeric without separators
   const unusualRunIds: Array<[runId: string, label: string]> = [
     ["0", "single-digit zero"],
     ["00001", "leading zeros — numeric value 1 but string '00001'"],
     ["99999999999999999999", "20-digit integer (beyond safe-integer range)"],
     ["9834710234", "typical 10-digit integer"],
+    ["abc-123", "hyphenated alphanumeric — possible future platform run_id shape"],
+    ["run_999", "underscore-prefixed alphanumeric"],
+    ["a1b2c3", "mixed alphanumeric without separators"],
   ];
+
+  // Subset of the above that are integer-shaped (no letters or hyphens)
+  // used to confirm non-integer shapes produce keys that differ from all integer ones.
+  const integerRunIds = unusualRunIds
+    .filter(([id]) => /^\d+$/.test(id))
+    .map(([id]) => id);
+
+  // Subset that are non-integer (contain letters, hyphens, or underscores)
+  const nonIntegerRunIds = unusualRunIds
+    .filter(([id]) => !/^\d+$/.test(id))
+    .map(([id]) => id);
 
   it.each(unusualRunIds)(
     "run_id=%j (%s) → key matches ^webhook-heartbeat-manual-.+$",
@@ -1040,6 +1061,54 @@ describe("bash simulation — manual-dispatch heartbeat key is unique for unusua
       const key = computeHeartbeatManualKeyFromWorkflow(runId);
       expect(key.split("-")).toContain("manual");
     }
+  });
+
+  // ── Non-integer run_id shapes ────────────────────────────────────────────────
+  //
+  // GitHub Actions run IDs could theoretically include hyphens, underscores, or
+  // alphanumeric prefixes in future platform changes.  The bash string
+  // interpolation (`KEY="webhook-heartbeat-manual-${{ github.run_id }}"`) embeds
+  // the run_id verbatim, so these shapes must be safe — each producing a unique
+  // key that matches the expected prefix pattern.
+
+  it.each([
+    ["abc-123", "hyphenated alphanumeric"],
+    ["run_999", "underscore-prefixed alphanumeric"],
+    ["a1b2c3", "mixed alphanumeric without separators"],
+  ] as Array<[string, string]>)(
+    "non-integer run_id=%j (%s) → key matches ^webhook-heartbeat-manual-.+$",
+    (runId) => {
+      const key = computeHeartbeatManualKeyFromWorkflow(runId);
+      expect(key).toMatch(/^webhook-heartbeat-manual-.+$/);
+    },
+  );
+
+  it("non-integer run_id shapes produce keys mutually distinct from all integer-shaped keys", () => {
+    const integerKeys = integerRunIds.map((id) =>
+      computeHeartbeatManualKeyFromWorkflow(id),
+    );
+    const nonIntegerKeys = nonIntegerRunIds.map((id) =>
+      computeHeartbeatManualKeyFromWorkflow(id),
+    );
+
+    // Every non-integer key must differ from every integer key.
+    for (const nonIntKey of nonIntegerKeys) {
+      for (const intKey of integerKeys) {
+        expect(nonIntKey).not.toBe(intKey);
+      }
+    }
+
+    // Non-integer keys must also be mutually distinct among themselves.
+    const uniqueNonInteger = new Set(nonIntegerKeys);
+    expect(uniqueNonInteger.size).toBe(nonIntegerKeys.length);
+  });
+
+  it("non-integer run_id shapes produce keys that do not collide with each other", () => {
+    const keys = nonIntegerRunIds.map((id) =>
+      computeHeartbeatManualKeyFromWorkflow(id),
+    );
+    const unique = new Set(keys);
+    expect(unique.size).toBe(keys.length);
   });
 });
 
