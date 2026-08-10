@@ -577,6 +577,107 @@ fi
   });
 });
 
+// ── Helper: run the heartbeat script with a patched fetch (no real network) ───
+//
+// Loopback (127.0.0.1) connections are not available in the task environment,
+// so instead of spinning up a local HTTP server we write a temporary wrapper
+// TypeScript file that patches `globalThis.fetch` before importing the heartbeat
+// script.  tsx executes the wrapper; the patched fetch is used by the script
+// because `fetch` is accessed at call-time (inside async functions), not at
+// import time.
+//
+// The heartbeat script always ends with `process.exit(0)`, so the wrapper
+// process terminates immediately after the script finishes — which is exactly
+// what spawnSync captures.
+
+interface SlackMockConfig {
+  /** Body that the fake Slack API returns (default: { ok: false, error: "channel_not_found" }) */
+  body?: Record<string, unknown>;
+  /** HTTP status returned by the fake Slack API (default: 200) */
+  status?: number;
+  /** Env vars passed to the subprocess in addition to the defaults */
+  extraEnv?: Record<string, string>;
+}
+
+function runHeartbeatWithMockSlack(cfg: SlackMockConfig = {}): {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+} {
+  const mockBody = JSON.stringify(
+    cfg.body ?? { ok: false, error: "channel_not_found" },
+  );
+  const mockStatus = cfg.status ?? 200;
+
+  // Write a temporary wrapper that patches fetch before importing the script.
+  const dir = path.join(tmpdir(), `heartbeat-mock-${randomUUID()}`);
+  mkdirSync(dir, { recursive: true });
+  const wrapperFile = path.join(dir, "wrapper.ts");
+
+  // The wrapper:
+  //  1. Replaces globalThis.fetch with a stub that returns the configured body/status.
+  //  2. Imports the heartbeat script — which will call the stub when it runs.
+  //  3. The heartbeat script calls process.exit(0) at the end; the whole process exits.
+  //
+  // Uses an async IIFE + export {} so tsx compiles it as ESM (avoids the
+  // "top-level await not supported in CJS" error from esbuild).
+  const wrapperSource = `
+export {};
+
+// Patch fetch BEFORE the heartbeat script is loaded.
+(globalThis as any).fetch = async (_url: string, _opts?: RequestInit): Promise<Response> => {
+  const body = ${mockBody};
+  const status = ${mockStatus};
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers({ "content-type": "application/json" }),
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body)),
+  } as unknown as Response;
+};
+
+// Import the real heartbeat script — it uses our patched fetch.
+// The async IIFE avoids the esbuild "top-level await in CJS" error.
+(async () => {
+  await import(${JSON.stringify(HEARTBEAT_SCRIPT)});
+})();
+`;
+
+  writeFileSync(wrapperFile, wrapperSource, "utf8");
+
+  try {
+    const result = spawnSync(
+      "pnpm",
+      ["--filter", "@workspace/artwork-bank", "exec", "tsx", wrapperFile],
+      {
+        env: {
+          WEBHOOK_URL: "https://i-art.com.au/api/stripe/webhook",
+          HTTP_CODE: "405",
+          WORKFLOW_RUN_URL: "https://github.com/owner/repo/actions/runs/99999",
+          // Provide credentials so sendViaSlackBotToken is actually attempted.
+          SLACK_BOT_TOKEN: "xoxb-test-token-invalid",
+          SLACK_BILLING_ALERTS_CHANNEL: "alerts",
+          PATH: process.env.PATH ?? "",
+          HOME: process.env.HOME ?? "",
+          NODE_ENV: "test",
+          ...cfg.extraEnv,
+        },
+        encoding: "utf8",
+        timeout: 30_000,
+        cwd: path.resolve(__dirname, "../../.."),
+      },
+    );
+    return {
+      status: result.status,
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // ── 5. Notifier script smoke-test (no channels configured) ────────────────────
 //
 // Confirms the heartbeat notifier script runs to completion and exits 0 when
@@ -804,5 +905,75 @@ echo "$KEY"
 
     // The two groups use different keys.
     expect([...uniqueSameDay][0]).not.toBe([...uniqueNextDay][0]);
+  });
+});
+
+// ── 7. Notifier script — Slack API returns an error response ──────────────────
+//
+// Confirms the heartbeat notifier exits 0 even when credentials ARE set but the
+// Slack API returns a non-200 or `ok: false` response (e.g. channel_not_found,
+// invalid_auth, a transient 500).  A transient Slack outage must NOT mark the
+// overall probe run as failed.
+//
+// Each test runs the script via runHeartbeatWithMockSlack(), which writes a
+// temporary wrapper that patches globalThis.fetch before importing the heartbeat
+// script — no real network connections are made.
+
+describe("notify-webhook-heartbeat.ts — exits 0 when Slack API returns an error", () => {
+  it("exits 0 when Slack bot-token path returns ok:false (channel_not_found)", () => {
+    // HTTP 200 + ok:false is the canonical Slack logical-error format.
+    const { status, stdout, stderr } = runHeartbeatWithMockSlack({
+      body: { ok: false, error: "channel_not_found" },
+      status: 200,
+    });
+
+    // The script MUST exit 0 — a Slack error must not mask the probe result.
+    expect(status).toBe(0);
+
+    // The failure should be logged so CI logs capture the Slack error detail.
+    const combined = stdout + stderr;
+    expect(combined).toContain("channel_not_found");
+  });
+
+  it("exits 0 when Slack bot-token path returns a non-200 HTTP status (503)", () => {
+    // Simulate a transient Slack outage: HTTP 503 with an ok:false body.
+    const { status, stdout, stderr } = runHeartbeatWithMockSlack({
+      body: { ok: false, error: "service_unavailable" },
+      status: 503,
+    });
+
+    // Must exit 0 — a 5xx from Slack is not a probe failure.
+    expect(status).toBe(0);
+
+    // The HTTP error code should appear in the logs.
+    const combined = stdout + stderr;
+    expect(combined).toContain("503");
+  });
+
+  it("exits 0 when Slack bot-token path returns ok:false (invalid_auth)", () => {
+    // Simulate an invalid/expired token error.
+    const { status, stdout, stderr } = runHeartbeatWithMockSlack({
+      body: { ok: false, error: "invalid_auth" },
+    });
+
+    // Must exit 0 — a bad token must not mark the probe as failed.
+    expect(status).toBe(0);
+
+    const combined = stdout + stderr;
+    expect(combined).toContain("invalid_auth");
+  });
+
+  it("still emits the CI banner to stdout when Slack returns an error", () => {
+    // Even when Slack fails, the CI banner must be printed so the log always
+    // contains a visible all-clear record.
+    const { status, stdout, stderr } = runHeartbeatWithMockSlack({
+      body: { ok: false, error: "channel_not_found" },
+    });
+
+    expect(status).toBe(0);
+
+    // The CI banner must always fire — it is the last-resort visibility mechanism.
+    const combined = stdout + stderr;
+    expect(combined).toContain("STRIPE WEBHOOK PROBE HEARTBEAT");
   });
 });

@@ -44,11 +44,16 @@ const slackMessageText =
   `_Check GitHub Actions → stripe-webhook-health and see DEPLOY.md §10 for recovery steps._` +
   (workflowRunUrl ? `\n\n<${workflowRunUrl}|View workflow run →>` : "");
 
+// Allow tests (and future operators) to override the Slack API base URL so the
+// bot-token path can be exercised against a local mock without hitting the real API.
+const slackApiBase =
+  process.env.SLACK_API_URL?.trim().replace(/\/$/, "") ?? "https://slack.com/api";
+
 async function sendViaSlackBotToken(): Promise<{ sent: boolean; error?: string }> {
   if (!channel || !slackBotToken) return { sent: false };
 
   try {
-    const response = await fetch("https://slack.com/api/chat.postMessage", {
+    const response = await fetch(`${slackApiBase}/chat.postMessage`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
