@@ -446,3 +446,166 @@ describe("workflow_dispatch runs bypass dedup (always fresh alert)", () => {
     expect(restoreBlock).toContain("steps.dedup.outputs.key");
   });
 });
+
+// ── 6. Summary step: correct label for every cache-hit value ─────────────────
+//
+// The Summary step uses a single-bracket  [ "$CACHE_HIT" = "true" ]  to decide
+// whether to write "Deduplicated" or "Sent" in the job summary table.
+//
+// Expected mapping:
+//   ""      (cache miss — first run this hour)  → "Sent"
+//   "true"  (cache hit  — already sent)         → "Deduplicated"
+//   "false" (restore step skipped / not run)    → "Sent"
+//
+// The bash is extracted directly from the workflow YAML and executed, so any
+// edit to the workflow is caught immediately — there is no hand-maintained copy.
+
+describe("Summary step — correct label for all cache-hit values", () => {
+  /**
+   * Extract the `run: |` bash from the Summary step in the actual workflow YAML.
+   *
+   * The step's `env:` block maps GitHub Actions expression values into plain
+   * shell variables (REDIRECT, CACHE_HIT, HTTP_CODE, LOCATION, URL).  Those
+   * expressions are expanded by the Actions runner before the shell runs, so
+   * the `run:` body is pure bash with no ${{ }} tokens — we can execute it
+   * directly after prepending our own variable assignments.
+   */
+  function extractSummaryRunBlock(): string {
+    const stepBlock = extractStepBlock("Summary");
+
+    // Locate the `run: |` literal block scalar marker within the step block.
+    const runMarker = "run: |\n";
+    const markerIdx = stepBlock.indexOf(runMarker);
+    if (markerIdx === -1) throw new Error("Could not find 'run: |' in Summary step block");
+
+    const afterMarker = stepBlock.slice(markerIdx + runMarker.length);
+
+    // Detect indentation from the first non-empty content line and strip it
+    // from every line — this is robust to re-indentation of the YAML.
+    const firstContentLine = afterMarker.split("\n").find(l => l.trim().length > 0) ?? "";
+    const indent = firstContentLine.match(/^(\s+)/)?.[1] ?? "";
+
+    const lines = afterMarker
+      .split("\n")
+      .map(line => (indent && line.startsWith(indent) ? line.slice(indent.length) : line));
+
+    // Trim trailing blank lines left by YAML block scalar parsing.
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+
+    return lines.join("\n");
+  }
+
+  /**
+   * Run the YAML Summary step's bash for the given redirect + cacheHit values.
+   *
+   * GITHUB_STEP_SUMMARY is redirected to a tmp file; its content is returned.
+   * The env: variables from the YAML step are supplied as realistic constants —
+   * only REDIRECT and CACHE_HIT affect which label is written.
+   */
+  function runSummaryBash(redirect: string, cacheHit: string): string {
+    const dir = path.join(tmpdir(), `summary-test-${randomUUID()}`);
+    mkdirSync(dir, { recursive: true });
+    const summaryFile = path.join(dir, "step_summary.md");
+
+    // Mirror the YAML env: block substitutions the Actions runner would perform.
+    const envPreamble = [
+      `REDIRECT="${redirect}"`,
+      `CACHE_HIT="${cacheHit}"`,
+      `HTTP_CODE="308"`,
+      `LOCATION="https://www.i-art.com.au/api/stripe/webhook"`,
+      `URL="https://i-art.com.au/api/stripe/webhook"`,
+      `GITHUB_STEP_SUMMARY="${summaryFile}"`,
+    ].join("\n");
+
+    const fullScript = `${envPreamble}\n${extractSummaryRunBlock()}`;
+
+    try {
+      runBash(fullScript);
+      try {
+        return readFileSync(summaryFile, "utf8");
+      } catch {
+        return "";
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // ── Parameterised table ───────────────────────────────────────────────────
+  //
+  // cacheHit | meaning                                   | expected label
+  // ---------|-------------------------------------------|------------------
+  // ""       | cache key not found (first run this hour) | "Sent"
+  // "true"   | cache key found (already sent this hour)  | "Deduplicated"
+  // "false"  | restore step was skipped / not run        | "Sent"
+
+  const cases: Array<[cacheHit: string, label: string, expectedContains: string, shouldNotContain: string]> = [
+    ["",      "empty string (cache miss — first run)",  "Sent",         "Deduplicated"],
+    ["true",  "'true' (cache hit — already sent)",      "Deduplicated", "Sent (Slack" ],
+    ["false", "'false' (restore step skipped/not run)", "Sent",         "Deduplicated"],
+  ];
+
+  it.each(cases)(
+    "CACHE_HIT=%j (%s) → summary contains '%s' and not '%s'",
+    (cacheHit, _label, expectedContains, shouldNotContain) => {
+      const summary = runSummaryBash("true", cacheHit);
+      expect(summary).toContain(expectedContains);
+      expect(summary).not.toContain(shouldNotContain);
+    },
+  );
+
+  it("'true' is the only cache-hit value that produces 'Deduplicated'", () => {
+    for (const [cacheHit] of cases) {
+      const summary = runSummaryBash("true", cacheHit);
+      if (cacheHit === "true") {
+        expect(summary).toContain("Deduplicated");
+        expect(summary).not.toContain("Sent (Slack");
+      } else {
+        expect(summary).toContain("Sent (Slack");
+        expect(summary).not.toContain("Deduplicated");
+      }
+    }
+  });
+
+  it("'Deduplicated' and 'Sent' labels are mutually exclusive for every realistic cache-hit value", () => {
+    for (const [cacheHit] of cases) {
+      const summary = runSummaryBash("true", cacheHit);
+      const hasDeduplicated = summary.includes("Deduplicated");
+      const hasSent = summary.includes("Sent (Slack");
+      // Exactly one label must appear — never both, never neither.
+      expect(hasDeduplicated || hasSent).toBe(true);
+      expect(hasDeduplicated && hasSent).toBe(false);
+    }
+  });
+
+  it("the Summary step uses single-bracket POSIX form for the CACHE_HIT check", () => {
+    // The Summary step deliberately uses  [ "$CACHE_HIT" = "true" ]  (single-
+    // bracket POSIX sh) rather than  [[ ... ]]  — both behave identically for
+    // the string "true", but we assert the form present in the YAML so a future
+    // author who changes it to a double-bracket or != variant gets a red test.
+    expect(extractSummaryRunBlock()).toMatch(/\[ "\$CACHE_HIT" = "true" \]/);
+  });
+
+  it("'Deduplicated' label is in the if-true branch and 'Sent' is in the else branch", () => {
+    // Structural guard: confirms the two echo lines are on the correct sides of
+    // the if/else.  An author who accidentally swaps them would flip the
+    // user-visible labels; this catches that without waiting for a live run.
+    const runBlock = extractSummaryRunBlock();
+    const ifIdx            = runBlock.indexOf('[ "$CACHE_HIT" = "true" ]');
+    const deduplicatedIdx  = runBlock.indexOf("Deduplicated");
+    const elseIdx          = runBlock.indexOf("\n  else", ifIdx);
+    const sentIdx          = runBlock.indexOf("Sent (Slack");
+
+    expect(ifIdx).toBeGreaterThan(-1);
+    expect(deduplicatedIdx).toBeGreaterThan(-1);
+    expect(elseIdx).toBeGreaterThan(-1);
+    expect(sentIdx).toBeGreaterThan(-1);
+
+    // "Deduplicated" must appear after the if-condition and before the else.
+    expect(deduplicatedIdx).toBeGreaterThan(ifIdx);
+    expect(deduplicatedIdx).toBeLessThan(elseIdx);
+
+    // "Sent (Slack" must appear after the else.
+    expect(sentIdx).toBeGreaterThan(elseIdx);
+  });
+});
