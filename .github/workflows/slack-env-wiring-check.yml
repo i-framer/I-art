@@ -1,0 +1,59 @@
+name: Slack env-var wiring check
+
+# Verifies that every GitHub Actions workflow that posts (or enables) Slack
+# alerts has its Slack-related env vars wired from the correct repository-secret
+# names in every alerting step.
+#
+# A secret rename (e.g. SLACK_BOT_TOKEN → SLACK_API_TOKEN) would silently
+# disable alerts — the job succeeds but Slack never receives the message.  These
+# tests catch that drift the moment any of the covered YAML files or the test
+# file itself is edited, before a deployment.
+#
+# Covered workflows:
+#   slack-reconnect-smoke.yml     SLACK_SMOKE_SECRET, ARTWORK_BANK_URL
+#   scheduled-drift-check.yml    SLACK_BILLING_ALERTS_CHANNEL, SLACK_BOT_TOKEN,
+#                                SLACK_WEBHOOK_URL
+#   schema-drift-guard.yml       structural integrity (no Slack — build guard)
+#
+# No live database or Slack credentials are required.
+
+on:
+  push:
+    paths:
+      - ".github/workflows/slack-reconnect-smoke.yml"
+      - ".github/workflows/scheduled-drift-check.yml"
+      - ".github/workflows/schema-drift-guard.yml"
+      - "artifacts/artwork-bank/__tests__/slack-workflow-env-wiring.test.ts"
+      - ".github/workflows/slack-env-wiring-check.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/slack-reconnect-smoke.yml"
+      - ".github/workflows/scheduled-drift-check.yml"
+      - ".github/workflows/schema-drift-guard.yml"
+      - "artifacts/artwork-bank/__tests__/slack-workflow-env-wiring.test.ts"
+      - ".github/workflows/slack-env-wiring-check.yml"
+
+jobs:
+  slack-env-wiring:
+    name: Slack env-var wiring check (no credentials required)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Assert Slack env vars are wired from the correct secret names
+        run: |
+          pnpm --filter @workspace/artwork-bank exec vitest run \
+            __tests__/slack-workflow-env-wiring.test.ts
