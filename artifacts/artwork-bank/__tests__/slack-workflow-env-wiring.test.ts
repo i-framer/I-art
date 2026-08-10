@@ -212,6 +212,56 @@ describe("scheduled-drift-check.yml — schema-drift Slack alert env wiring", ()
   });
 });
 
+// ── slack-reconnect-smoke.yml — "Send failure email alert" step ───────────────
+//
+// When the smoke probe fails, Slack itself may be unreachable, so this step
+// sends a fallback email via SMTP (or a second Resend attempt).  The env block
+// wires SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, PLATFORM_ADMIN_EMAIL, and
+// RESEND_API_KEY from repository secrets.  A secret rename here would silently
+// prevent the operator from receiving the failure notification.
+
+describe("slack-reconnect-smoke.yml — Send failure email alert step env wiring", () => {
+  const workflowPath = resolve(
+    __dirname,
+    "../../../.github/workflows/slack-reconnect-smoke.yml",
+  );
+  const stepName = "Send failure email alert";
+
+  it("maps SMTP_HOST to secrets.SMTP_HOST on the same line", () => {
+    assertStepEnvMapsToSecret(workflowPath, stepName, "SMTP_HOST", "SMTP_HOST");
+  });
+
+  it("maps SMTP_PORT to secrets.SMTP_PORT on the same line", () => {
+    assertStepEnvMapsToSecret(workflowPath, stepName, "SMTP_PORT", "SMTP_PORT");
+  });
+
+  it("maps SMTP_USER to secrets.SMTP_USER on the same line", () => {
+    assertStepEnvMapsToSecret(workflowPath, stepName, "SMTP_USER", "SMTP_USER");
+  });
+
+  it("maps SMTP_PASS to secrets.SMTP_PASS on the same line", () => {
+    assertStepEnvMapsToSecret(workflowPath, stepName, "SMTP_PASS", "SMTP_PASS");
+  });
+
+  it("maps PLATFORM_ADMIN_EMAIL to secrets.PLATFORM_ADMIN_EMAIL on the same line", () => {
+    assertStepEnvMapsToSecret(
+      workflowPath,
+      stepName,
+      "PLATFORM_ADMIN_EMAIL",
+      "PLATFORM_ADMIN_EMAIL",
+    );
+  });
+
+  it("maps RESEND_API_KEY to secrets.RESEND_API_KEY on the same line", () => {
+    assertStepEnvMapsToSecret(
+      workflowPath,
+      stepName,
+      "RESEND_API_KEY",
+      "RESEND_API_KEY",
+    );
+  });
+});
+
 // ── schema-drift-guard.yml ────────────────────────────────────────────────────
 //
 // This workflow guards the *build pipeline* — it exits 1 when the schema is
