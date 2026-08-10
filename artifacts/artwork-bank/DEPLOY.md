@@ -381,6 +381,79 @@ SELECT column_name FROM information_schema.columns
 The new columns must appear. If they do not, run the manual command above and
 investigate why `PROD_DATABASE_URL` is not reaching the post-merge script.
 
+## 10. Webhook probe monitoring (dead-man's switch heartbeat)
+
+The `stripe-webhook-health` GitHub Actions workflow runs every 15 minutes and
+does two things:
+
+1. **Redirect alert** — fires when the probe detects a 3xx (bad). See §4 and §5.
+2. **Daily heartbeat** — fires once per UTC day when the probe is healthy (good).
+   This is the dead-man's switch: if the message stops appearing in Slack, it
+   means the scheduled workflow has stopped running.
+
+### What the daily heartbeat looks like
+
+Each UTC day the first healthy probe run sends a Slack message such as:
+
+> ✅ **Stripe webhook probe — daily heartbeat (2026-08-10 UTC)**
+> The scheduled health probe is running normally.
+> • Probed URL: `https://i-art.com.au/api/stripe/webhook`
+> • HTTP status: `405` — no redirect detected
+> • Stripe webhook deliveries should be succeeding
+
+If this message stops appearing in Slack for more than 24 hours, investigate
+immediately.
+
+### What to check when the heartbeat stops
+
+Work through these in order:
+
+1. **GitHub Actions disabled?**
+   Open the repository on GitHub → Actions tab.
+   - If Actions is disabled (banner: "GitHub Actions is disabled for this repository"),
+     a repository owner must re-enable it under Settings → Actions → General.
+
+2. **Repository flagged as inactive?**
+   GitHub auto-disables scheduled workflows on public repositories after 60 days
+   of no commits. Re-enable the workflow from the Actions tab: find
+   `stripe-webhook-health`, click **Enable workflow**.
+
+3. **Billing lapse?**
+   Check GitHub → Settings → Billing & Plans. If the Actions minutes quota is
+   exhausted, scheduled jobs queue but never start.
+
+4. **Workflow file removed or renamed?**
+   Confirm `.github/workflows/stripe-webhook-health.yml` still exists in the
+   default branch. If someone deleted or renamed it the schedule silently stops.
+
+5. **Slack secrets missing or rotated?**
+   The heartbeat falls back to a CI log banner if Slack is unconfigured — so a
+   missing Slack secret does not stop the workflow from running, but it will look
+   like no heartbeat if you only watch Slack.
+   Check: GitHub → Settings → Secrets and variables → Actions:
+   - `SLACK_BILLING_ALERTS_CHANNEL` (channel name or ID)
+   - `SLACK_BOT_TOKEN` (xoxb-…) **or** `SLACK_WEBHOOK_URL`
+
+6. **Force a manual run to verify**
+   GitHub → Actions → Stripe webhook health probe → **Run workflow** (main branch).
+   If it succeeds and a heartbeat message appears in Slack, the schedule will
+   resume normally once GitHub detects activity.
+
+### Configuring Slack alerts
+
+Set these GitHub Actions repository secrets so heartbeat (and redirect alert)
+messages reach your Slack workspace:
+
+| Secret | Description |
+|---|---|
+| `SLACK_BILLING_ALERTS_CHANNEL` | Channel name or ID, e.g. `ops-alerts` or `C0123456789` |
+| `SLACK_BOT_TOKEN` | Slack bot OAuth token (`xoxb-…`) — bot must be in the channel |
+| `SLACK_WEBHOOK_URL` | Slack incoming webhook URL (alternative to bot token) |
+
+The notifier tries the bot token first; falls back to the incoming webhook; then
+logs a prominent CI banner. Configure at least one Slack option so the
+heartbeat reaches you outside the GitHub Actions UI.
+
 ## 9. Verify after deploy
 
 - `pnpm run build` succeeds locally from `artifacts/artwork-bank/` (same build Vercel runs).

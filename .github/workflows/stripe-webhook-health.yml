@@ -246,6 +246,87 @@ jobs:
           echo "    Fix DEPLOY.md §4 to restore webhook delivery."
           exit 1
 
+      # ── Daily all-clear heartbeat (dead-man's switch) ───────────────────────
+      # Runs once per UTC day on healthy probe runs (redirect == false).
+      # If this daily Slack message stops appearing, it means the scheduled
+      # workflow has stopped firing — Actions disabled, repo inactive, billing
+      # lapse, etc.  See DEPLOY.md §10 for what to check.
+      #
+      # The heartbeat dedup key rotates daily so only the first healthy run
+      # of each UTC day sends the Slack message.  Subsequent healthy runs in
+      # the same day log a brief notice and skip the notification.
+
+      - name: Compute heartbeat dedup key
+        id: heartbeat-dedup
+        if: steps.probe.outputs.redirect == 'false'
+        run: |
+          KEY="webhook-heartbeat-$(date -u +%Y-%m-%d)"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+          echo "Heartbeat dedup key: $KEY"
+
+      - name: Restore heartbeat-sent cache
+        id: heartbeat-cache
+        if: steps.probe.outputs.redirect == 'false'
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/webhook-heartbeat-sent
+          key: ${{ steps.heartbeat-dedup.outputs.key }}
+
+      - name: Checkout (heartbeat only)
+        if: steps.probe.outputs.redirect == 'false' && steps.heartbeat-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm (heartbeat only)
+        if: steps.probe.outputs.redirect == 'false' && steps.heartbeat-cache.outputs.cache-hit != 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js (heartbeat only)
+        if: steps.probe.outputs.redirect == 'false' && steps.heartbeat-cache.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies (heartbeat only)
+        if: steps.probe.outputs.redirect == 'false' && steps.heartbeat-cache.outputs.cache-hit != 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Send daily heartbeat
+        if: steps.probe.outputs.redirect == 'false' && steps.heartbeat-cache.outputs.cache-hit != 'true'
+        env:
+          WEBHOOK_URL:    ${{ steps.resolve.outputs.url }}
+          HTTP_CODE:      ${{ steps.probe.outputs.http_code }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # Slack channels — same secrets used by the redirect alert:
+          SLACK_BILLING_ALERTS_CHANNEL: ${{ secrets.SLACK_BILLING_ALERTS_CHANNEL }}
+          SLACK_BOT_TOKEN:              ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_WEBHOOK_URL:            ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          pnpm --filter @workspace/artwork-bank exec tsx scripts/notify-webhook-heartbeat.ts || true
+
+      - name: Mark heartbeat sent (write sentinel for cache)
+        if: steps.probe.outputs.redirect == 'false' && steps.heartbeat-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/webhook-heartbeat-sent
+          date -u > /tmp/webhook-heartbeat-sent/sent-at.txt
+          echo "Heartbeat sentinel written at $(cat /tmp/webhook-heartbeat-sent/sent-at.txt)"
+
+      - name: Save heartbeat-sent cache
+        if: steps.probe.outputs.redirect == 'false' && steps.heartbeat-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/webhook-heartbeat-sent
+          key: ${{ steps.heartbeat-dedup.outputs.key }}
+
+      - name: Heartbeat already sent today — skipping repeat
+        if: steps.probe.outputs.redirect == 'false' && steps.heartbeat-cache.outputs.cache-hit == 'true'
+        run: |
+          echo "ℹ️  Daily heartbeat already sent today (UTC). Skipping repeat."
+          echo "    The probe is healthy — no redirect detected."
+
+      # ── Summary ──────────────────────────────────────────────────────────────
       - name: Summary
         if: always()
         env:
