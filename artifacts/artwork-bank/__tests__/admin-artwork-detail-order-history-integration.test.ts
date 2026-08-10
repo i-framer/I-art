@@ -27,7 +27,7 @@ import {
   representedArtistsTable,
   usersTable,
 } from "@workspace/db";
-import { and, asc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();

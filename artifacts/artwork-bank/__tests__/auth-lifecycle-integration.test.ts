@@ -26,7 +26,7 @@ import {
   usersTable,
   tenantUsersTable,
 } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 // ── iron-session ──────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ describeIntegration("Auth lifecycle (login/register/logout) — real-DB integrat
 
     await expect(
       register(
-        {},
+        { error: "" } as import("@/app/(auth)/actions").AuthState,
         fd({
           businessName: "New Test Gallery",
           type: "ARTIST",
@@ -172,7 +172,7 @@ describeIntegration("Auth lifecycle (login/register/logout) — real-DB integrat
     const { userId } = await seedUser(userEmail, "ExistingPass1!");
 
     const result = await register(
-      {},
+      { error: "" } as import("@/app/(auth)/actions").AuthState,
       fd({
         businessName: "Duplicate Gallery",
         type: "FRAMER",
@@ -182,7 +182,7 @@ describeIntegration("Auth lifecycle (login/register/logout) — real-DB integrat
       }),
     );
 
-    expect(result.error ?? result.message ?? result.emailError).toBeTruthy();
+    expect(result.error ?? (result as any).message ?? (result as any).emailError).toBeTruthy();
     expect(sessionSave).not.toHaveBeenCalled();
 
     // Exactly one user with this email.
@@ -201,7 +201,7 @@ describeIntegration("Auth lifecycle (login/register/logout) — real-DB integrat
     await seedUser(userEmail, "ValidPass1!");
 
     await expect(
-      login({}, fd({ email: userEmail, password: "ValidPass1!" })),
+      login({ error: "" } as import("@/app/(auth)/actions").AuthState, fd({ email: userEmail, password: "ValidPass1!" })),
     ).rejects.toThrow("REDIRECT:/dashboard");
 
     expect(sessionSave).toHaveBeenCalledOnce();
@@ -213,21 +213,21 @@ describeIntegration("Auth lifecycle (login/register/logout) — real-DB integrat
     await seedUser(userEmail, "RealPass1!");
 
     const result = await login(
-      {},
+      { error: "" } as import("@/app/(auth)/actions").AuthState,
       fd({ email: userEmail, password: "WrongPass!" }),
     );
 
-    expect(result.error ?? result.passwordError ?? result.message).toBeTruthy();
+    expect(result.error ?? (result as any).passwordError ?? (result as any).message).toBeTruthy();
     expect(sessionSave).not.toHaveBeenCalled();
   });
 
   it("login: unknown email returns an error", async () => {
     const result = await login(
-      {},
+      { error: "" } as import("@/app/(auth)/actions").AuthState,
       fd({ email: "nobody@nonexistent.example.com", password: "AnyPass1!" }),
     );
 
-    expect(result.error ?? result.emailError ?? result.message).toBeTruthy();
+    expect(result.error ?? (result as any).emailError ?? (result as any).message).toBeTruthy();
     expect(sessionSave).not.toHaveBeenCalled();
   });
 

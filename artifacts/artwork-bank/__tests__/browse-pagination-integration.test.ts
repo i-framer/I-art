@@ -22,7 +22,7 @@ import {
   artworksTable,
   representedArtistsTable,
 } from "@workspace/db";
-import { and, count, eq, inArray } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { buildBrowseWhere } from "@/lib/browse-where";
 

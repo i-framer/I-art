@@ -22,7 +22,7 @@ import {
   usersTable,
   tenantUsersTable,
 } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();

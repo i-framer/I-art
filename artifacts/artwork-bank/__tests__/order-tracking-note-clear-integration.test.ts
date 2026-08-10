@@ -148,7 +148,7 @@ describeIntegration("saveTrackingNote — clear/update — real-DB integration",
   });
 
   it("foreign tenant order tracking note cannot be cleared via own session", async () => {
-    const { tenantId: ownId } = await createTenant();
+    const { tenantId: _ownId } = await createTenant();
 
     const foreignTenantId = uid();
     await db.insert(tenantsTable).values({

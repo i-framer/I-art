@@ -113,7 +113,7 @@ describeIntegration("deleteRepresentedArtist with SOLD/RESERVED/HIDDEN artwork â
     const artistId = await createArtist(tenantId, "SOLD Artist");
     await createArtwork(tenantId, artistId, "SOLD");
 
-    const result = await deleteRepresentedArtist(artistId, null, new FormData());
+    const result = await deleteRepresentedArtist(artistId);
     expect(result).toHaveProperty("error");
     expect(result.error).toMatch(/artwork/i);
   });
@@ -123,7 +123,7 @@ describeIntegration("deleteRepresentedArtist with SOLD/RESERVED/HIDDEN artwork â
     const artistId = await createArtist(tenantId, "Persisted Artist");
     await createArtwork(tenantId, artistId, "SOLD");
 
-    await deleteRepresentedArtist(artistId, null, new FormData());
+    await deleteRepresentedArtist(artistId);
 
     const row = await db.query.representedArtistsTable.findFirst({
       where: eq(representedArtistsTable.id, artistId),
@@ -136,7 +136,7 @@ describeIntegration("deleteRepresentedArtist with SOLD/RESERVED/HIDDEN artwork â
     const artistId = await createArtist(tenantId, "SOLD Block Artist");
     const artworkId = await createArtwork(tenantId, artistId, "SOLD");
 
-    await deleteRepresentedArtist(artistId, null, new FormData());
+    await deleteRepresentedArtist(artistId);
 
     const row = await db.query.artworksTable.findFirst({
       where: eq(artworksTable.id, artworkId),
@@ -150,7 +150,7 @@ describeIntegration("deleteRepresentedArtist with SOLD/RESERVED/HIDDEN artwork â
     const artistId = await createArtist(tenantId, "RESERVED Artist");
     await createArtwork(tenantId, artistId, "RESERVED");
 
-    const result = await deleteRepresentedArtist(artistId, null, new FormData());
+    const result = await deleteRepresentedArtist(artistId);
     expect(result).toHaveProperty("error");
     expect(result.error).toMatch(/artwork/i);
   });
@@ -160,7 +160,7 @@ describeIntegration("deleteRepresentedArtist with SOLD/RESERVED/HIDDEN artwork â
     const artistId = await createArtist(tenantId, "HIDDEN Artist");
     await createArtwork(tenantId, artistId, "HIDDEN");
 
-    const result = await deleteRepresentedArtist(artistId, null, new FormData());
+    const result = await deleteRepresentedArtist(artistId);
     expect(result).toHaveProperty("error");
     expect(result.error).toMatch(/artwork/i);
   });
@@ -169,7 +169,7 @@ describeIntegration("deleteRepresentedArtist with SOLD/RESERVED/HIDDEN artwork â
     const tenantId = await createTenant();
     const artistId = await createArtist(tenantId, "Deletable No-Artwork Artist");
 
-    const result = await deleteRepresentedArtist(artistId, null, new FormData());
+    const result = await deleteRepresentedArtist(artistId);
     expect(result.error).toBe("");
 
     const row = await db.query.representedArtistsTable.findFirst({

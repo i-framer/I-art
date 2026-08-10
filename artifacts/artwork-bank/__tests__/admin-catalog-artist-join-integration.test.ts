@@ -19,7 +19,7 @@ import {
   artworkImagesTable,
   representedArtistsTable,
 } from "@workspace/db";
-import { and, asc, count, desc, eq, ilike, inArray, or } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();
@@ -139,7 +139,7 @@ describeIntegration("Admin catalog represented-artist left-join — real-DB inte
   it("foreign tenant's artist name is not returned for own artworks", async () => {
     const ownTenantId     = await createTenant();
     const foreignTenantId = await createTenant();
-    const foreignArtist   = await createArtist(foreignTenantId, "Foreign Artist");
+    const _foreignArtist   = await createArtist(foreignTenantId, "Foreign Artist");
 
     // Own artwork has no artist.
     const ownArtworkId = await createArtwork(ownTenantId);

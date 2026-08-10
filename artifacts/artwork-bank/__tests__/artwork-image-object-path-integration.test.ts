@@ -20,9 +20,8 @@ import {
   tenantsTable,
   artworksTable,
   artworkImagesTable,
-  representedArtistsTable,
 } from "@workspace/db";
-import { and, asc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();
@@ -92,7 +91,7 @@ describeIntegration("Artwork image objectPath field — persistence — real-DB 
   it("objectPath is persisted and read back correctly", async () => {
     const tenantId  = await createTenant();
     const artworkId = await createArtwork(tenantId);
-    const { id, objectPath } = await insertImage(artworkId, tenantId, {
+    const { id } = await insertImage(artworkId, tenantId, {
       objectPath: "/objects/my-painting-abc123.jpg",
     });
 
@@ -103,7 +102,7 @@ describeIntegration("Artwork image objectPath field — persistence — real-DB 
   it("objectPath is returned via the admin edit-page image query", async () => {
     const tenantId  = await createTenant();
     const artworkId = await createArtwork(tenantId);
-    const { id, objectPath } = await insertImage(artworkId, tenantId, {
+    const { id } = await insertImage(artworkId, tenantId, {
       objectPath: "/objects/edit-page-test.jpg",
       sortOrder: 0,
     });

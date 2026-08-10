@@ -13,7 +13,7 @@
  *  5. Artwork belonging to a different tenant → not found (cross-tenant isolation).
  *  6. Non-existent artworkId → not found.
  */
-import { afterAll, afterEach, it, expect, vi } from "vitest";
+import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import {
   db,

@@ -33,7 +33,7 @@ vi.mock("@/lib/slack", () => ({
   postToSlack: vi.fn(async () => {}),
 }));
 
-import { POST as slackReplayPOST, GET as slackReplayGET } from "@/app/api/slack-replay/route";
+import { POST as slackReplayPOST } from "@/app/api/slack-replay/route";
 import { sendBillingAlertSlackNotification } from "@/lib/slack";
 const mockSlackPost = vi.mocked(sendBillingAlertSlackNotification);
 

@@ -11,7 +11,7 @@
  *  5. Tenant isolation: inquiries from a foreign tenant never appear.
  *  6. totalPages = ceil(total / 25).
  */
-import { afterAll, afterEach, it, expect, vi } from "vitest";
+import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import {
   db,

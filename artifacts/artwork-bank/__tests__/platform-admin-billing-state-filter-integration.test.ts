@@ -16,7 +16,7 @@
 import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, tenantsTable } from "@workspace/db";
-import { eq, isNull, count } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();

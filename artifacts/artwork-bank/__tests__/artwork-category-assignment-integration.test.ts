@@ -25,7 +25,7 @@ import {
   usersTable,
   tenantUsersTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();
@@ -133,7 +133,7 @@ describeIntegration("Artwork category assignment (updateArtwork) — real-DB int
 
     const f = fd(artworkId);
     f.append("categoryIds", catId);
-    await updateArtwork(artworkId, {}, f)
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, f)
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     expect(await assignedCategories(artworkId)).toContain(catId);
@@ -148,13 +148,13 @@ describeIntegration("Artwork category assignment (updateArtwork) — real-DB int
     // First assign.
     const f1 = fd(artworkId);
     f1.append("categoryIds", oldCatId);
-    await updateArtwork(artworkId, {}, f1)
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, f1)
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     // Reassign to new category.
     const f2 = fd(artworkId);
     f2.append("categoryIds", newCatId);
-    await updateArtwork(artworkId, {}, f2)
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, f2)
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const cats = await assignedCategories(artworkId);
@@ -170,11 +170,11 @@ describeIntegration("Artwork category assignment (updateArtwork) — real-DB int
     // Assign.
     const f1 = fd(artworkId);
     f1.append("categoryIds", catId);
-    await updateArtwork(artworkId, {}, f1)
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, f1)
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     // Clear.
-    await updateArtwork(artworkId, {}, fd(artworkId))
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd(artworkId))
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     expect(await assignedCategories(artworkId)).toHaveLength(0);
@@ -185,7 +185,7 @@ describeIntegration("Artwork category assignment (updateArtwork) — real-DB int
     const { tenantId: foreignId } = await createTenant();
     const artworkId   = await createArtwork(ownId);
     // Restore own session after second createTenant() changed it.
-    const ownTenantUserId = mockSession.value.userId;
+    const _ownTenantUserId = mockSession.value.userId;
     mockSession.value = { ...mockSession.value, tenantId: ownId };
 
     const foreignCatId = await createCategory(foreignId, "Foreign Category");
@@ -196,7 +196,7 @@ describeIntegration("Artwork category assignment (updateArtwork) — real-DB int
 
     const f = fd(artworkId);
     f.append("categoryIds", foreignCatId);
-    await updateArtwork(artworkId, {}, f)
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, f)
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     expect(await assignedCategories(artworkId)).not.toContain(foreignCatId);
@@ -213,7 +213,7 @@ describeIntegration("Artwork category assignment (updateArtwork) — real-DB int
     f.append("categoryIds", cat1);
     f.append("categoryIds", cat2);
     f.append("categoryIds", cat3);
-    await updateArtwork(artworkId, {}, f)
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, f)
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const cats = await assignedCategories(artworkId);
@@ -242,7 +242,7 @@ describeIntegration("Artwork category assignment (updateArtwork) — real-DB int
     const f = fd(foreignArtworkId);
     f.append("categoryIds", cat);
 
-    const result = await updateArtwork(foreignArtworkId, {}, f);
+    const result = await updateArtwork(foreignArtworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, f);
     expect(result).toEqual({ error: "Artwork not found." });
   });
 });

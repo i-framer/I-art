@@ -126,7 +126,7 @@ describeIntegration("verifyCustomDomain — real-DB integration", () => {
 
   it("no CNAME target configured → redirects ?domain_status=no_cname_target", async () => {
     await createTenant("gallery3.test");
-    mockGetCnameTarget.mockReturnValueOnce(null);
+    mockGetCnameTarget.mockReturnValueOnce(null as unknown as string);
 
     await expect(verifyCustomDomain()).rejects.toThrow(
       "REDIRECT:/settings?domain_status=no_cname_target",

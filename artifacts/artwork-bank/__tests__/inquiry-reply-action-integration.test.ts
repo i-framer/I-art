@@ -28,7 +28,7 @@ import {
   inquiryRepliesTable,
   usersTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();
@@ -175,7 +175,7 @@ describeIntegration("replyToInquiry action — real-DB integration", () => {
   });
 
   it("foreign-tenant inquiry returns error — no reply row written", async () => {
-    const { tenantId: ownTenantId } = await createTenant();
+    await createTenant();
     // Create a foreign tenant and inquiry.
     const foreignTenantId = uid();
     await db.insert(tenantsTable).values({

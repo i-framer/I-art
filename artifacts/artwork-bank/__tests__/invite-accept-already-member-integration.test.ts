@@ -18,10 +18,10 @@
  *  4. Distinct users can each have membership in the same tenant.
  *  5. After dedup, original role is preserved.
  */
-import { afterAll, afterEach, it, expect, vi } from "vitest";
+import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import {
-  db, tenantsTable, usersTable, tenantUsersTable, invitesTable,
+  db, tenantsTable, usersTable, tenantUsersTable, staffInvitesTable,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -33,7 +33,7 @@ const createdUserIds: string[] = [];
 const createdInviteTokens: string[] = [];
 
 function uid() { return `${randomUUID()}-iaamit-${RUN}-${++seq}`; }
-function token() { return uid().replace(/-/g, ""); }
+function _token() { return uid().replace(/-/g, ""); }
 
 async function createTenant() {
   const id = uid();
@@ -57,8 +57,8 @@ async function createMembership(tenantId: string, userId: string, role: "OWNER" 
   await db.insert(tenantUsersTable).values({ tenantId, userId, role } as any);
 }
 
-async function createInvite(tenantId: string, inviteToken: string) {
-  await db.insert(invitesTable).values({
+async function _createInvite(tenantId: string, inviteToken: string) {
+  await db.insert(staffInvitesTable).values({
     token: inviteToken,
     tenantId,
     role: "STAFF",
@@ -80,7 +80,7 @@ async function membershipCount(tenantId: string, userId: string) {
 
 async function cleanup() {
   for (const t of createdInviteTokens.splice(0)) {
-    await db.delete(invitesTable).where(eq(invitesTable.token, t)).catch(() => {});
+    await db.delete(staffInvitesTable).where(eq(staffInvitesTable.token, t)).catch(() => {});
   }
   for (const id of createdTenantIds) {
     await db.delete(tenantUsersTable).where(eq(tenantUsersTable.tenantId, id)).catch(() => {});

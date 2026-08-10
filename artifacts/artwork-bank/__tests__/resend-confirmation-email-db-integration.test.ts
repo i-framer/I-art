@@ -47,7 +47,7 @@ vi.mock("@/lib/billing", () => ({
   hasActiveAccess: () => true,
 }));
 vi.mock("@/lib/email", () => ({
-  sendOrderConfirmation: vi.fn(async (opts: any) => {
+  sendOrderConfirmation: vi.fn(async (_opts: any) => {
     if (emailShouldFail.value) throw new Error("SMTP connection refused");
     return true;
   }),

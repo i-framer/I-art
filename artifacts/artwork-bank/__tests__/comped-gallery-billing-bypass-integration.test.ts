@@ -101,7 +101,7 @@ describeIntegration("Comped galleries — billing bypass — real-DB integration
 
     let thrown: Error | null = null;
     try {
-      await createArtwork({ success: false, errors: {}, artworkId: null }, artworkFd(tenantId));
+      await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, artworkFd(tenantId));
     } catch (e: any) {
       if (e?.message === "Subscription required") thrown = e;
       // redirect() is thrown from createArtwork on success — that's fine
@@ -115,7 +115,7 @@ describeIntegration("Comped galleries — billing bypass — real-DB integration
 
     let thrown: Error | null = null;
     try {
-      await createArtwork({ success: false, errors: {}, artworkId: null }, artworkFd(tenantId));
+      await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, artworkFd(tenantId));
     } catch (e: any) {
       if (e?.message === "Subscription required") thrown = e;
     }
@@ -127,7 +127,7 @@ describeIntegration("Comped galleries — billing bypass — real-DB integration
     await createTenant({ billingExempt: false, subscriptionStatus: null });
 
     await expect(
-      createArtwork({ success: false, errors: {}, artworkId: null }, artworkFd(mockSession.tenantId)),
+      createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, artworkFd(mockSession.tenantId)),
     ).rejects.toThrow("Subscription required");
   });
 
@@ -136,7 +136,7 @@ describeIntegration("Comped galleries — billing bypass — real-DB integration
 
     let thrown: Error | null = null;
     try {
-      await createArtwork({ success: false, errors: {}, artworkId: null }, artworkFd(tenantId));
+      await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, artworkFd(tenantId));
     } catch (e: any) {
       if (e?.message === "Subscription required") thrown = e;
     }

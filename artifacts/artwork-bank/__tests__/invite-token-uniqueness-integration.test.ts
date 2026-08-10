@@ -96,8 +96,8 @@ describeIntegration("Invite token uniqueness — real-DB integration", () => {
   it("two different invites produce distinct tokens", async () => {
     await createTenant();
 
-    const r1 = await createInvite(null, fd({ email: "alice@test.com", role: "staff" }));
-    const r2 = await createInvite(null, fd({ email: "bob@test.com", role: "staff" }));
+    const r1 = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: "alice@test.com", role: "staff" }));
+    const r2 = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: "bob@test.com", role: "staff" }));
 
     expect(r1.success).toBe(true);
     expect(r2.success).toBe(true);
@@ -113,8 +113,8 @@ describeIntegration("Invite token uniqueness — real-DB integration", () => {
   it("both tokens are non-null and non-empty", async () => {
     await createTenant();
 
-    const r1 = await createInvite(null, fd({ email: "carol@test.com", role: "staff" }));
-    const r2 = await createInvite(null, fd({ email: "dave@test.com", role: "owner" }));
+    const r1 = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: "carol@test.com", role: "staff" }));
+    const r2 = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: "dave@test.com", role: "owner" }));
 
     const tok1 = r1.inviteUrl?.replace("/invite/", "") ?? "";
     const tok2 = r2.inviteUrl?.replace("/invite/", "") ?? "";
@@ -128,8 +128,8 @@ describeIntegration("Invite token uniqueness — real-DB integration", () => {
   it("both invite rows are persisted to staffInvitesTable", async () => {
     const { tenantId } = await createTenant();
 
-    const r1 = await createInvite(null, fd({ email: "eve@test.com", role: "staff" }));
-    const r2 = await createInvite(null, fd({ email: "frank@test.com", role: "staff" }));
+    const r1 = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: "eve@test.com", role: "staff" }));
+    const r2 = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: "frank@test.com", role: "staff" }));
 
     const tok1 = r1.inviteUrl?.replace("/invite/", "") ?? "";
     const tok2 = r2.inviteUrl?.replace("/invite/", "") ?? "";
@@ -152,8 +152,8 @@ describeIntegration("Invite token uniqueness — real-DB integration", () => {
   it("same email invited again produces a new distinct token", async () => {
     await createTenant();
 
-    const r1 = await createInvite(null, fd({ email: "grace@test.com", role: "staff" }));
-    const r2 = await createInvite(null, fd({ email: "grace@test.com", role: "staff" }));
+    const r1 = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: "grace@test.com", role: "staff" }));
+    const r2 = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: "grace@test.com", role: "staff" }));
 
     const tok1 = r1.inviteUrl?.replace("/invite/", "") ?? "";
     const tok2 = r2.inviteUrl?.replace("/invite/", "") ?? "";
@@ -168,8 +168,8 @@ describeIntegration("Invite token uniqueness — real-DB integration", () => {
   it("different roles produce distinct tokens", async () => {
     await createTenant();
 
-    const r1 = await createInvite(null, fd({ email: "henry@test.com", role: "staff" }));
-    const r2 = await createInvite(null, fd({ email: "iris@test.com", role: "owner" }));
+    const r1 = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: "henry@test.com", role: "staff" }));
+    const r2 = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: "iris@test.com", role: "owner" }));
 
     const tok1 = r1.inviteUrl?.replace("/invite/", "") ?? "";
     const tok2 = r2.inviteUrl?.replace("/invite/", "") ?? "";

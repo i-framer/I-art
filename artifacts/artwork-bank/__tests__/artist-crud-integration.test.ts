@@ -126,7 +126,7 @@ describeIntegration("Represented artist CRUD — real-DB integration", () => {
     const tenantId = await createTenant();
 
     const result = await createRepresentedArtist(
-      null,
+      null as unknown as import("@/app/(admin)/(gated)/catalog/artists/actions").ArtistState,
       fd({ name: "Maria Nguyen", bio: "Watercolour specialist", commissionPct: "15" }),
     );
 
@@ -149,7 +149,7 @@ describeIntegration("Represented artist CRUD — real-DB integration", () => {
     const tenantId = await createTenant();
 
     const result = await createRepresentedArtist(
-      null,
+      null as unknown as import("@/app/(admin)/(gated)/catalog/artists/actions").ArtistState,
       fd({ name: "Anonymous", bio: "", commissionPct: "0" }),
     );
     expect(result.error).toBe("");
@@ -169,7 +169,7 @@ describeIntegration("Represented artist CRUD — real-DB integration", () => {
 
     const result = await updateRepresentedArtist(
       artistId,
-      null,
+      null as unknown as import("@/app/(admin)/(gated)/catalog/artists/actions").ArtistState,
       fd({ name: "New Name", bio: "Updated bio", commissionPct: "25" }),
     );
 
@@ -193,7 +193,7 @@ describeIntegration("Represented artist CRUD — real-DB integration", () => {
 
     await updateRepresentedArtist(
       artistId,
-      null,
+      null as unknown as import("@/app/(admin)/(gated)/catalog/artists/actions").ArtistState,
       fd({ name: "Hijacked Name", bio: "", commissionPct: "0" }),
     );
 
@@ -210,7 +210,7 @@ describeIntegration("Represented artist CRUD — real-DB integration", () => {
     const tenantId = await createTenant();
     const artistId = await insertArtist(tenantId, "To Be Deleted");
 
-    const result = await deleteRepresentedArtist(artistId, null, new FormData());
+    const result = await deleteRepresentedArtist(artistId);
 
     expect(result.error).toBe("");
 
@@ -228,7 +228,7 @@ describeIntegration("Represented artist CRUD — real-DB integration", () => {
     const artistId = await insertArtist(tenantId, "Artist With Artworks");
     await insertArtwork(tenantId, artistId);
 
-    const result = await deleteRepresentedArtist(artistId, null, new FormData());
+    const result = await deleteRepresentedArtist(artistId);
 
     expect(result.error).toMatch(/\d+ artwork/i);
 
@@ -247,7 +247,7 @@ describeIntegration("Represented artist CRUD — real-DB integration", () => {
 
     // Authenticated as ownTenant — should not delete the foreign artist.
     mockTenantId.value = ownTenantId;
-    const result = await deleteRepresentedArtist(foreignArtistId, null, new FormData());
+    const _result = await deleteRepresentedArtist(foreignArtistId);
 
     // The action should succeed silently or report an error — but critically
     // the foreign artist row must still exist.

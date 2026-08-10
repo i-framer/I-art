@@ -12,12 +12,12 @@
  *  5. Status filter PAID → only PAID orders returned.
  *  6. Status filter FULFILLED → only FULFILLED orders returned.
  */
-import { afterAll, afterEach, it, expect, vi } from "vitest";
+import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import {
   db, tenantsTable, artworksTable, ordersTable, orderItemsTable,
 } from "@workspace/db";
-import { and, desc, eq, count } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();

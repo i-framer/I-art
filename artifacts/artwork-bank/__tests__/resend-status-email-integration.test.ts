@@ -35,8 +35,8 @@ vi.mock("@/lib/billing", () => ({
 const sendOrderStatusUpdate = vi.hoisted(() => vi.fn(async () => {}));
 const sendOrderConfirmation = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("@/lib/email", () => ({
-  sendOrderStatusUpdate: (...a: unknown[]) => sendOrderStatusUpdate(...a),
-  sendOrderConfirmation: (...a: unknown[]) => sendOrderConfirmation(...a),
+  sendOrderStatusUpdate: (...a: unknown[]) => sendOrderStatusUpdate(...(a as Parameters<typeof sendOrderStatusUpdate>)),
+  sendOrderConfirmation: (...a: unknown[]) => sendOrderConfirmation(...(a as Parameters<typeof sendOrderConfirmation>)),
   sendPartialRefundNotification: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/base-url", () => ({

@@ -16,7 +16,7 @@
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();
@@ -127,7 +127,7 @@ afterAll(cleanup);
 
 describeIntegration("Billing-alert deduplication invoice.payment_failed — real-DB integration", () => {
   it("first delivery inserts one alert row for i-Framer tenant", async () => {
-    const { tenantId, customerId, subscriptionId } = await createTenant();
+    const { customerId, subscriptionId } = await createTenant();
     const eventId = `evt_${uid()}`;
     createdAlertEventIds.push(eventId);
 

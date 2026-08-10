@@ -83,17 +83,14 @@ function updateFd(sku: string, condition?: string) {
 }
 
 async function callCreate(formData: FormData) {
-  let artworkId: string | null = null;
   await createArtwork({ error: "" }, formData).catch((err: Error) => {
     if (!err.message.startsWith("REDIRECT:")) throw err;
   });
   // The redirect is to /catalog/:id — extract from mock call.
-  // Instead, query the DB for the newest artwork by the current session tenant.
   const { vi: _vi } = await import("vitest");
-  const redirectMock = (await import("next/navigation")).redirect as ReturnType<typeof _vi.fn>;
+  const redirectMock = (await import("next/navigation")).redirect as unknown as ReturnType<typeof _vi.fn>;
   const lastCall = redirectMock.mock.calls.at(-1)?.[0] as string | undefined;
-  artworkId = lastCall?.match(/\/catalog\/([^?]+)/)?.[1] ?? null;
-  return artworkId;
+  return lastCall?.match(/\/catalog\/([^?]+)/)?.[1] ?? null;
 }
 
 async function artworkRow(artworkId: string) {
@@ -122,7 +119,7 @@ afterAll(cleanup);
 
 describeIntegration("Artwork condition field — real-DB integration", () => {
   it("createArtwork with EXCELLENT persists correctly", async () => {
-    const { tenantId } = await createTenant();
+    await createTenant();
     const artworkId = await callCreate(createFd("EXCELLENT"));
     if (!artworkId) return; // skip if redirect not captured
     createdArtworkIds.push(artworkId);
@@ -132,7 +129,7 @@ describeIntegration("Artwork condition field — real-DB integration", () => {
   });
 
   it("createArtwork without condition → null", async () => {
-    const { tenantId } = await createTenant();
+    await createTenant();
     const artworkId = await callCreate(createFd());
     if (!artworkId) return;
     createdArtworkIds.push(artworkId);

@@ -170,7 +170,7 @@ describeIntegration("lookupOrder (public storefront) — real-DB integration", (
 
   it("wrong ref prefix → not_found", async () => {
     const { tenantId, slug } = await createTenant();
-    const orderId = await createOrder(tenantId, "buyer@example.com");
+    const _orderId = await createOrder(tenantId, "buyer@example.com");
 
     const result = await lookupOrder(
       slug,

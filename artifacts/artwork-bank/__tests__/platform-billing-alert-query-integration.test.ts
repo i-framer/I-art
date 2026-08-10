@@ -15,7 +15,7 @@
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, stripeAlertsTable, tenantsTable } from "@workspace/db";
-import { asc, desc, eq, isNull } from "drizzle-orm";
+import { desc, eq, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 // ── Auth mock for dismissBillingAlert ─────────────────────────────────────────
@@ -38,7 +38,7 @@ const createdTenantIds: string[] = [];
 
 function uid() { return `${randomUUID()}-baq-${RUN}-${++seq}`; }
 
-async function createTenant() {
+async function _createTenant() {
   const id = uid();
   await db.insert(tenantsTable).values({
     id, slug: id, businessName: `Alert Query Test ${id}`,

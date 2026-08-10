@@ -79,7 +79,7 @@ async function cleanup() {
 afterEach(cleanup);
 afterAll(cleanup);
 
-function fd(fields: Record<string, string>) {
+function _fd(fields: Record<string, string>) {
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) f.set(k, v);
   return f;

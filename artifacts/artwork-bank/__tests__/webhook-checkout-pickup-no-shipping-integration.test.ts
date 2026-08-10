@@ -148,7 +148,7 @@ describeIntegration("PICKUP checkout — no shipping address stored — real-DB 
     await post(pickupEvent(sessionId, artworkId, tenantId));
 
     const order = await orderBySession(sessionId);
-    expect(order?.buyerAddress ?? null).toBeNull();
+    expect((order as any)?.buyerAddress ?? null).toBeNull();
   });
 
   it("PICKUP event → buyerCity is null or undefined (not set)", async () => {
@@ -159,7 +159,7 @@ describeIntegration("PICKUP checkout — no shipping address stored — real-DB 
     await post(pickupEvent(sessionId, artworkId, tenantId));
 
     const order = await orderBySession(sessionId);
-    expect(order?.buyerCity ?? null).toBeNull();
+    expect((order as any)?.buyerCity ?? null).toBeNull();
   });
 
   it("PICKUP event → buyer email from customer_details persisted", async () => {
@@ -198,7 +198,7 @@ describeIntegration("PICKUP checkout — no shipping address stored — real-DB 
     const order = await orderBySession(sessionId);
     // PICKUP fulfillment → address fields not copied even if shipping_details is present.
     expect(order?.fulfillmentType).toBe("PICKUP");
-    expect(order?.buyerAddress ?? null).toBeNull();
-    expect(order?.buyerCity ?? null).toBeNull();
+    expect((order as any)?.buyerAddress ?? null).toBeNull();
+    expect((order as any)?.buyerCity ?? null).toBeNull();
   });
 });

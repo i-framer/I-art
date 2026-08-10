@@ -178,7 +178,7 @@ describeIntegration("sweepUnsentStatusEmails — real-DB integration", () => {
     const orderId  = await createQueuedOrder(tenantId, { statusEmailAttempts: 0 });
     // DO NOT call attachItem.
 
-    const result = await sweepUnsentStatusEmails(new Date());
+    const _result = await sweepUnsentStatusEmails(new Date());
 
     // Scanned but skipped; send not called for this order.
     const row = await db.query.ordersTable.findFirst({ where: eq(ordersTable.id, orderId) });

@@ -20,7 +20,7 @@ import { describeIntegration } from "./helpers/skip-if-no-db";
 import {
   db, tenantsTable, artworksTable, inquiriesTable,
 } from "@workspace/db";
-import { and, desc, eq, isNotNull, isNull, count } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();

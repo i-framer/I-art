@@ -69,7 +69,7 @@ async function createOrder(tenantId: string, status: string, opts: { refundedCen
 
 async function ordersByStatus(tenantId: string, status: string) {
   return db.query.ordersTable.findMany({
-    where: and(eq(ordersTable.tenantId, tenantId), eq(ordersTable.status, status)),
+    where: and(eq(ordersTable.tenantId, tenantId), eq(ordersTable.status, status as any)),
   });
 }
 

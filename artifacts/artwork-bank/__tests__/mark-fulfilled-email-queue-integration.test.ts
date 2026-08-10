@@ -152,7 +152,7 @@ describeIntegration("markFulfilled action — status email queue — real-DB int
   });
 
   it("foreign tenant order cannot be fulfilled via own session", async () => {
-    const { tenantId: ownTenantId } = await createTenant();
+    const { tenantId: _ownTenantId } = await createTenant();
 
     const foreignTenantId = uid();
     await db.insert(tenantsTable).values({

@@ -13,7 +13,7 @@
  *  4. A member with a missing user record falls back to userId as email display.
  *  5. Empty team → empty list (no errors).
  */
-import { afterAll, afterEach, it, expect, vi } from "vitest";
+import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import {
   db,

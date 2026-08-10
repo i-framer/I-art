@@ -16,7 +16,7 @@
 import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, tenantsTable, artworksTable } from "@workspace/db";
-import { and, eq, ilike } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { buildBrowseWhere } from "@/lib/browse-where";
 import { representedArtistsTable } from "@workspace/db";

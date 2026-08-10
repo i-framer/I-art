@@ -70,7 +70,7 @@ async function createArtwork(tenantId: string) {
 }
 
 async function callCheckout(slug: string, artworkId: string) {
-  const tenantId = slug; // slug === tenantId in our fixtures
+  const _tenantId = slug; // slug === tenantId in our fixtures
   vi.doMock("@/lib/tenant-cache", () => ({
     getTenantBySlug: vi.fn(async (_slug: string) => {
       const row = await db.query.tenantsTable.findFirst({ where: eq(tenantsTable.slug, _slug) });

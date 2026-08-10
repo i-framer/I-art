@@ -42,7 +42,7 @@ vi.mock("@/lib/slack", async (importOriginal) => {
     ...actual,
     resolveSlackChannel: vi.fn(() => "#test-iframer-alerts"),
     sendIframerAccountSlackNotification: (...a: unknown[]) =>
-      sendIframerAccountSlackNotificationMock(...a),
+      sendIframerAccountSlackNotificationMock(...(a as Parameters<typeof sendIframerAccountSlackNotificationMock>)),
     sendBillingAlertSlackNotification: vi.fn(async () => ({ ok: true })),
     sendRefundDbFailureSlackNotification: vi.fn(async () => {}),
   };
@@ -164,7 +164,7 @@ describeIntegration("replayFailedIframerSlackAlerts — real-DB integration", ()
       iframerSlackFailedPayload: null,
     });
 
-    const result = await replayFailedIframerSlackAlerts();
+    const _result = await replayFailedIframerSlackAlerts();
 
     // The tenant should not contribute to replayed/failed counts.
     expect(sendIframerAccountSlackNotificationMock).not.toHaveBeenCalled();

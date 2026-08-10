@@ -15,7 +15,7 @@
  *  5. Pagination: >24 artworks → page 1 = newest 24, page 2 = remainder, no overlap.
  *  6. Category filter only returns artworks linked to the category.
  */
-import { afterAll, afterEach, it, expect, vi } from "vitest";
+import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import {
   db,
@@ -154,7 +154,7 @@ describeIntegration("Public storefront gallery listing — visibility and pagina
   it("HIDDEN artworks are excluded even when showInGallery=true", async () => {
     const { id: tenantId } = await createTenant();
     const availId = await createArtwork(tenantId, { status: "AVAILABLE", showInGallery: true });
-    const hiddenId = await createArtwork(tenantId, { status: "HIDDEN", showInGallery: true });
+    const _hiddenId = await createArtwork(tenantId, { status: "HIDDEN", showInGallery: true });
 
     const result = await queryStorefrontListing(tenantId);
 
@@ -165,7 +165,7 @@ describeIntegration("Public storefront gallery listing — visibility and pagina
   it("artworks with showInGallery=false excluded regardless of status", async () => {
     const { id: tenantId } = await createTenant();
     const visibleId = await createArtwork(tenantId, { status: "AVAILABLE", showInGallery: true });
-    const hiddenId = await createArtwork(tenantId, { status: "AVAILABLE", showInGallery: false });
+    const _hiddenId = await createArtwork(tenantId, { status: "AVAILABLE", showInGallery: false });
 
     const result = await queryStorefrontListing(tenantId);
 
@@ -195,7 +195,7 @@ describeIntegration("Public storefront gallery listing — visibility and pagina
     const { id: foreignTenantId } = await createTenant();
 
     const ownId = await createArtwork(tenantId, { status: "AVAILABLE" });
-    const foreignId = await createArtwork(foreignTenantId, { status: "AVAILABLE" });
+    const _foreignId = await createArtwork(foreignTenantId, { status: "AVAILABLE" });
 
     const result = await queryStorefrontListing(tenantId);
 
@@ -228,7 +228,7 @@ describeIntegration("Public storefront gallery listing — visibility and pagina
     const catId = await createCategory(tenantId, "Prints");
 
     const inCatId = await createArtwork(tenantId, { title: "A Print" });
-    const notInCatId = await createArtwork(tenantId, { title: "A Painting" });
+    const _notInCatId = await createArtwork(tenantId, { title: "A Painting" });
 
     await linkCategory(inCatId, catId);
 

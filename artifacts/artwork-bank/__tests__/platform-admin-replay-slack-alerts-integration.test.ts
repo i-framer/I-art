@@ -21,7 +21,7 @@
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, stripeAlertsTable, tenantsTable } from "@workspace/db";
-import { eq, isNull, isNotNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();
@@ -173,7 +173,7 @@ describeIntegration("Platform admin Slack replay actions — real-DB integration
     // Also set SLACK_BILLING_ALERTS_CHANNEL so it doesn't skip.
     process.env.SLACK_BILLING_ALERTS_CHANNEL = "#test-channel";
 
-    const result = await replayFailedIframerSlackAlerts();
+    const _result = await replayFailedIframerSlackAlerts();
 
     const row = await tenantRow(tenantId);
     expect(row?.iframerSlackPostFailed).toBeNull();

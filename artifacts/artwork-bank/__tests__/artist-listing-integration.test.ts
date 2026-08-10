@@ -12,7 +12,7 @@
  *  4. Foreign-tenant artworks do not inflate the own count.
  *  5. All artists are returned (no accidental pagination limit).
  */
-import { afterAll, afterEach, it, expect, vi } from "vitest";
+import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import {
   db,

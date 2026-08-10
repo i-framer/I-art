@@ -138,7 +138,7 @@ describeIntegration("Category CRUD — real-DB integration", () => {
   it("createCategory: inserts a category row and returns success", async () => {
     const tenantId = await createTenant();
 
-    const result = await createCategory(null, fd({ name: "Paintings" }));
+    const result = await createCategory(null as unknown as import("@/app/(admin)/(gated)/catalog/categories/actions").CategoryState, fd({ name: "Paintings" }));
 
     expect(result.error).toBe("");
 
@@ -152,7 +152,7 @@ describeIntegration("Category CRUD — real-DB integration", () => {
   it("createCategory: returns error for a blank name", async () => {
     await createTenant();
 
-    const result = await createCategory(null, fd({ name: "" }));
+    const result = await createCategory(null as unknown as import("@/app/(admin)/(gated)/catalog/categories/actions").CategoryState, fd({ name: "" }));
 
     expect(result.error).toBeTruthy();
   });
@@ -163,7 +163,7 @@ describeIntegration("Category CRUD — real-DB integration", () => {
     const tenantId = await createTenant();
     const categoryId = await insertCategory(tenantId, "Old Name");
 
-    const result = await renameCategory(categoryId, null, fd({ name: "New Name" }));
+    const result = await renameCategory(categoryId, null as unknown as import("@/app/(admin)/(gated)/catalog/categories/actions").CategoryState, fd({ name: "New Name" }));
 
     expect(result.error).toBe("");
 
@@ -180,7 +180,7 @@ describeIntegration("Category CRUD — real-DB integration", () => {
     const tenantB = await createTenant();
     mockTenantId.value = tenantB;
 
-    await renameCategory(categoryId, null, fd({ name: "Hijacked Name" }));
+    await renameCategory(categoryId, null as unknown as import("@/app/(admin)/(gated)/catalog/categories/actions").CategoryState, fd({ name: "Hijacked Name" }));
 
     const row = await db.query.artworkCategoriesTable.findFirst({
       where: eq(artworkCategoriesTable.id, categoryId),

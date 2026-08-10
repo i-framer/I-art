@@ -96,7 +96,7 @@ async function tenantStatus(tenantId: string) {
 
 async function cleanup() {
   for (const id of createdTenantIds.splice(0)) {
-    await db.delete(stripeAlertsTable).where(eq(stripeAlertsTable.tenantId, id)).catch(() => {});
+    await db.delete(stripeAlertsTable).where(eq(stripeAlertsTable.stripeEventId, id)).catch(() => {});
     await db.delete(tenantsTable).where(eq(tenantsTable.id, id)).catch(() => {});
   }
 }

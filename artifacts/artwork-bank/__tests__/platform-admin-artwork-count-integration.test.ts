@@ -13,7 +13,7 @@
 import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, tenantsTable, artworksTable } from "@workspace/db";
-import { count, eq, and } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();

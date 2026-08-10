@@ -19,7 +19,7 @@ import {
   artworksTable,
   inquiriesTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();
@@ -99,8 +99,8 @@ afterAll(cleanup);
 
 describeIntegration("submitInquiry cross-tenant scoping — real-DB integration", () => {
   it("submitting tenant A's artwork via tenant B's slug returns Artwork not found", async () => {
-    const { tenantId: tenantA, slug: slugA } = await createTenant();
-    const { tenantId: tenantB, slug: slugB } = await createTenant();
+    const { tenantId: tenantA, slug: _slugA } = await createTenant();
+    const { tenantId: _tenantB, slug: slugB } = await createTenant();
     const artworkA = await createArtwork(tenantA);
 
     // Use slugB (tenant B) but artworkId belongs to tenant A.
@@ -111,8 +111,8 @@ describeIntegration("submitInquiry cross-tenant scoping — real-DB integration"
   });
 
   it("no inquiry row is inserted when cross-tenant check fails", async () => {
-    const { tenantId: tenantA, slug: slugA } = await createTenant();
-    const { tenantId: tenantB, slug: slugB } = await createTenant();
+    const { tenantId: tenantA, slug: _slugA } = await createTenant();
+    const { tenantId: _tenantB, slug: slugB } = await createTenant();
     const artworkA = await createArtwork(tenantA);
 
     await submitInquiry(slugB, artworkA, { status: "idle", error: "" }, fd());
@@ -139,7 +139,7 @@ describeIntegration("submitInquiry cross-tenant scoping — real-DB integration"
   });
 
   it("cross-tenant failure does not affect foreign tenant's existing inquiries", async () => {
-    const { tenantId: tenantA, slug: slugA } = await createTenant();
+    const { tenantId: tenantA, slug: _slugA } = await createTenant();
     const { tenantId: tenantB, slug: slugB } = await createTenant();
     const artworkA = await createArtwork(tenantA);
     const artworkB = await createArtwork(tenantB);

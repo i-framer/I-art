@@ -119,7 +119,7 @@ describeIntegration("saveCustomDomain / removeCustomDomain — real-DB integrati
   });
 
   it("duplicate domain used by another tenant is rejected with error", async () => {
-    const { tenantId: tenantA } = await createTenant({ customDomain: "www.taken-domain.com" });
+    const { tenantId: _tenantA } = await createTenant({ customDomain: "www.taken-domain.com" });
     const { tenantId: tenantB } = await createTenant();
 
     mockSession.value = { ...mockSession.value, tenantId: tenantB };
@@ -169,7 +169,7 @@ describeIntegration("saveCustomDomain / removeCustomDomain — real-DB integrati
     const domainA = "www.unique-a.com";
     const domainB = "www.unique-b.com";
     const { tenantId: tenantA } = await createTenant({ customDomain: domainA });
-    const { tenantId: tenantB } = await createTenant({ customDomain: domainB });
+    const { tenantId: _tenantB } = await createTenant({ customDomain: domainB });
 
     // Tenant A saves its own domain — must succeed.
     mockSession.value = { ...mockSession.value, tenantId: tenantA };

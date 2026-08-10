@@ -38,7 +38,7 @@ async function createTenant() {
   return id;
 }
 
-async function createArtwork(tenantId: string) {
+async function _createArtwork(tenantId: string) {
   const id = uid();
   await db.insert(artworksTable).values({
     id, tenantId, title: "Revenue Art", sku: `sku-${id}`,

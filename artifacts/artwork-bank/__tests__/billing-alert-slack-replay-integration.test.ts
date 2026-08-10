@@ -39,7 +39,7 @@ vi.mock("@/lib/slack", async (importOriginal) => {
     ...actual,
     resolveSlackChannel: vi.fn(() => "#test-billing-alerts"),
     sendBillingAlertSlackNotification: (...a: unknown[]) =>
-      sendBillingAlertSlackNotificationMock(...a),
+      sendBillingAlertSlackNotificationMock(...(a as Parameters<typeof sendBillingAlertSlackNotificationMock>)),
     sendIframerSlackNotification: vi.fn(async () => ({ ok: true })),
     sendRefundDbFailureSlackNotification: vi.fn(async () => {}),
   };
@@ -62,7 +62,7 @@ const createdAlertIds: string[] = [];
 
 function uid() { return `${randomUUID()}-blar-${RUN}-${++seq}`; }
 
-async function createTenant() {
+async function _createTenant() {
   const id = uid();
   await db.insert(tenantsTable).values({
     id, slug: id, businessName: "Billing Alert Replay Test", type: "ARTIST",

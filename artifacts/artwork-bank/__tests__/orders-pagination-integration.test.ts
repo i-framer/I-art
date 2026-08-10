@@ -11,7 +11,7 @@
  *  4. totalPages = ceil(total / 25).
  *  5. An out-of-range page returns 0 rows (not an error).
  */
-import { afterAll, afterEach, it, expect, vi } from "vitest";
+import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import {
   db,
@@ -20,7 +20,7 @@ import {
   ordersTable,
   orderItemsTable,
 } from "@workspace/db";
-import { and, count, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, count, desc, eq, gte, lte } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 // ── DB helpers ────────────────────────────────────────────────────────────────

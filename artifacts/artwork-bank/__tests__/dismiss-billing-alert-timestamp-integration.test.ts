@@ -109,7 +109,7 @@ describeIntegration("dismissBillingAlert timestamp and target-row semantics — 
     const alertId  = await createAlert(tenantId);
 
     await dismissBillingAlert(alertId);
-    const firstDismissedAt = (await getAlert(alertId))?.dismissedAt;
+    const _firstDismissedAt = (await getAlert(alertId))?.dismissedAt;
 
     await expect(dismissBillingAlert(alertId)).resolves.not.toThrow();
     const row = await getAlert(alertId);

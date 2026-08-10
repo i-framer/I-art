@@ -107,7 +107,7 @@ describeIntegration("createInvite — real-DB integration", () => {
     mockSession.role = "owner";
 
     const email = `invitee-${uid()}@example.com`;
-    const result = await createInvite(null, fd({ email, role: "staff" }));
+    const result = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email, role: "staff" }));
 
     expect(result.success).toBe(true);
     expect(result.error).toBe("");
@@ -130,7 +130,7 @@ describeIntegration("createInvite — real-DB integration", () => {
     await createTenant();
     mockSession.role = "owner";
 
-    const result = await createInvite(null, fd({ email: "UPPER@EXAMPLE.COM", role: "staff" }));
+    const result = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: "UPPER@EXAMPLE.COM", role: "staff" }));
     expect(result.success).toBe(true);
 
     const token = result.inviteUrl?.replace("/invite/", "");
@@ -146,7 +146,7 @@ describeIntegration("createInvite — real-DB integration", () => {
     mockSession.role = "owner";
 
     const before = Date.now();
-    const result = await createInvite(null, fd({ email: `exp-${uid()}@example.com`, role: "staff" }));
+    const result = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: `exp-${uid()}@example.com`, role: "staff" }));
     const after = Date.now();
 
     const token = result.inviteUrl?.replace("/invite/", "");
@@ -166,7 +166,7 @@ describeIntegration("createInvite — real-DB integration", () => {
     mockSession.role = "staff";
 
     const email = `blocked-${uid()}@example.com`;
-    const result = await createInvite(null, fd({ email, role: "staff" }));
+    const result = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email, role: "staff" }));
 
     expect(result.error).toBeTruthy();
     expect(result.success).toBeFalsy();
@@ -182,7 +182,7 @@ describeIntegration("createInvite — real-DB integration", () => {
     const tenantId = await createTenant();
     mockSession.role = "owner";
 
-    const result = await createInvite(null, fd({ email: "not-an-email", role: "staff" }));
+    const result = await createInvite(null as unknown as import("@/app/(admin)/settings/actions").InviteResultState, fd({ email: "not-an-email", role: "staff" }));
 
     expect(result.error).toBeTruthy();
 

@@ -141,7 +141,7 @@ describeIntegration("acceptInvite — full real-DB integration", () => {
 
     await expect(
       acceptInvite(
-        {},
+        { error: "" } as import("@/app/(auth)/invite/[token]/actions").InviteState,
         fd({ token, email, password: "Str0ng-Pass!23", confirmPassword: "Str0ng-Pass!23" }),
       ),
     ).rejects.toThrow("REDIRECT:");
@@ -187,7 +187,7 @@ describeIntegration("acceptInvite — full real-DB integration", () => {
 
     await expect(
       acceptInvite(
-        {},
+        { error: "" } as import("@/app/(auth)/invite/[token]/actions").InviteState,
         fd({ token, email, password: "Str0ng-Pass!23", confirmPassword: "Str0ng-Pass!23" }),
       ),
     ).rejects.toThrow("REDIRECT:");
@@ -210,11 +210,11 @@ describeIntegration("acceptInvite — full real-DB integration", () => {
     });
 
     const result = await acceptInvite(
-      {},
+      { error: "" } as import("@/app/(auth)/invite/[token]/actions").InviteState,
       fd({ token, email, password: "Str0ng-Pass!23", confirmPassword: "Str0ng-Pass!23" }),
     );
 
-    expect(result.error ?? result.status).toMatch(/expired/i);
+    expect(result.error ?? (result as any).status).toMatch(/expired/i);
 
     // Invite must not be claimed.
     const invite = await db.query.staffInvitesTable.findFirst({
@@ -228,7 +228,7 @@ describeIntegration("acceptInvite — full real-DB integration", () => {
     const token = await createInvite(tenantId, { email: "correct@example.com" });
 
     const result = await acceptInvite(
-      {},
+      { error: "" } as import("@/app/(auth)/invite/[token]/actions").InviteState,
       fd({
         token,
         email: "wrong@example.com",
@@ -237,7 +237,7 @@ describeIntegration("acceptInvite — full real-DB integration", () => {
       }),
     );
 
-    expect(result.error ?? result.status).toBeTruthy();
+    expect(result.error ?? (result as any).status).toBeTruthy();
 
     const invite = await db.query.staffInvitesTable.findFirst({
       where: eq(staffInvitesTable.token, token),
@@ -254,16 +254,16 @@ describeIntegration("acceptInvite — full real-DB integration", () => {
     });
 
     const result = await acceptInvite(
-      {},
+      { error: "" } as import("@/app/(auth)/invite/[token]/actions").InviteState,
       fd({ token, email, password: "Str0ng-Pass!23", confirmPassword: "Str0ng-Pass!23" }),
     );
 
-    expect(result.error ?? result.status).toMatch(/already/i);
+    expect(result.error ?? (result as any).status).toMatch(/already/i);
   });
 
   it("unknown token returns a not-found error", async () => {
     const result = await acceptInvite(
-      {},
+      { error: "" } as import("@/app/(auth)/invite/[token]/actions").InviteState,
       fd({
         token: "tok-does-not-exist-anywhere",
         email: "anyone@example.com",
@@ -272,7 +272,7 @@ describeIntegration("acceptInvite — full real-DB integration", () => {
       }),
     );
 
-    expect(result.error ?? result.status).toBeTruthy();
-    expect(String(result.error ?? result.status)).toMatch(/not found|invalid|expired/i);
+    expect(result.error ?? (result as any).status).toBeTruthy();
+    expect(String(result.error ?? (result as any).status)).toMatch(/not found|invalid|expired/i);
   });
 });

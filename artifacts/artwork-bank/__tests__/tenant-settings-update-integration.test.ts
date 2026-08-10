@@ -164,7 +164,7 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
   });
 
   it("foreign tenant row is not affected by own session update", async () => {
-    const { tenantId: ownId } = await createTenant("My Gallery");
+    const { tenantId: _ownId } = await createTenant("My Gallery");
 
     const foreignId = uid();
     await db.insert(tenantsTable).values({

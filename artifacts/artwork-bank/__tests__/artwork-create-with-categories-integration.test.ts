@@ -134,7 +134,7 @@ describeIntegration("createArtwork with categoryIds — real-DB integration", ()
     const { tenantId } = await setupTenant();
     const catId = await createCategory(tenantId, "Paintings");
 
-    await createArtwork({}, fd({ categoryIds: catId }))
+    await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({ categoryIds: catId }))
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const art = await latestArtwork(tenantId);
@@ -148,7 +148,7 @@ describeIntegration("createArtwork with categoryIds — real-DB integration", ()
     const cat2 = await createCategory(tenantId, "Sculpture");
     const cat3 = await createCategory(tenantId, "Digital");
 
-    await createArtwork({}, fd({ categoryIds: [cat1, cat2, cat3] }))
+    await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({ categoryIds: [cat1, cat2, cat3] }))
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const art = await latestArtwork(tenantId);
@@ -166,7 +166,7 @@ describeIntegration("createArtwork with categoryIds — real-DB integration", ()
     // Restore own session after second setup.
     mockSession.value = { ...mockSession.value, tenantId: ownId };
 
-    await createArtwork({}, fd({ categoryIds: foreignCatId }))
+    await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({ categoryIds: foreignCatId }))
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const art = await latestArtwork(ownId);
@@ -177,7 +177,7 @@ describeIntegration("createArtwork with categoryIds — real-DB integration", ()
   it("createArtwork with no categoryIds creates no junction rows", async () => {
     const { tenantId } = await setupTenant();
 
-    await createArtwork({}, fd())
+    await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd())
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const art = await latestArtwork(tenantId);
@@ -188,7 +188,7 @@ describeIntegration("createArtwork with categoryIds — real-DB integration", ()
   it("showInGallery=on sets showInGallery=true in the created artwork", async () => {
     const { tenantId } = await setupTenant();
 
-    await createArtwork({}, fd({ showInGallery: "on" }))
+    await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({ showInGallery: "on" }))
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const art = await latestArtwork(tenantId);
@@ -198,7 +198,7 @@ describeIntegration("createArtwork with categoryIds — real-DB integration", ()
   it("showInGallery omitted sets showInGallery=false", async () => {
     const { tenantId } = await setupTenant();
 
-    await createArtwork({}, fd())
+    await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd())
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const art = await latestArtwork(tenantId);

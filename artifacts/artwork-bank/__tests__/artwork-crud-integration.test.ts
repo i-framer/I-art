@@ -128,7 +128,7 @@ describeIntegration("Artwork CRUD — real-DB integration", () => {
 
     await expect(
       createArtwork(
-        {},
+        { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState,
         fd({
           title: "Blue Mountain",
           sku: `SKU-${uid()}`,
@@ -154,7 +154,7 @@ describeIntegration("Artwork CRUD — real-DB integration", () => {
 
     await expect(
       createArtwork(
-        {},
+        { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState,
         fd({
           title: "Minimal Artwork",
           sku: `SKU-${uid()}`,
@@ -176,7 +176,7 @@ describeIntegration("Artwork CRUD — real-DB integration", () => {
     await createTenant();
 
     const result = await createArtwork(
-      {},
+      { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState,
       fd({
         title: "Ghost Artist",
         sku: `SKU-${uid()}`,
@@ -202,7 +202,7 @@ describeIntegration("Artwork CRUD — real-DB integration", () => {
     await expect(
       updateArtwork(
         artworkId,
-        {},
+        { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState,
         fd({
           title: "Updated Title",
           sku: "NEW-SKU-UPDATED",
@@ -230,7 +230,7 @@ describeIntegration("Artwork CRUD — real-DB integration", () => {
 
     const result = await updateArtwork(
       artworkId,
-      {},
+      { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState,
       fd({ title: "Hacked", sku: "HACKED-SKU", status: "HIDDEN" }),
     );
 
@@ -401,7 +401,6 @@ describeIntegration("Artwork CRUD — real-DB integration", () => {
   it("createArtwork: persists dimensions W/H/D and medium when provided", async () => {
     const tenantId = await createTenant();
 
-    let createdId: string | null = null;
     try {
       await createArtwork(
         { error: "" },
@@ -424,7 +423,7 @@ describeIntegration("Artwork CRUD — real-DB integration", () => {
     });
     const row = rows.find(r => r.title === "Dimensional Artwork");
     expect(row).toBeDefined();
-    createdId = row?.id ?? null;
+    const createdId = row?.id ?? null;
     expect(row?.medium).toBe("Oil on canvas");
     expect(row?.dimensionsW).toBe(40);
     expect(row?.dimensionsH).toBe(60);

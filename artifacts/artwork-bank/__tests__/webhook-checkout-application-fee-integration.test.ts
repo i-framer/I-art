@@ -116,7 +116,7 @@ async function orderBySession(sessionId: string) {
 
 async function cleanup() {
   // Clean up in dependency order.
-  const orderRows = await db.query.ordersTable.findMany();
+  const _orderRows = await db.query.ordersTable.findMany();
   for (const id of createdOrderIds.splice(0)) {
     await db.delete(orderItemsTable).where(eq(orderItemsTable.orderId, id)).catch(() => {});
     await db.delete(ordersTable).where(eq(ordersTable.id, id)).catch(() => {});
@@ -129,7 +129,7 @@ async function cleanup() {
   }
 }
 
-async function cleanupOrder(sessionId: string) {
+async function _cleanupOrder(sessionId: string) {
   const row = await db.query.ordersTable.findFirst({ where: eq(ordersTable.stripeSessionId, sessionId) });
   if (row) {
     createdOrderIds.push(row.id);

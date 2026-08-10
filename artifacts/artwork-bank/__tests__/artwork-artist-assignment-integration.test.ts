@@ -131,7 +131,7 @@ describeIntegration("Artwork represented-artist assignment — real-DB integrati
     const artistId    = await createArtist(tenantId, "Valid Artist");
 
     let redirectUrl = "";
-    await createArtwork({}, fdCreate({ representedArtistId: artistId }))
+    await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdCreate({ representedArtistId: artistId }))
       .catch(e => { redirectUrl = String(e); });
 
     // On success, the action redirects to /catalog/{id}?created=1
@@ -154,7 +154,7 @@ describeIntegration("Artwork represented-artist assignment — real-DB integrati
     // Restore own session.
     mockSession.value = { ...mockSession.value, tenantId: ownId };
 
-    const result = await createArtwork({}, fdCreate({ representedArtistId: foreignArtistId }));
+    const result = await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdCreate({ representedArtistId: foreignArtistId }));
     expect(result).toHaveProperty("error");
   });
 
@@ -163,7 +163,7 @@ describeIntegration("Artwork represented-artist assignment — real-DB integrati
     const artworkId   = await insertArtwork(tenantId);
     const artistId    = await createArtist(tenantId, "Assigned Artist");
 
-    await updateArtwork(artworkId, {}, fdUpdate(artworkId, { representedArtistId: artistId }))
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdUpdate(artworkId, { representedArtistId: artistId }))
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const row = await db.query.artworksTable.findFirst({ where: eq(artworksTable.id, artworkId) });
@@ -177,11 +177,11 @@ describeIntegration("Artwork represented-artist assignment — real-DB integrati
     const artist2Id   = await createArtist(tenantId, "Second Artist");
 
     // Assign first artist.
-    await updateArtwork(artworkId, {}, fdUpdate(artworkId, { representedArtistId: artist1Id }))
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdUpdate(artworkId, { representedArtistId: artist1Id }))
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     // Change to second artist.
-    await updateArtwork(artworkId, {}, fdUpdate(artworkId, { representedArtistId: artist2Id }))
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdUpdate(artworkId, { representedArtistId: artist2Id }))
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const row = await db.query.artworksTable.findFirst({ where: eq(artworksTable.id, artworkId) });
@@ -197,7 +197,7 @@ describeIntegration("Artwork represented-artist assignment — real-DB integrati
     // Restore own session.
     mockSession.value = { ...mockSession.value, tenantId: ownId };
 
-    const result = await updateArtwork(artworkId, {},
+    const result = await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState,
       fdUpdate(artworkId, { representedArtistId: foreignArtistId }),
     );
     expect(result).toHaveProperty("error");
@@ -212,11 +212,11 @@ describeIntegration("Artwork represented-artist assignment — real-DB integrati
     const artistId    = await createArtist(tenantId, "To Be Cleared Artist");
 
     // Assign.
-    await updateArtwork(artworkId, {}, fdUpdate(artworkId, { representedArtistId: artistId }))
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdUpdate(artworkId, { representedArtistId: artistId }))
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     // Clear (no representedArtistId in form).
-    await updateArtwork(artworkId, {}, fdUpdate(artworkId))
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdUpdate(artworkId))
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const row = await db.query.artworksTable.findFirst({ where: eq(artworksTable.id, artworkId) });

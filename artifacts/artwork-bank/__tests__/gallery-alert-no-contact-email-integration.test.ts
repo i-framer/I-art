@@ -128,7 +128,7 @@ describeIntegration("sweepUnsentGalleryAlerts — null contactEmail skip — rea
     expect(firstNotifiedAt).toBeInstanceOf(Date);
 
     // Second sweep must not re-select or overwrite the order.
-    const result2 = await sweepUnsentGalleryAlerts(new Date());
+    const _result2 = await sweepUnsentGalleryAlerts(new Date());
     const after2 = await db.query.ordersTable.findFirst({ where: eq(ordersTable.id, orderId) });
 
     // emailFailureNotifiedAt must not have changed (order was excluded from sweep).

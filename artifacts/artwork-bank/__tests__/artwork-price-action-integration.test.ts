@@ -100,7 +100,7 @@ describeIntegration("updateArtwork action — price persistence — real-DB inte
     const { tenantId } = await createTenant();
     const id = await createArtwork(tenantId, null);
 
-    await updateArtwork(id, {}, fd({
+    await updateArtwork(id, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({
       title: "Price Action Test Art", sku: `sku-${id}`, status: "AVAILABLE",
       price: "450",
     })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
@@ -112,7 +112,7 @@ describeIntegration("updateArtwork action — price persistence — real-DB inte
     const { tenantId } = await createTenant();
     const id = await createArtwork(tenantId, 200);
 
-    await updateArtwork(id, {}, fd({
+    await updateArtwork(id, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({
       title: "Price Action Test Art", sku: `sku-${id}`, status: "AVAILABLE",
       price: "750",
     })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
@@ -124,7 +124,7 @@ describeIntegration("updateArtwork action — price persistence — real-DB inte
     const { tenantId } = await createTenant();
     const id = await createArtwork(tenantId, 300);
 
-    await updateArtwork(id, {}, fd({
+    await updateArtwork(id, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({
       title: "Price Action Test Art", sku: `sku-${id}`, status: "AVAILABLE",
       price: "",
     })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
@@ -136,7 +136,7 @@ describeIntegration("updateArtwork action — price persistence — real-DB inte
     const { tenantId } = await createTenant();
     const id = await createArtwork(tenantId, 100);
 
-    await updateArtwork(id, {}, fd({
+    await updateArtwork(id, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({
       title: "Stable Title Art", sku: `sku-${id}`, status: "AVAILABLE",
       price: "999",
     })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
@@ -147,7 +147,7 @@ describeIntegration("updateArtwork action — price persistence — real-DB inte
   });
 
   it("foreign tenant artwork price cannot be updated via own session", async () => {
-    const { tenantId: ownTenantId } = await createTenant();
+    const { tenantId: _ownTenantId } = await createTenant();
 
     const foreignTenantId = uid();
     await db.insert(tenantsTable).values({
@@ -162,7 +162,7 @@ describeIntegration("updateArtwork action — price persistence — real-DB inte
     } as any);
     createdArtworkIds.push(foreignId);
 
-    const result = await updateArtwork(foreignId, {}, fd({
+    const result = await updateArtwork(foreignId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({
       title: "Foreign Art", sku: `sku-${foreignId}`, status: "AVAILABLE",
       price: "1",
     }));

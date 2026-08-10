@@ -35,7 +35,7 @@ vi.mock("@/lib/billing", () => ({
 // ── Email — success by default; controlled per test ───────────────────────────
 const sendInquiryReply = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("@/lib/email", () => ({
-  sendInquiryReply: (...a: unknown[]) => sendInquiryReply(...a),
+  sendInquiryReply: (...a: unknown[]) => sendInquiryReply(...(a as Parameters<typeof sendInquiryReply>)),
   sendOrderStatusUpdate: vi.fn(async () => {}),
   sendOrderConfirmation: vi.fn(async () => {}),
 }));
@@ -169,7 +169,7 @@ describeIntegration("replyToInquiry — real-DB integration", () => {
     const artworkId = await createArtwork(tenantId);
     const inquiryId = await createInquiry(tenantId, artworkId, "NEW");
 
-    const result = await replyToInquiry(null, fd(inquiryId, "Yes, it is available!"));
+    const result = await replyToInquiry(null as unknown as import("@/app/(admin)/(gated)/inquiries/actions").ReplyState, fd(inquiryId, "Yes, it is available!"));
 
     expect(result.status).toBe("sent");
 
@@ -196,7 +196,7 @@ describeIntegration("replyToInquiry — real-DB integration", () => {
     const tenantB = await createTenant();
     mockSession.tenantId = tenantB;
 
-    const result = await replyToInquiry(null, fd(inquiryId, "Injected reply"));
+    const result = await replyToInquiry(null as unknown as import("@/app/(admin)/(gated)/inquiries/actions").ReplyState, fd(inquiryId, "Injected reply"));
 
     expect(result.status).toBe("error");
     expect(result.message).toMatch(/not found/i);
@@ -219,7 +219,7 @@ describeIntegration("replyToInquiry — real-DB integration", () => {
     const artworkId = await createArtwork(tenantId);
     const inquiryId = await createInquiry(tenantId, artworkId, "NEW");
 
-    const result = await replyToInquiry(null, fd(inquiryId, "   "));
+    const result = await replyToInquiry(null as unknown as import("@/app/(admin)/(gated)/inquiries/actions").ReplyState, fd(inquiryId, "   "));
 
     expect(result.status).toBe("error");
     expect(sendInquiryReply).not.toHaveBeenCalled();
@@ -238,7 +238,7 @@ describeIntegration("replyToInquiry — real-DB integration", () => {
     // Start with already-HANDLED inquiry (gallery is sending a follow-up).
     const inquiryId = await createInquiry(tenantId, artworkId, "HANDLED");
 
-    const result = await replyToInquiry(null, fd(inquiryId, "Follow-up message"));
+    const result = await replyToInquiry(null as unknown as import("@/app/(admin)/(gated)/inquiries/actions").ReplyState, fd(inquiryId, "Follow-up message"));
 
     expect(result.status).toBe("sent");
 

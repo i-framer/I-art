@@ -119,7 +119,7 @@ describeIntegration("Artwork edition fields — action-level — real-DB integra
     const { tenantId } = await createTenant();
 
     let redirectUrl = "";
-    await createArtwork({}, fdCreate({ isEdition: "on", editionNumber: "3", totalEditions: "10" }))
+    await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdCreate({ isEdition: "on", editionNumber: "3", totalEditions: "10" }))
       .catch(e => { redirectUrl = String(e); });
 
     expect(redirectUrl).toContain("created=1");
@@ -138,7 +138,7 @@ describeIntegration("Artwork edition fields — action-level — real-DB integra
     const { tenantId } = await createTenant();
 
     let redirectUrl = "";
-    await createArtwork({}, fdCreate())
+    await createArtwork({ error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdCreate())
       .catch(e => { redirectUrl = String(e); });
 
     expect(redirectUrl).toContain("created=1");
@@ -155,7 +155,7 @@ describeIntegration("Artwork edition fields — action-level — real-DB integra
     const { tenantId } = await createTenant();
     const artworkId   = await insertArtwork(tenantId);
 
-    await updateArtwork(artworkId, {}, fdUpdate(artworkId, {
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdUpdate(artworkId, {
       isEdition: "on",
       editionNumber: "5",
       totalEditions: "20",
@@ -172,12 +172,12 @@ describeIntegration("Artwork edition fields — action-level — real-DB integra
     const artworkId   = await insertArtwork(tenantId);
 
     // First set edition fields.
-    await updateArtwork(artworkId, {}, fdUpdate(artworkId, {
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdUpdate(artworkId, {
       isEdition: "on", editionNumber: "2", totalEditions: "8",
     })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     // Clear by omitting.
-    await updateArtwork(artworkId, {}, fdUpdate(artworkId))
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdUpdate(artworkId))
       .catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const row = await db.query.artworksTable.findFirst({ where: eq(artworksTable.id, artworkId) });
@@ -191,7 +191,7 @@ describeIntegration("Artwork edition fields — action-level — real-DB integra
     const artworkId   = await insertArtwork(tenantId);
 
     // Only set editionNumber, not totalEditions.
-    await updateArtwork(artworkId, {}, fdUpdate(artworkId, {
+    await updateArtwork(artworkId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fdUpdate(artworkId, {
       isEdition: "on", editionNumber: "7",
     })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 

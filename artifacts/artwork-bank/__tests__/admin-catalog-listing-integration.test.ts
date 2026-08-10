@@ -14,7 +14,7 @@
  *  7. Combined filters (q + status) narrow results correctly.
  *  8. Pagination: PAGE_SIZE=20; page 2 returns the remainder.
  */
-import { afterAll, afterEach, it, expect, vi } from "vitest";
+import { afterAll, afterEach, it, expect } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import {
   db,

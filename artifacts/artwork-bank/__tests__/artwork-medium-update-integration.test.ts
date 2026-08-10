@@ -146,7 +146,7 @@ describeIntegration("Artwork medium field update — real-DB integration", () =>
   it("medium is independent between two artworks in the same tenant", async () => {
     const { tenantId } = await createTenant();
     const { artworkId: art1, sku: sku1 } = await createArtworkInDb(tenantId, null);
-    const { artworkId: art2, sku: sku2 } = await createArtworkInDb(tenantId, null);
+    const { artworkId: art2, sku: _sku2 } = await createArtworkInDb(tenantId, null);
 
     await callUpdate(art1, sku1, "Sculpture");
 

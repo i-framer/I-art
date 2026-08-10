@@ -97,7 +97,7 @@ describeIntegration("Public artwork detail — primary image join — real-DB in
   it("primary image objectPath is present on the detail query", async () => {
     const { tenantId } = await createTenant();
     const artworkId = await createArtwork(tenantId);
-    const { id, objectPath } = await insertImage(artworkId, tenantId, {
+    const { id } = await insertImage(artworkId, tenantId, {
       objectPath: "/objects/primary-test.jpg",
       isPrimary: true,
       sortOrder: 0,

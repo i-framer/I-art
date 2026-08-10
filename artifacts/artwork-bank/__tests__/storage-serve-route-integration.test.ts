@@ -16,7 +16,7 @@
  *  5. Valid session + valid path + object not found → 404.
  *  6. Valid session + valid path + storage misconfigured → 500.
  */
-import { afterAll, afterEach, it, expect, vi } from "vitest";
+import { afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 
@@ -42,7 +42,7 @@ import { getServeUrl } from "@/lib/object-storage";
 const mockGetServeUrl = vi.mocked(getServeUrl);
 
 function get(path?: string) {
-  const url = path != null
+  const _url = path != null
     ? `http://localhost/api/storage/serve?path=${encodeURIComponent(path)}`
     : "http://localhost/api/storage/serve";
   return serveGET({ nextUrl: { searchParams: new URLSearchParams(path != null ? { path } : {}) } } as any);
@@ -93,7 +93,7 @@ describeIntegration("Storage serve route auth/path guard — real-DB integration
   it("valid session + valid path + BlobNotFoundError → 404", async () => {
     mockSession.value = { userId: `user-${uid()}` };
     const { BlobNotFoundError } = await import("@vercel/blob");
-    mockGetServeUrl.mockRejectedValue(new BlobNotFoundError("not found"));
+    mockGetServeUrl.mockRejectedValue(new BlobNotFoundError());
 
     const res = await get("/objects/tenant/missing.jpg");
 

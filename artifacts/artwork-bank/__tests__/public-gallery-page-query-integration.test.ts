@@ -26,7 +26,7 @@ import {
   artworkImagesTable,
   artworkCategoriesTable,
 } from "@workspace/db";
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 const RUN = Date.now();

@@ -16,7 +16,7 @@
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
-import { db, tenantsTable, usersTable, tenantUsersTable } from "@workspace/db";
+import { db, tenantsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 

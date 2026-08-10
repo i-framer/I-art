@@ -15,7 +15,7 @@
  *  4. Valid session + BlobStoreError → 500 with "misconfigured" message.
  *  5. Valid session + unknown error → 500 with generic message.
  */
-import { afterAll, afterEach, it, expect, vi } from "vitest";
+import { afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 

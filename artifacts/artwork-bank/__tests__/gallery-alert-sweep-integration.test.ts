@@ -43,7 +43,7 @@ vi.mock("@/lib/email", () => ({
 }));
 
 import { db, tenantsTable, artworksTable, ordersTable, orderItemsTable } from "@workspace/db";
-import { eq, isNotNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { sweepUnsentGalleryAlerts } from "@/lib/email-sweep";
 
 function uid() {

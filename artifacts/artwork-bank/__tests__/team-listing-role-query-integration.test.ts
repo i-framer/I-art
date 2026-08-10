@@ -51,7 +51,7 @@ async function addMember(tenantId: string, userId: string, role: "owner" | "staf
 }
 
 /** Mirror the team page query. */
-async function teamListing(tenantId: string, currentUserId: string) {
+async function teamListing(tenantId: string, _currentUserId: string) {
   const memberships = await db.query.tenantUsersTable.findMany({
     where: eq(tenantUsersTable.tenantId, tenantId),
   });

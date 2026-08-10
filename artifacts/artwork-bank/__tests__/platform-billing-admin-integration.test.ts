@@ -85,7 +85,7 @@ async function createTenant(opts: { billingExempt?: boolean; iframerAccountId?: 
   return id;
 }
 
-async function createAlert(tenantId: string) {
+async function createAlert(_tenantId: string) {
   const id = uid();
   await db.insert(stripeAlertsTable).values({
     id,

@@ -104,7 +104,7 @@ describeIntegration("Artwork notes field — update persistence — real-DB inte
     const { tenantId } = await createTenant();
     const id = await createArtwork(tenantId, null);
 
-    await updateArtwork(id, {}, fd({
+    await updateArtwork(id, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({
       title: "Notes Test Art", sku: `sku-${id}`, status: "AVAILABLE",
       notes: "This is a charcoal drawing on archival paper.",
     })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
@@ -116,7 +116,7 @@ describeIntegration("Artwork notes field — update persistence — real-DB inte
     const { tenantId } = await createTenant();
     const id = await createArtwork(tenantId, "Old notes.");
 
-    await updateArtwork(id, {}, fd({
+    await updateArtwork(id, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({
       title: "Notes Test Art", sku: `sku-${id}`, status: "AVAILABLE",
       notes: "Updated notes — acrylic on canvas.",
     })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
@@ -128,7 +128,7 @@ describeIntegration("Artwork notes field — update persistence — real-DB inte
     const { tenantId } = await createTenant();
     const id = await createArtwork(tenantId, "Some existing notes.");
 
-    await updateArtwork(id, {}, fd({
+    await updateArtwork(id, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({
       title: "Notes Test Art", sku: `sku-${id}`, status: "AVAILABLE",
       notes: "",
     })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
@@ -137,7 +137,7 @@ describeIntegration("Artwork notes field — update persistence — real-DB inte
   });
 
   it("notes are not written to a foreign tenant's artwork", async () => {
-    const { tenantId: ownTenantId } = await createTenant();
+    const { tenantId: _ownTenantId } = await createTenant();
 
     // Create a foreign artwork using direct DB insert (bypasses auth).
     const foreignTenantId = uid();
@@ -154,7 +154,7 @@ describeIntegration("Artwork notes field — update persistence — real-DB inte
     createdArtworkIds.push(foreignId);
 
     // Attempt to update foreign artwork from own session.
-    const result = await updateArtwork(foreignId, {}, fd({
+    const result = await updateArtwork(foreignId, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({
       title: "Foreign Art", sku: `sku-${foreignId}`, status: "AVAILABLE",
       notes: "Overwritten!",
     }));
@@ -168,7 +168,7 @@ describeIntegration("Artwork notes field — update persistence — real-DB inte
     const { tenantId } = await createTenant();
     const id = await createArtwork(tenantId, null);
 
-    await updateArtwork(id, {}, fd({
+    await updateArtwork(id, { error: "" } as import("@/app/(admin)/(gated)/catalog/actions").ArtworkFormState, fd({
       title: "Stable Title", sku: `sku-${id}`, status: "AVAILABLE",
       notes: "Added notes.",
     })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
