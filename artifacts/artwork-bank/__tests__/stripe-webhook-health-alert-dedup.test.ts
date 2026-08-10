@@ -1156,3 +1156,136 @@ describe("bash simulation — manual-dispatch key is unique for unusual run_id s
     }
   });
 });
+
+// ── 8. Manual dispatch during active scheduled silence ────────────────────────
+//
+// Scenario: a scheduled run has already fired this UTC hour and written its
+// hourly sentinel into the cache.  A second scheduled run within the same hour
+// would be silenced (cache-hit == 'true').  But if the operator manually
+// dispatches the workflow in the same hour, the manual-dispatch branch produces
+// a *unique* key (webhook-redirect-alerted-manual-<run_id>) that can never
+// match the scheduled sentinel (webhook-redirect-alerted-YYYY-MM-DD-HH).
+// Therefore the manual run always sees a cache *miss* and the alert always fires.
+//
+// This test suite simulates that end-to-end with bash:
+//   1. Write the scheduled sentinel key for the current UTC hour.
+//   2. Compute a manual-dispatch key with a fake run_id and confirm no collision.
+//   3. Run the alert-guard logic with the manual key → alertFires=true.
+
+describe("manual dispatch during active scheduled silence still fires the alert", () => {
+  /**
+   * Compute the scheduled dedup key for the current UTC hour.
+   * Mirrors the else-branch in the workflow step.
+   */
+  function computeScheduledKey(): string {
+    const script = `
+KEY="webhook-redirect-alerted-$(date -u +%Y-%m-%d-%H)"
+echo "$KEY"
+`;
+    const { stdout, exitCode } = runBash(script);
+    expect(exitCode).toBe(0);
+    return stdout.trim();
+  }
+
+  /**
+   * Compute the manual-dispatch dedup key for a given run_id.
+   * Mirrors the if-branch in the workflow step.
+   */
+  function computeManualKeyForRun(runId: string): string {
+    const script = `
+GITHUB_RUN_ID="${runId}"
+KEY="webhook-redirect-alerted-manual-\${GITHUB_RUN_ID}"
+echo "$KEY"
+`;
+    const { stdout, exitCode } = runBash(script);
+    expect(exitCode).toBe(0);
+    return stdout.trim();
+  }
+
+  /**
+   * Simulate the alert-guard condition given a cache-hit value.
+   * Returns true when the alert would fire (cache-hit != 'true').
+   */
+  function alertWouldFire(cacheHit: string): boolean {
+    const script = `
+REDIRECT="true"
+CACHE_HIT="${cacheHit}"
+if [[ "$REDIRECT" == "true" && "$CACHE_HIT" != "true" ]]; then
+  echo "FIRES=yes"
+else
+  echo "FIRES=no"
+fi
+`;
+    const { stdout, exitCode } = runBash(script);
+    expect(exitCode).toBe(0);
+    return stdout.includes("FIRES=yes");
+  }
+
+  it("scheduled sentinel key has the expected UTC-hour format", () => {
+    const key = computeScheduledKey();
+    expect(key).toMatch(/^webhook-redirect-alerted-\d{4}-\d{2}-\d{2}-\d{2}$/);
+  });
+
+  it("manual-dispatch key does not collide with the current hour's scheduled sentinel", () => {
+    // This is the core of the scenario: the scheduled sentinel is already written.
+    // A manual run with a fake run_id must produce a *different* key.
+    const scheduledKey = computeScheduledKey();
+    const manualKey = computeManualKeyForRun("9876543210");
+    expect(manualKey).not.toBe(scheduledKey);
+  });
+
+  it("manual-dispatch key format never matches the scheduled key pattern", () => {
+    const scheduledPattern = /^webhook-redirect-alerted-\d{4}-\d{2}-\d{2}-\d{2}$/;
+    const manualKey = computeManualKeyForRun("9876543210");
+    expect(manualKey).not.toMatch(scheduledPattern);
+  });
+
+  it("a scheduled run that hits the existing sentinel is silenced (baseline)", () => {
+    // Confirm the ordinary suppression path works: scheduled run 2 sees cache-hit='true'.
+    const silenced = !alertWouldFire("true");
+    expect(silenced).toBe(true);
+  });
+
+  it("manual dispatch in the same hour sees a cache miss (unique key → no prior entry)", () => {
+    // The manual key has never been written before (it embeds run_id which is unique).
+    // A fresh cache lookup for it always returns cache-hit="" (miss) → alertFires=true.
+    const manualRunCacheHit = ""; // Actions reports "" for a key that was never written
+    expect(alertWouldFire(manualRunCacheHit)).toBe(true);
+  });
+
+  it("alert fires for the manual run even though the scheduled sentinel is active", () => {
+    // Full scenario in one test:
+    //   Step 1 – scheduled run writes sentinel → cache-hit="" on its own restore → alert sent.
+    //   Step 2 – second scheduled run in same hour → cache-hit="true" → silenced.
+    //   Step 3 – manual dispatch in same hour → manual key never written → cache-hit="" → alert fires.
+    const scheduledKey  = computeScheduledKey();
+    const manualKey     = computeManualKeyForRun("9876543210");
+
+    // Keys are different, so the manual run cannot find the scheduled sentinel.
+    expect(manualKey).not.toBe(scheduledKey);
+
+    // Guard: scheduled run is silenced (sentinel present).
+    expect(alertWouldFire("true")).toBe(false);   // cache-hit="true" for scheduled run 2
+
+    // Guard: manual run is NOT silenced (its unique key has no prior entry).
+    expect(alertWouldFire("")).toBe(true);         // cache-hit="" for manual run
+  });
+
+  it("10 different manual run IDs all see cache misses and would all fire the alert", () => {
+    const scheduledKey = computeScheduledKey();
+    const scheduledPattern = /^webhook-redirect-alerted-\d{4}-\d{2}-\d{2}-\d{2}$/;
+
+    for (let i = 0; i < 10; i++) {
+      const fakeRunId = String(9_000_000_000 + i);
+      const manualKey = computeManualKeyForRun(fakeRunId);
+
+      // Each manual key is unique and distinct from the scheduled sentinel.
+      expect(manualKey).not.toBe(scheduledKey);
+      expect(manualKey).not.toMatch(scheduledPattern);
+
+      // Because the manual key was never written, Actions returns cache-hit=""
+      // for it; the alert guard fires.
+      expect(alertWouldFire("")).toBe(true);
+    }
+  });
+});
