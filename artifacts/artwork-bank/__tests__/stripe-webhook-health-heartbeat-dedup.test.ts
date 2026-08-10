@@ -656,3 +656,153 @@ describe("notify-webhook-heartbeat.ts — exits 0 and emits banner (no channels)
     expect(combined).toContain("No Slack channel");
   });
 });
+
+// ── 6. UTC midnight boundary — dedup key stability ────────────────────────────
+//
+// The probe runs every 15 minutes.  If one run lands at 23:59 UTC and the next
+// at 00:01 UTC the two runs straddle UTC midnight — they belong to different UTC
+// days and MUST produce different dedup keys so a fresh heartbeat is sent at
+// the start of the new day.
+//
+// Conversely, two consecutive runs within the SAME UTC day (e.g. 23:45 and
+// 23:59) MUST produce identical keys so only the first one sends the heartbeat.
+//
+// These tests also run with TZ=Australia/Sydney (UTC+10/+11) to confirm that
+// the runner's local midnight — which would fall at 13:00 or 14:00 UTC — does
+// NOT cause a premature key rotation.  The -u flag in `date -u` forces UTC
+// output regardless of the system timezone.
+
+describe("bash simulation — dedup key stability across the 15-min probe window around UTC midnight", () => {
+  /**
+   * Compute the heartbeat dedup key as the workflow step does, but override
+   * the current time using GNU date's `--date` option so we can simulate any
+   * UTC timestamp without waiting for midnight.
+   *
+   * The workflow step runs exactly:
+   *   KEY="webhook-heartbeat-$(date -u +%Y-%m-%d)"
+   *
+   * We replace `date -u +%Y-%m-%d` with
+   *   `date -u -d '<utcTimestamp>' +%Y-%m-%d`
+   * to pin the simulated clock to a specific instant, then wrap the whole
+   * thing in the given TZ so the runner's local timezone is exercised.
+   */
+  function computeKeyAt(utcTimestamp: string, tz: string): string {
+    // Use GNU date's -d flag to inject a specific UTC instant.
+    // -u ensures the output is UTC regardless of TZ.
+    // TZ env var sets the runner's local timezone, which -u must override.
+    const script = `
+KEY="webhook-heartbeat-$(date -u -d '${utcTimestamp}' +%Y-%m-%d)"
+echo "$KEY"
+`;
+    const { stdout, exitCode, stderr } = runBash(script, { TZ: tz });
+    if (exitCode !== 0) {
+      throw new Error(
+        `bash failed (exit ${exitCode}) for timestamp "${utcTimestamp}" TZ="${tz}":\n${stderr}`,
+      );
+    }
+    return stdout.trim();
+  }
+
+  // ── Straddling UTC midnight: 23:59 vs 00:01 ────────────────────────────────
+
+  it("23:59 UTC and 00:01 UTC produce DIFFERENT keys (key rotates at UTC midnight)", () => {
+    const keyBefore = computeKeyAt("2026-08-09 23:59:00 UTC", "UTC");
+    const keyAfter = computeKeyAt("2026-08-10 00:01:00 UTC", "UTC");
+    // Two runs either side of midnight must use different daily keys.
+    expect(keyBefore).not.toBe(keyAfter);
+    // Confirm the dates embedded in each key are what we expect.
+    expect(keyBefore).toBe("webhook-heartbeat-2026-08-09");
+    expect(keyAfter).toBe("webhook-heartbeat-2026-08-10");
+  });
+
+  it("23:59 UTC and 00:01 UTC produce DIFFERENT keys when TZ=Australia/Sydney", () => {
+    // In Australia/Sydney (UTC+10) both timestamps fall on 2026-08-10 local time
+    // (09:59 and 10:01 AEST).  Without -u the runner would emit the same local
+    // date for both.  With -u the UTC dates differ → keys must differ.
+    const keyBefore = computeKeyAt("2026-08-09 23:59:00 UTC", "Australia/Sydney");
+    const keyAfter = computeKeyAt("2026-08-10 00:01:00 UTC", "Australia/Sydney");
+    expect(keyBefore).not.toBe(keyAfter);
+    expect(keyBefore).toBe("webhook-heartbeat-2026-08-09");
+    expect(keyAfter).toBe("webhook-heartbeat-2026-08-10");
+  });
+
+  // ── Same UTC day: 23:45 vs 23:59 ──────────────────────────────────────────
+
+  it("23:45 UTC and 23:59 UTC produce the SAME key (same UTC day)", () => {
+    const key2345 = computeKeyAt("2026-08-09 23:45:00 UTC", "UTC");
+    const key2359 = computeKeyAt("2026-08-09 23:59:00 UTC", "UTC");
+    // Both timestamps are on the same UTC day → same dedup key → only one heartbeat sent.
+    expect(key2345).toBe(key2359);
+    expect(key2345).toBe("webhook-heartbeat-2026-08-09");
+  });
+
+  it("23:45 UTC and 23:59 UTC produce the SAME key when TZ=Australia/Sydney", () => {
+    // In Sydney both timestamps are on 2026-08-10 local time.  With -u the UTC
+    // date (2026-08-09) is used for both → identical keys → heartbeat fires once.
+    const key2345 = computeKeyAt("2026-08-09 23:45:00 UTC", "Australia/Sydney");
+    const key2359 = computeKeyAt("2026-08-09 23:59:00 UTC", "Australia/Sydney");
+    expect(key2345).toBe(key2359);
+    expect(key2345).toBe("webhook-heartbeat-2026-08-09");
+  });
+
+  // ── Local midnight does NOT rotate the key ────────────────────────────────
+  //
+  // Australia/Sydney is UTC+10 in winter (AEST).  Local midnight in Sydney
+  // corresponds to 14:00 UTC.  A probe run just before and after Sydney's local
+  // midnight (13:59 and 14:01 UTC) must still produce the same UTC-day key —
+  // because both instants share the same UTC date.
+
+  it("runs straddling Sydney local midnight (14:00 UTC) produce the SAME key", () => {
+    // 13:59 UTC = 23:59 AEST (one minute before Sydney midnight)
+    // 14:01 UTC = 00:01 AEST (one minute after Sydney midnight)
+    // Both are on 2026-08-09 UTC → same dedup key.
+    const keyBeforeSydneyMidnight = computeKeyAt(
+      "2026-08-09 13:59:00 UTC",
+      "Australia/Sydney",
+    );
+    const keyAfterSydneyMidnight = computeKeyAt(
+      "2026-08-09 14:01:00 UTC",
+      "Australia/Sydney",
+    );
+    expect(keyBeforeSydneyMidnight).toBe(keyAfterSydneyMidnight);
+    expect(keyBeforeSydneyMidnight).toBe("webhook-heartbeat-2026-08-09");
+  });
+
+  // ── Across all four consecutive 15-min windows spanning UTC midnight ───────
+
+  it("all four 15-min windows before UTC midnight share one key and the window after uses the next", () => {
+    // The four pre-midnight probe windows that could run within the same UTC day:
+    const sameDay = [
+      "2026-08-09 23:00:00 UTC",
+      "2026-08-09 23:15:00 UTC",
+      "2026-08-09 23:30:00 UTC",
+      "2026-08-09 23:45:00 UTC",
+      "2026-08-09 23:59:59 UTC",
+    ];
+    const nextDay = [
+      "2026-08-10 00:00:00 UTC",
+      "2026-08-10 00:01:00 UTC",
+      "2026-08-10 00:15:00 UTC",
+    ];
+
+    const sameDayKeys = sameDay.map((ts) =>
+      computeKeyAt(ts, "Australia/Sydney"),
+    );
+    const nextDayKeys = nextDay.map((ts) =>
+      computeKeyAt(ts, "Australia/Sydney"),
+    );
+
+    // All pre-midnight timestamps → same key.
+    const uniqueSameDay = new Set(sameDayKeys);
+    expect(uniqueSameDay.size).toBe(1);
+    expect([...uniqueSameDay][0]).toBe("webhook-heartbeat-2026-08-09");
+
+    // All post-midnight timestamps → same key (the next day's key).
+    const uniqueNextDay = new Set(nextDayKeys);
+    expect(uniqueNextDay.size).toBe(1);
+    expect([...uniqueNextDay][0]).toBe("webhook-heartbeat-2026-08-10");
+
+    // The two groups use different keys.
+    expect([...uniqueSameDay][0]).not.toBe([...uniqueNextDay][0]);
+  });
+});
