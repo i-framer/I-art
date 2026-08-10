@@ -326,6 +326,30 @@ jobs:
           echo "ℹ️  Daily heartbeat already sent today (UTC). Skipping repeat."
           echo "    The probe is healthy — no redirect detected."
 
+      # ── External ping-based monitoring (dead-man's switch safety net) ─────
+      # Pings a configurable healthchecks.io (or compatible) URL on every
+      # healthy probe run so an external service can alert on silence.
+      # This is independent of Slack — if Slack is down the external service
+      # still receives the ping and can alert via its own channels.
+      #
+      # Set HEALTHCHECK_URL as a GitHub Actions repository secret, e.g.:
+      #   https://hc-ping.com/<your-uuid>
+      # If the secret is absent the step is silently skipped.
+
+      - name: Ping external healthcheck URL
+        if: steps.probe.outputs.redirect == 'false'
+        env:
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+        run: |
+          if [ -z "$HEALTHCHECK_URL" ]; then
+            echo "ℹ️  HEALTHCHECK_URL not set — skipping external ping."
+            exit 0
+          fi
+          echo "→ Pinging external healthcheck: $HEALTHCHECK_URL"
+          curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" -o /dev/null \
+            && echo "✅  External healthcheck ping succeeded." \
+            || echo "⚠️  External healthcheck ping failed (non-fatal)."
+
       # ── Summary ──────────────────────────────────────────────────────────────
       - name: Summary
         if: always()

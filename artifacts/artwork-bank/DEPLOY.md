@@ -454,6 +454,47 @@ The notifier tries the bot token first; falls back to the incoming webhook; then
 logs a prominent CI banner. Configure at least one Slack option so the
 heartbeat reaches you outside the GitHub Actions UI.
 
+### Configuring the external ping safety net (healthchecks.io)
+
+The workflow also supports an **external ping-based monitoring service** as a
+second safety net. On every healthy probe run it sends a simple `curl` ping to
+a configurable URL. If the pings stop arriving, the external service alerts you —
+independent of Slack.
+
+This is more reliable than Slack alone because it alerts on **silence** rather
+than on a positive signal. If the Slack integration goes down, secrets are
+rotated, or the workflow stops firing for any reason, the external service will
+catch it within its configured grace period.
+
+#### Set up healthchecks.io (free tier, no account required for basic pings)
+
+1. Go to [healthchecks.io](https://healthchecks.io) and sign up for a free
+   account (or use [cron-job.org](https://cron-job.org) / Cronitor / BetterUptime
+   — any service that exposes a ping URL works).
+2. Create a new check:
+   - **Name:** `i-art stripe webhook probe`
+   - **Schedule:** every **15 minutes** (matches the workflow cron)
+   - **Grace time:** `20 minutes` (allows for GitHub scheduling jitter)
+3. Copy the ping URL — it looks like `https://hc-ping.com/<uuid>`.
+
+#### Add the secret to GitHub Actions
+
+1. In your GitHub repository: **Settings → Secrets and variables → Actions →
+   New repository secret**.
+2. Name: `HEALTHCHECK_URL`
+3. Value: the ping URL from step 3 above (e.g. `https://hc-ping.com/<uuid>`).
+
+The workflow will now ping the URL on every healthy probe run. If `HEALTHCHECK_URL`
+is absent, the step is silently skipped — no change in behaviour for existing
+setups.
+
+#### What to check when the healthchecks.io alert fires
+
+An alert from the external service means the pings have stopped, which means
+either the probe workflow stopped running **or** the webhook endpoint is
+redirecting (and the job is failing every run). Work through the §10 checklist
+above, then force a manual run from the Actions tab to confirm the fix.
+
 ## 9. Verify after deploy
 
 - `pnpm run build` succeeds locally from `artifacts/artwork-bank/` (same build Vercel runs).
