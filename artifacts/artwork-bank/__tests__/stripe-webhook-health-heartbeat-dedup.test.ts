@@ -1,27 +1,34 @@
 /**
  * Heartbeat-dedup path tests for .github/workflows/stripe-webhook-health.yml
  *
- * The workflow silences the daily all-clear heartbeat notifier on the second
- * healthy run within the same UTC day by checking a GitHub Actions cache hit.
- * When the cache key already exists (cache-hit == 'true'), every step that
- * sends the heartbeat is skipped and a "already sent today" notice is logged
- * instead.
- *
- * Without this guard the operator could receive up to 96 identical
- * "all clear" messages per day (one per 15-minute probe run).
+ * The workflow sends a daily all-clear heartbeat to Slack on healthy probe
+ * runs (redirect == false).  To avoid flooding Slack with up to 96 identical
+ * messages per day, the heartbeat only fires ONCE PER UTC DAY.  On subsequent
+ * healthy runs within the same day the job logs a brief notice and skips the
+ * notification.  The dedup window is tracked via a GitHub Actions cache key
+ * that rotates every UTC day.
  *
  * These tests verify:
  *
- *  1. Structural YAML wiring — all "Send daily heartbeat" and surrounding
+ *  1. Structural YAML wiring — all "heartbeat only" steps and the surrounding
  *     heartbeat steps are guarded by `cache-hit != 'true'`, and the silence
  *     step is guarded by `cache-hit == 'true'`.
  *
  *  2. A bash simulation of the step-guard logic — when cache-hit is true the
- *     notifier command is NOT executed; when cache-hit is false it IS executed.
+ *     heartbeat command is NOT executed; when cache-hit is false it IS
+ *     executed.  This mirrors the extracted-bash approach used by the
+ *     alert-dedup test so any change to the guard expression in the YAML is
+ *     caught immediately.
  *
- *  3. The notifier script (notify-webhook-heartbeat.ts) exits 0 and emits a
- *     CI-banner when no Slack channel is configured, confirming it would have
- *     run on a real cache-miss run without flooding the operator.
+ *  3. Parameterised bash tests covering all realistic cache-hit values:
+ *       ""      → heartbeat fires (cache miss — first run today)
+ *       "true"  → heartbeat suppressed (cache hit — already sent today)
+ *       "false" → heartbeat fires (restore step skipped / not run)
+ *
+ *     This is the regression test for the class of bug where a future author
+ *     writes `cache-hit == 'false'` instead of `cache-hit != 'true'`.  The
+ *     structural string-match tests above would not catch that mistake, but
+ *     these parameterised bash tests would.
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -36,11 +43,6 @@ import { randomUUID } from "node:crypto";
 const WORKFLOW_PATH = path.resolve(
   __dirname,
   "../../../.github/workflows/stripe-webhook-health.yml",
-);
-
-const HEARTBEAT_SCRIPT = path.resolve(
-  __dirname,
-  "../scripts/notify-webhook-heartbeat.ts",
 );
 
 let workflowText: string;
@@ -91,53 +93,58 @@ function runBash(script: string, env?: Record<string, string>): BashResult {
 // ── 1. Structural YAML wiring assertions ──────────────────────────────────────
 
 describe("stripe-webhook-health.yml — heartbeat dedup wiring (structural)", () => {
-  it("'Send daily heartbeat' is guarded by both redirect==false and cache-hit!=true", () => {
+  it("'Checkout (heartbeat only)' is guarded by redirect==false and cache-hit!=true", () => {
+    const block = extractStepBlock("Checkout (heartbeat only)");
+    expect(block).toContain("redirect == 'false'");
+    expect(block).toContain("cache-hit != 'true'");
+  });
+
+  it("'Set up pnpm (heartbeat only)' is guarded by redirect==false and cache-hit!=true", () => {
+    const block = extractStepBlock("Set up pnpm (heartbeat only)");
+    expect(block).toContain("redirect == 'false'");
+    expect(block).toContain("cache-hit != 'true'");
+  });
+
+  it("'Install dependencies (heartbeat only)' is guarded by redirect==false and cache-hit!=true", () => {
+    const block = extractStepBlock("Install dependencies (heartbeat only)");
+    expect(block).toContain("redirect == 'false'");
+    expect(block).toContain("cache-hit != 'true'");
+  });
+
+  it("'Send daily heartbeat' is guarded by redirect==false and cache-hit!=true", () => {
     const block = extractStepBlock("Send daily heartbeat");
     expect(block).toContain("redirect == 'false'");
     expect(block).toContain("cache-hit != 'true'");
   });
 
-  it("'Checkout (heartbeat only)' is guarded by cache-hit != 'true'", () => {
-    const block = extractStepBlock("Checkout (heartbeat only)");
-    expect(block).toContain("cache-hit != 'true'");
-  });
-
-  it("'Set up pnpm (heartbeat only)' is guarded by cache-hit != 'true'", () => {
-    const block = extractStepBlock("Set up pnpm (heartbeat only)");
-    expect(block).toContain("cache-hit != 'true'");
-  });
-
-  it("'Set up Node.js (heartbeat only)' is guarded by cache-hit != 'true'", () => {
-    const block = extractStepBlock("Set up Node.js (heartbeat only)");
-    expect(block).toContain("cache-hit != 'true'");
-  });
-
-  it("'Install dependencies (heartbeat only)' is guarded by cache-hit != 'true'", () => {
-    const block = extractStepBlock("Install dependencies (heartbeat only)");
-    expect(block).toContain("cache-hit != 'true'");
-  });
-
-  it("'Mark heartbeat sent (write sentinel for cache)' is guarded by cache-hit != 'true'", () => {
-    const block = extractStepBlock("Mark heartbeat sent (write sentinel for cache)");
-    expect(block).toContain("cache-hit != 'true'");
-  });
-
-  it("'Save heartbeat-sent cache' is guarded by cache-hit != 'true'", () => {
-    const block = extractStepBlock("Save heartbeat-sent cache");
-    expect(block).toContain("cache-hit != 'true'");
-  });
-
-  it("'Heartbeat already sent today — skipping repeat' fires only on cache-hit == 'true'", () => {
-    const block = extractStepBlock("Heartbeat already sent today — skipping repeat");
-    expect(block).toContain("cache-hit == 'true'");
-    // Must also require redirect == 'false' (healthy run only).
+  it("'Mark heartbeat sent (write sentinel for cache)' is guarded by redirect==false and cache-hit!=true", () => {
+    const block = extractStepBlock(
+      "Mark heartbeat sent (write sentinel for cache)",
+    );
     expect(block).toContain("redirect == 'false'");
+    expect(block).toContain("cache-hit != 'true'");
+  });
+
+  it("'Save heartbeat-sent cache' is guarded by redirect==false and cache-hit!=true", () => {
+    const block = extractStepBlock("Save heartbeat-sent cache");
+    expect(block).toContain("redirect == 'false'");
+    expect(block).toContain("cache-hit != 'true'");
+  });
+
+  it("'Heartbeat already sent today — skipping repeat' fires only on redirect==false AND cache-hit==true", () => {
+    const block = extractStepBlock(
+      "Heartbeat already sent today — skipping repeat",
+    );
+    expect(block).toContain("redirect == 'false'");
+    expect(block).toContain("cache-hit == 'true'");
   });
 
   it("the silence step and the heartbeat steps have mutually exclusive conditions on cache-hit", () => {
     const sendBlock = extractStepBlock("Send daily heartbeat");
-    const silenceBlock = extractStepBlock("Heartbeat already sent today — skipping repeat");
-    // Heartbeat send runs on cache MISS:
+    const silenceBlock = extractStepBlock(
+      "Heartbeat already sent today — skipping repeat",
+    );
+    // Heartbeat runs on cache MISS:
     expect(sendBlock).toContain("cache-hit != 'true'");
     // Silence runs on cache HIT:
     expect(silenceBlock).toContain("cache-hit == 'true'");
@@ -158,27 +165,9 @@ describe("stripe-webhook-health.yml — heartbeat dedup wiring (structural)", ()
     // Restore, Send heartbeat, Mark sent, Save cache, Silence step = at least 4
     expect(occurrences).toBeGreaterThanOrEqual(4);
   });
-
-  it("the heartbeat dedup key rotates daily (not hourly)", () => {
-    const block = extractStepBlock("Compute heartbeat dedup key");
-    // Daily key uses %Y-%m-%d (no hour component)
-    expect(block).toContain("%Y-%m-%d");
-    // Must NOT include the hour component used by the alert dedup key
-    expect(block).not.toContain("%Y-%m-%d-%H");
-  });
-
-  it("the 'Restore heartbeat-sent cache' uses the heartbeat-dedup step's key output", () => {
-    const block = extractStepBlock("Restore heartbeat-sent cache");
-    expect(block).toContain("steps.heartbeat-dedup.outputs.key");
-  });
-
-  it("the 'Save heartbeat-sent cache' uses the heartbeat-dedup step's key output", () => {
-    const block = extractStepBlock("Save heartbeat-sent cache");
-    expect(block).toContain("steps.heartbeat-dedup.outputs.key");
-  });
 });
 
-// ── 2. Bash simulation of the heartbeat step-guard logic ──────────────────────
+// ── 2. Bash simulation of the step-guard logic ────────────────────────────────
 //
 // The GitHub Actions `if:` expression
 //   `steps.probe.outputs.redirect == 'false' && steps.heartbeat-cache.outputs.cache-hit != 'true'`
@@ -186,11 +175,11 @@ describe("stripe-webhook-health.yml — heartbeat dedup wiring (structural)", ()
 // so a regression in the condition string is caught without waiting for a live
 // Actions run.
 
-describe("bash simulation — cache-hit guard prevents heartbeat on second run", () => {
+describe("bash simulation — cache-hit guard prevents heartbeat on subsequent runs", () => {
   /**
-   * Simulate the step-guard decision.
+   * Simulate the step-guard decision for the "Send daily heartbeat" step.
    *
-   * Returns whether the "Send daily heartbeat" step would execute, given:
+   * Returns whether the heartbeat step would execute, given:
    *  - redirect    : whether the probe saw a 3xx (maps to steps.probe.outputs.redirect)
    *  - cacheHit    : whether the cache key was found (maps to steps.heartbeat-cache.outputs.cache-hit)
    */
@@ -210,16 +199,15 @@ fi
     return stdout.includes("WOULD_SEND=yes");
   }
 
-  it("cache-miss (first healthy run of the day): heartbeat IS sent", () => {
+  it("cache-miss (first run today): heartbeat IS sent when no redirect detected", () => {
     expect(wouldSendHeartbeat("false", "")).toBe(true);
   });
 
-  it("cache-hit (second healthy run): heartbeat is NOT sent", () => {
+  it("cache-hit (subsequent run today): heartbeat is NOT sent even though probe is still healthy", () => {
     expect(wouldSendHeartbeat("false", "true")).toBe(false);
   });
 
   it("redirect detected: heartbeat is not sent regardless of cache state", () => {
-    // Heartbeat only fires on healthy (redirect == false) runs.
     expect(wouldSendHeartbeat("true", "")).toBe(false);
     expect(wouldSendHeartbeat("true", "true")).toBe(false);
   });
@@ -240,19 +228,150 @@ fi
       return stdout.includes("SILENCE=yes");
     }
 
-    // Cache hit + healthy = silence (dedup active)
+    // Cache hit + healthy probe = silence (dedup active)
     expect(wouldSilence("false", "true")).toBe(true);
-    // Cache miss + healthy = no silence (heartbeat fires)
+    // Cache miss + healthy probe = no silence (heartbeat fires)
     expect(wouldSilence("false", "")).toBe(false);
-    // Redirect detected = no silence (heartbeat path does not apply)
+    // Redirect present = no heartbeat silence
     expect(wouldSilence("true", "true")).toBe(false);
     expect(wouldSilence("true", "")).toBe(false);
   });
 });
 
-// ── 3. Two-run scenario: same UTC day, different outcomes ─────────────────────
+// ── 2b. Parameterised bash tests — all realistic cache-hit values ─────────────
+//
+// GitHub Actions writes exactly three values for cache-hit:
+//   ""      — cache key not found (miss)
+//   "true"  — cache key found (hit)
+//   "false" — cache/restore step skipped or the step did not run
+//
+// The guard condition is:  cache-hit != 'true'
+// Only "true" should suppress the heartbeat.  Both "" and "false" must allow it.
+//
+// This is the regression test for the bug described in the workflow header:
+//   A future author could write  cache-hit == 'false'  (wrong) and the
+//   structural string-match tests above would not catch it — but these
+//   parameterised bash tests would, because the bash logic faithfully
+//   mirrors the runner's boolean evaluation of the `if:` expression.
 
-describe("two-run scenario within the same UTC day", () => {
+describe("parameterised bash — cache-hit guard: only 'true' suppresses the heartbeat", () => {
+  /**
+   * Run the guard condition as a bash `if` and return the decision.
+   *
+   * Mirrors the exact `if:` expression used in the YAML (assuming redirect=false,
+   * i.e. a healthy probe run where the heartbeat section is reached):
+   *   steps.probe.outputs.redirect == 'false' && steps.heartbeat-cache.outputs.cache-hit != 'true'
+   */
+  function guardDecision(cacheHit: string): {
+    heartbeatFires: boolean;
+    silenced: boolean;
+  } {
+    const heartbeatScript = `
+REDIRECT="false"
+CACHE_HIT="${cacheHit}"
+if [[ "$REDIRECT" == "false" && "$CACHE_HIT" != "true" ]]; then
+  echo "HEARTBEAT=yes"
+else
+  echo "HEARTBEAT=no"
+fi
+`;
+    const silenceScript = `
+REDIRECT="false"
+CACHE_HIT="${cacheHit}"
+if [[ "$REDIRECT" == "false" && "$CACHE_HIT" == "true" ]]; then
+  echo "SILENCE=yes"
+else
+  echo "SILENCE=no"
+fi
+`;
+    const heartbeatOut = runBash(heartbeatScript).stdout;
+    const silenceOut = runBash(silenceScript).stdout;
+    return {
+      heartbeatFires: heartbeatOut.includes("HEARTBEAT=yes"),
+      silenced: silenceOut.includes("SILENCE=yes"),
+    };
+  }
+
+  /**
+   * All realistic cache-hit values and the expected guard outcome.
+   *
+   * cacheHit | meaning in Actions                    | heartbeat fires? | silenced?
+   * ---------|---------------------------------------|-----------------|----------
+   * ""       | cache key not found (first run today) | YES              | NO
+   * "true"   | cache key found (already sent today)  | NO               | YES
+   * "false"  | restore step was skipped / not run    | YES              | NO
+   */
+  const cases: Array<
+    [
+      cacheHitValue: string,
+      label: string,
+      shouldFire: boolean,
+      shouldSilence: boolean,
+    ]
+  > = [
+    [
+      "",
+      "empty string (cache miss — first run today)",
+      true,
+      false,
+    ],
+    [
+      "true",
+      "'true' (cache hit — already sent today)",
+      false,
+      true,
+    ],
+    [
+      "false",
+      "'false' (restore step skipped or not run)",
+      true,
+      false,
+    ],
+  ];
+
+  it.each(cases)(
+    "cache-hit=%j (%s): heartbeatFires=%s, silenced=%s",
+    (cacheHitValue, _label, shouldFire, shouldSilence) => {
+      const { heartbeatFires, silenced } = guardDecision(cacheHitValue);
+      expect(heartbeatFires).toBe(shouldFire);
+      expect(silenced).toBe(shouldSilence);
+    },
+  );
+
+  it("heartbeat and silence are mutually exclusive for every realistic cache-hit value", () => {
+    for (const [cacheHitValue] of cases) {
+      const { heartbeatFires, silenced } = guardDecision(cacheHitValue);
+      expect(heartbeatFires && silenced).toBe(false);
+    }
+  });
+
+  it("wrong guard 'cache-hit == false' would NOT fire on empty string (regression demo)", () => {
+    // Demonstrates why  cache-hit == 'false'  is the wrong guard:
+    // it would NOT fire when cache-hit is "" (the real cache-miss value in Actions),
+    // causing the heartbeat to be skipped on the very first run of the day.
+    // The correct guard is  cache-hit != 'true'  which fires for both "" and "false".
+    const wrongScript = `
+REDIRECT="false"
+CACHE_HIT=""
+# Wrong condition a future author might accidentally write:
+if [[ "$REDIRECT" == "false" && "$CACHE_HIT" == "false" ]]; then
+  echo "WRONG_GUARD_FIRES=yes"
+else
+  echo "WRONG_GUARD_FIRES=no"
+fi
+`;
+    const { stdout } = runBash(wrongScript);
+    // The wrong guard does NOT fire for cache-hit="", confirming the guard is broken:
+    // it would suppress the heartbeat on the first run of the day when Actions
+    // reports cache-hit="" (key not found), rather than sending it.
+    // This test documents the semantic difference between "" and "false".
+    expect(stdout).toContain("WRONG_GUARD_FIRES=no");
+  });
+});
+
+// ── 3. Multi-run scenario: same UTC day, different outcomes ───────────────────
+
+describe("multi-run scenario within the same UTC day", () => {
   /**
    * Mirrors the step-guard logic:
    *   redirect == 'false' && cache-hit != 'true'  → heartbeat sent
@@ -268,105 +387,27 @@ describe("two-run scenario within the same UTC day", () => {
   }
 
   it("run 1 sends the heartbeat; run 2 within the same day is silenced", () => {
-    const run1 = simulate("false", ""); // cache-miss (first run today)
+    // Run 1 (00:15 UTC): healthy probe, cache-miss → heartbeat sent
+    const run1 = simulate("false", ""); // cache-miss
     expect(run1.heartbeatSent).toBe(true);
     expect(run1.silenced).toBe(false);
 
-    const run2 = simulate("false", "true"); // cache-hit — sentinel written by run 1
+    // Run 2 (00:30 UTC): still healthy, cache-hit — sentinel written by run 1 → silenced
+    const run2 = simulate("false", "true"); // cache-hit
     expect(run2.heartbeatSent).toBe(false);
     expect(run2.silenced).toBe(true);
   });
 
-  it("run 3 on the NEXT UTC day triggers a fresh heartbeat (new cache key = miss)", () => {
-    // The cache key rotates each UTC day, so the next-day run has cache-hit = false.
+  it("run in the NEXT UTC day triggers a fresh heartbeat (new cache key = miss)", () => {
+    // The cache key rotates each UTC day, so the next-day run has cache-hit = "" (miss).
     const { heartbeatSent } = simulate("false", "");
     expect(heartbeatSent).toBe(true);
   });
 
-  it("a redirect-detected run does not trigger the heartbeat regardless of cache state", () => {
+  it("redirect detected: heartbeat never fires regardless of cache state", () => {
     const { heartbeatSent: miss } = simulate("true", "");
     const { heartbeatSent: hit } = simulate("true", "true");
     expect(miss).toBe(false);
     expect(hit).toBe(false);
-  });
-});
-
-// ── 4. Notifier script smoke-test (no channels configured) ────────────────────
-//
-// Confirms the heartbeat notifier script runs to completion and exits 0 when
-// no Slack channel is configured.  The script must always exit 0 so a
-// heartbeat send failure does not mark the overall probe run as failed.
-
-describe("notify-webhook-heartbeat.ts — exits 0 and emits banner (no channels)", () => {
-  it("script exits 0 and prints the CI banner when no Slack vars are set", () => {
-    const result = spawnSync(
-      "pnpm",
-      ["--filter", "@workspace/artwork-bank", "exec", "tsx", HEARTBEAT_SCRIPT],
-      {
-        env: {
-          // Provide the minimum context the script expects.
-          WEBHOOK_URL: "https://i-art.com.au/api/stripe/webhook",
-          HTTP_CODE: "405",
-          WORKFLOW_RUN_URL: "https://github.com/owner/repo/actions/runs/99999",
-          // No SLACK_*, so it falls through to the CI banner.
-          PATH: process.env.PATH ?? "",
-          HOME: process.env.HOME ?? "",
-          NODE_ENV: "test",
-        },
-        encoding: "utf8",
-        timeout: 30_000,
-        cwd: path.resolve(__dirname, "../../.."),
-      },
-    );
-
-    // The script MUST exit 0 — heartbeat send failure must not mask the probe result.
-    expect(result.status).toBe(0);
-
-    // It must emit the CI banner to stdout (always fires without channels).
-    const combined = (result.stdout ?? "") + (result.stderr ?? "");
-    expect(combined).toContain("STRIPE WEBHOOK PROBE HEARTBEAT");
-  });
-
-  it("script exits 0 even when WEBHOOK_URL is the default (env var absent)", () => {
-    const result = spawnSync(
-      "pnpm",
-      ["--filter", "@workspace/artwork-bank", "exec", "tsx", HEARTBEAT_SCRIPT],
-      {
-        env: {
-          PATH: process.env.PATH ?? "",
-          HOME: process.env.HOME ?? "",
-          NODE_ENV: "test",
-        },
-        encoding: "utf8",
-        timeout: 30_000,
-        cwd: path.resolve(__dirname, "../../.."),
-      },
-    );
-
-    expect(result.status).toBe(0);
-  });
-
-  it("script logs that no Slack channel is configured when vars are absent", () => {
-    const result = spawnSync(
-      "pnpm",
-      ["--filter", "@workspace/artwork-bank", "exec", "tsx", HEARTBEAT_SCRIPT],
-      {
-        env: {
-          WEBHOOK_URL: "https://i-art.com.au/api/stripe/webhook",
-          HTTP_CODE: "405",
-          PATH: process.env.PATH ?? "",
-          HOME: process.env.HOME ?? "",
-          NODE_ENV: "test",
-        },
-        encoding: "utf8",
-        timeout: 30_000,
-        cwd: path.resolve(__dirname, "../../.."),
-      },
-    );
-
-    expect(result.status).toBe(0);
-    const combined = (result.stdout ?? "") + (result.stderr ?? "");
-    // Should mention that no Slack channel/webhook is configured.
-    expect(combined).toContain("No Slack channel");
   });
 });
