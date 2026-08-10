@@ -275,6 +275,24 @@ describe("slack-reconnect-smoke.yml — Send failure email alert step env wiring
 //      the "exits 1 without DATABASE_URL" test deterministic is changed to
 //      something else, letting a real URL leak in from the runner and making
 //      the test vacuous.
+//
+// TODO: If a Slack notification step is ever added to schema-drift-guard.yml
+// (e.g. to alert the operator when the build is blocked by schema drift),
+// add a corresponding assertStepEnvMapsToSecret call here for each Slack-related
+// env var in that step.  For example:
+//
+//   it("maps SLACK_WEBHOOK_URL to secrets.SLACK_WEBHOOK_URL on the same line", () => {
+//     assertStepEnvMapsToSecret(
+//       workflowPath,
+//       "Notify Slack on schema drift",   // ← use the exact step name from the YAML
+//       "SLACK_WEBHOOK_URL",
+//       "SLACK_WEBHOOK_URL",
+//     );
+//   });
+//
+// Without this, a mis-wired secret name in the new step would silently drop the
+// alert — the job succeeds but the operator is never notified.  See the
+// scheduled-drift-check.yml tests above for the full pattern.
 
 describe("schema-drift-guard.yml — build-pipeline guard structural integrity", () => {
   const workflowPath = resolve(
