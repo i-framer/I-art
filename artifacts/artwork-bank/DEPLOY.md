@@ -89,6 +89,16 @@ on Vercel — re-upload any artwork images you want in production (seed/demo dat
 
 ### ⚠️ Apex vs www redirect — critical production configuration
 
+> **🚨 CONFIRMED BROKEN (verified August 2026)**
+> `curl -sI https://i-art.com.au/api/stripe/webhook` returns **HTTP 308 →
+> `https://www.i-art.com.au/api/stripe/webhook`**.
+> Stripe does not follow redirects — every webhook delivery to the apex URL is
+> currently counted as a failure.  Orders and subscription events are silently lost.
+> **This must be fixed before go-live.**
+>
+> Run `bash scripts/check-webhook-redirect.sh` at any time to re-verify the
+> redirect direction.
+
 Vercel's default for a domain it doesn't recognise as primary is to redirect
 `i-art.com.au` (apex) → `www.i-art.com.au`. This **breaks** two critical systems:
 
@@ -113,15 +123,21 @@ Vercel's default for a domain it doesn't recognise as primary is to redirect
 2. The apex domain is then served directly with no redirect in either direction.
 3. Ensure `NEXT_PUBLIC_SITE_URL=https://i-art.com.au`.
 
-> After changing the primary domain, send a test Stripe webhook event from the
-> Stripe Dashboard and confirm it returns `200` (not `3xx`) in the webhook delivery log.
+> After changing the primary domain:
+> 1. Run `bash scripts/check-webhook-redirect.sh` and confirm it prints **✅ No redirect**.
+> 2. Send a test Stripe webhook event from the Stripe Dashboard and confirm the delivery log shows **200** (not `3xx`).
 
 ## 5. Stripe webhook
+
+> **⚠️ Register the webhook ONLY after the §4 redirect fix is applied.**
+> Run `bash scripts/check-webhook-redirect.sh` first and confirm ✅ before
+> registering the URL — otherwise Stripe will permanently mark the endpoint
+> as failing.
 
 1. Stripe Dashboard → Developers → Webhooks → Add endpoint.
    - **Before DNS cutover** use the Vercel-assigned URL:
      `https://<your-project>.vercel.app/api/stripe/webhook`
-   - **After DNS points to Vercel** update (or add a second endpoint) for:
+   - **After DNS points to Vercel and §4 redirect fix is applied** update (or add a second endpoint) for:
      `https://i-art.com.au/api/stripe/webhook`
 2. Events to subscribe to — select all seven:
    `checkout.session.completed`, `checkout.session.expired`,
