@@ -1,0 +1,155 @@
+# Monthly Replit Work History & Invoice Preparation
+
+Retrieve my complete working history for this project for the current month, from **August 1, 2026 through today**.
+
+This report will be used for end-of-day, weekly, and monthly invoice preparation.
+
+Search all available project evidence, including:
+
+* Replit Task history
+* Replit Agent conversations
+* Completed and in-progress tasks
+* Recorded **Time worked**
+* Work logs
+* Activity history
+* Checkpoints
+* Git commits
+* Version history
+* File modification history
+* Deployment activity
+* Testing and production verification
+* Reports or summaries I previously submitted
+* Project notes or status reports created during this period
+
+## 1. Chronological Work History
+
+Create a chronological report for every work session.
+
+For each session include:
+
+* Date
+* Approximate start/end time if available
+* Task title
+* Task status
+* Recorded **Time worked**
+* Summary of work performed
+* Result or outcome
+* Files modified
+* Related Git commits
+* Related checkpoints
+* Deployment or testing activity
+* Any report or status update submitted
+
+Use this table:
+
+| Date | Task / Activity | Status | Time Worked | Work Completed | Evidence |
+| ---- | --------------- | ------ | ----------- | -------------- | -------- |
+
+## 2. Include All Legitimate Project Work
+
+Include engineering and project-related activity such as:
+
+* Coding and implementation
+* Debugging
+* Bug fixes
+* AI Agent task creation
+* Prompt engineering and refinement
+* Reviewing Agent-generated work
+* Testing and QA
+* Deployment monitoring
+* Production verification
+* Code review
+* Task validation
+* Research and technical investigation
+* Planning and task prioritization
+* Documentation
+* Status reporting
+* Reviewing completed tasks
+* Preparing follow-up tasks
+* Infrastructure or configuration work mentioned in Replit activity
+
+Use recorded **Time worked** as the primary source whenever available.
+
+Do not reduce recorded time unless there is clear evidence of duplication or an incorrect entry.
+
+Exclude only clearly unrelated personal idle time.
+
+## 3. Daily Totals
+
+Provide a summary for each day:
+
+| Date | Tasks Worked | Completed Tasks | Recorded Hours |
+| ---- | ------------ | --------------- | -------------- |
+
+Calculate the total hours for each day.
+
+## 4. Weekly Totals
+
+Group the activity by week and provide:
+
+| Week | Total Tasks | Completed Tasks | Total Hours |
+| ---- | ----------- | --------------- | ----------- |
+
+## 5. Reports Submitted
+
+Create a separate section listing all reports, summaries, verification reports, test results, or status updates I submitted during this period.
+
+For each one include:
+
+* Date
+* Report title or purpose
+* Related task
+* Short description
+* Evidence/source
+
+## 6. Missing Work Records
+
+Identify:
+
+* Tasks without recorded Time worked
+* Work sessions with incomplete timestamps
+* Activities visible in Agent history but not represented in task time
+* Reports or work that may require manual time entry
+* Possible duplicate entries
+
+Do not invent missing hours.
+
+List anything requiring manual review separately.
+
+## 7. Invoice Calculation
+
+My hourly rate is **$8 USD/hour**.
+
+Calculate:
+
+**Total Billable Amount = Total Verified Billable Hours × $8**
+
+Provide:
+
+* Total recorded hours
+* Additional verified project hours, if separately recorded
+* Total invoice-ready billable hours
+* Hourly rate: $8 USD
+* Total invoice amount in USD
+
+## 8. Final Invoice-Ready Summary
+
+Finish with:
+
+**Invoice Period:** August 1, 2026 – Today
+**Hourly Rate:** $8.00 USD
+**Total Work Sessions:**
+**Total Completed Tasks:**
+**Total Recorded Hours:**
+**Hours Requiring Manual Review:**
+**Invoice-Ready Billable Hours:**
+**Total Amount Due:** $
+
+Important:
+
+* Do not estimate time when a recorded **Time worked** value exists.
+* Do not double-count tasks or work sessions.
+* Clearly distinguish recorded time from manually verified activity.
+* Use project evidence only.
+* If Replit cannot access a particular type of history, clearly state that limitation.
+* Keep the report suitable for sharing with a client as supporting documentation for an hourly invoice.

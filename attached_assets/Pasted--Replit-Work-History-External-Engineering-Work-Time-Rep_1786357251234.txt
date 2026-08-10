@@ -1,0 +1,271 @@
+# Replit Work History, External Engineering Work & Time Report
+
+Review my complete project working history from **August 1, 2026 through today**.
+
+The purpose of this report is to prepare an accurate hourly work record for my monthly invoice.
+
+IMPORTANT:
+
+Replit work sessions may contain multiple completed tasks and actions under one recorded **Time worked** value.
+
+Some project tasks also require work **outside Replit**, such as configuring Vercel, Stripe, DNS, databases, environment variables, GitHub, email services, production dashboards, or other external systems.
+
+These external activities must be identified separately and given a reasonable engineering-time estimate when there is evidence that the work was required or completed.
+
+Do not combine recorded Replit time and estimated external time into one undocumented number.
+
+---
+
+## 1. Search All Available Project History
+
+Review all available evidence, including:
+
+* Replit Agent conversations and work history
+* Recorded **Time worked**
+* Completed tasks
+* In-progress tasks
+* Post-merge setup activity
+* Task approvals
+* Testing and verification
+* Checkpoints
+* Git commits
+* Version history
+* Deployments
+* File changes
+* Reports I submitted
+* Manual actions recorded in conversations
+* External configuration instructions
+* Production troubleshooting
+* References to Vercel, Stripe, DNS, database, GitHub, email, storage, environment variables, or other external platforms
+
+---
+
+# 2. Replit Work Sessions
+
+For every identifiable Replit work session, provide:
+
+| Date | Work Session / Tasks | Recorded Time Worked | Actions | Result |
+| ---- | -------------------- | -------------------: | ------: | ------ |
+
+Under **Work Session / Tasks**, list all meaningful tasks and actions performed during the session.
+
+Example:
+
+August XX
+
+* Ran post-merge setup for #540
+* Completed webhook redirect Slack flood protection
+* Ran post-merge setup for #544
+* Reviewed and validated related changes
+
+Recorded Time Worked: 23 minutes
+
+Count the **23 minutes only once** for that work session.
+
+Do not multiply the session duration by the number of tasks completed within the session.
+
+---
+
+# 3. External / Manual Engineering Work
+
+Search the project history for tasks that required engineering work outside Replit.
+
+Examples include:
+
+* Vercel project configuration
+* Vercel Blob storage setup
+* Adding or verifying environment variables
+* Production redeployment
+* Checking deployment logs
+* Stripe dashboard configuration
+* Stripe webhook configuration
+* Payment testing
+* DNS / domain configuration
+* SSL verification
+* Database setup or connectivity checks
+* GitHub configuration
+* Email / SMTP configuration
+* Production testing through a browser
+* External service troubleshooting
+* Reviewing third-party dashboards
+* Manual configuration requested by a Replit task
+
+For every external activity, provide:
+
+| Date | Related Task | External Platform | Manual Work Required | Evidence | Estimated Active Time |
+| ---- | ------------ | ----------------- | -------------------- | -------- | --------------------: |
+
+## External-Time Estimation Rules
+
+Estimate only **active engineering effort reasonably required to complete the configuration or verification**.
+
+Do not estimate simply based on how long a deployment, DNS propagation, build, or external service took.
+
+Include active work such as:
+
+* Logging into the service
+* Locating the correct project/settings
+* Creating or connecting resources
+* Configuring environment variables
+* Updating settings
+* Triggering deployments
+* Reviewing logs
+* Testing the configuration
+* Troubleshooting failures
+* Reconfiguring after failed tests
+* Verifying the final production result
+
+Exclude passive periods such as:
+
+* Waiting for DNS propagation without active work
+* Waiting for deployments while doing unrelated work
+* Waiting for an external service to finish processing
+* Personal idle time
+
+When estimating external work, use conservative engineering estimates based on the complexity and evidence available.
+
+Suggested estimation ranges:
+
+* Simple setting/configuration change: 5–15 minutes
+* Environment-variable setup and verification: 10–20 minutes
+* External service connection and validation: 15–30 minutes
+* Deployment configuration and production verification: 15–30 minutes
+* Moderate troubleshooting requiring multiple attempts: 30–60 minutes
+* Complex integration/configuration work: estimate from the documented steps and clearly explain the basis
+
+These are guidelines only.
+
+Do not automatically assign the maximum value.
+
+If there is insufficient evidence to estimate reasonably, mark:
+
+**Manual Review Required**
+
+rather than inventing time.
+
+---
+
+# 4. Prevent Double Counting
+
+This is very important.
+
+If external configuration occurred during a Replit work session whose **Time worked** already includes that manual activity, do not add it again.
+
+For every external-time estimate, determine whether it appears to be:
+
+* Already included in recorded Replit time
+* Clearly outside the recorded Replit session
+* Uncertain
+
+Label each external activity accordingly.
+
+Use:
+
+**Additional External Time** only when the work is reasonably separate from recorded Replit time.
+
+---
+
+# 5. Daily Work Report
+
+After reconstructing the activity, provide:
+
+| Date | Replit Recorded Time | Additional External Time | Total Supported Work Time |
+| ---- | -------------------: | -----------------------: | ------------------------: |
+
+Also include the major tasks performed that day.
+
+---
+
+# 6. Weekly Summary
+
+Group the results by week:
+
+| Week | Replit Recorded Hours | External Engineering Hours | Total Supported Hours |
+| ---- | --------------------: | -------------------------: | --------------------: |
+
+---
+
+# 7. Reports and Deliverables Submitted
+
+Identify reports, test results, status updates, verification reports, or other deliverables I submitted.
+
+For each one include:
+
+* Date
+* Report/deliverable
+* Related task
+* What was verified or reported
+* Whether preparation time is already included in a recorded work session
+* Whether additional manual work may need review
+
+Do not automatically assign extra time to a report if the work is already represented elsewhere.
+
+---
+
+# 8. Missing or Unverified Work
+
+Create a separate section for:
+
+* Tasks with no recorded Time worked
+* External work mentioned but not precisely timed
+* Work sessions with incomplete information
+* Tasks that may overlap other sessions
+* Activities requiring manual confirmation
+* Possible duplicate entries
+
+Do not invent missing durations.
+
+---
+
+# 9. Final Time Calculation
+
+Calculate separately:
+
+**A. Recorded Replit Time**
+= Sum of unique Replit work-session Time worked values
+
+**B. Additional External Engineering Time**
+= Supported estimated active work performed outside Replit that is not already included in A
+
+**C. Total Supported Project Time**
+= A + B
+
+Show the calculation explicitly.
+
+Example:
+
+Recorded Replit work: 6h 25m
+Additional verified external configuration: 1h 10m
+Total supported work time: 7h 35m
+
+---
+
+# 10. Invoice Preparation Summary
+
+Finish with:
+
+Invoice Period: August 1, 2026 – Today
+
+Total Replit Work Sessions:
+Total Tasks / Activities:
+Total Completed Tasks:
+
+Recorded Replit Time:
+Estimated Additional External Engineering Time:
+Time Requiring Manual Review:
+
+Total Supported Billable Hours:
+
+Also provide a concise breakdown explaining exactly where the external-time estimates came from.
+
+Do not hide estimated time inside recorded time.
+
+Do not double-count.
+
+Clearly label every duration as one of:
+
+* **Recorded**
+* **Estimated External**
+* **Manual Review Required**
+
+The final report must be transparent enough that I can review and correct any entry before using it for an invoice.
