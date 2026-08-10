@@ -45,6 +45,11 @@ const WORKFLOW_PATH = path.resolve(
   "../../../.github/workflows/stripe-webhook-health.yml",
 );
 
+const HEARTBEAT_SCRIPT = path.resolve(
+  __dirname,
+  "../scripts/notify-webhook-heartbeat.ts",
+);
+
 let workflowText: string;
 
 beforeAll(() => {
