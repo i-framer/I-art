@@ -188,6 +188,15 @@ async function main() {
     process.exit(0);
   }
 
+  // Emit a GitHub Actions warning annotation so the run is flagged in the
+  // workflow UI even when no notification channel is configured.
+  // The ::warning:: command is parsed by GitHub Actions from stdout.
+  console.log(
+    "::warning::Stripe webhook redirect alert: neither Slack nor email could be delivered. " +
+      "Set SLACK_BILLING_ALERTS_CHANNEL + SLACK_BOT_TOKEN (or SLACK_WEBHOOK_URL), " +
+      "or set PLATFORM_ADMIN_EMAIL + SMTP_HOST/RESEND_API_KEY for email fallback.",
+  );
+
   // Last resort — prominent stderr banner so CI logs are always visible.
   console.error(
     "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
