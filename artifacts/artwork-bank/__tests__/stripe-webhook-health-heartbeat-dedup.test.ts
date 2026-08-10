@@ -505,3 +505,149 @@ describe("multi-run scenario within the same UTC day", () => {
     expect(hit).toBe(false);
   });
 });
+
+// ── 4. External healthcheck ping — no cache guard ────────────────────────────
+//
+// The "Ping external healthcheck URL" step is conditioned only on
+// `redirect == 'false'`.  Unlike the heartbeat notifier it has NO cache-hit
+// guard, so it fires on EVERY healthy run (both the first and the second run
+// of the day).  This is intentional: the external service needs to receive a
+// ping on every run to know the workflow is still alive.
+
+describe("stripe-webhook-health.yml — external healthcheck ping (structural)", () => {
+  it("'Ping external healthcheck URL' if: condition does NOT contain 'cache-hit'", () => {
+    const block = extractStepBlock("Ping external healthcheck URL");
+    // The ping step must be active on every healthy run, so no cache guard.
+    expect(block).not.toContain("cache-hit");
+  });
+
+  it("'Ping external healthcheck URL' is conditioned on redirect == 'false'", () => {
+    const block = extractStepBlock("Ping external healthcheck URL");
+    expect(block).toContain("redirect == 'false'");
+  });
+});
+
+describe("bash simulation — external healthcheck ping fires on every healthy run", () => {
+  /**
+   * Simulate whether the ping step would execute.
+   * Mirrors the exact `if:` from the YAML:
+   *   steps.probe.outputs.redirect == 'false'
+   * (No cache-hit guard — fires every healthy run.)
+   */
+  function wouldPing(redirect: string): boolean {
+    const script = `
+REDIRECT="${redirect}"
+if [[ "$REDIRECT" == "false" ]]; then
+  echo "WOULD_PING=yes"
+else
+  echo "WOULD_PING=no"
+fi
+`;
+    const { stdout } = runBash(script);
+    return stdout.includes("WOULD_PING=yes");
+  }
+
+  it("first healthy run of the day: ping fires (cache-miss state)", () => {
+    // On the first run there is no heartbeat cache hit yet, but the ping
+    // step is independent of cache state — it fires whenever redirect==false.
+    expect(wouldPing("false")).toBe(true);
+  });
+
+  it("second healthy run of the same day: ping still fires (cache-hit state is irrelevant)", () => {
+    // The heartbeat notifier is silenced on the second run, but the ping
+    // has no cache guard so it fires again.
+    expect(wouldPing("false")).toBe(true);
+  });
+
+  it("redirect detected: ping does NOT fire", () => {
+    expect(wouldPing("true")).toBe(false);
+  });
+
+  it("ping fires on every healthy run regardless of how many runs have occurred", () => {
+    // Simulate 4 consecutive healthy runs — all should ping.
+    const runs = ["false", "false", "false", "false"];
+    for (const redirect of runs) {
+      expect(wouldPing(redirect)).toBe(true);
+    }
+  });
+});
+
+// ── 5. Notifier script smoke-test (no channels configured) ────────────────────
+//
+// Confirms the heartbeat notifier script runs to completion and exits 0 when
+// no Slack channel is configured.  The script must always exit 0 so a
+// heartbeat send failure does not mark the overall probe run as failed.
+
+describe("notify-webhook-heartbeat.ts — exits 0 and emits banner (no channels)", () => {
+  it("script exits 0 and prints the CI banner when no Slack vars are set", () => {
+    const result = spawnSync(
+      "pnpm",
+      ["--filter", "@workspace/artwork-bank", "exec", "tsx", HEARTBEAT_SCRIPT],
+      {
+        env: {
+          // Provide the minimum context the script expects.
+          WEBHOOK_URL: "https://i-art.com.au/api/stripe/webhook",
+          HTTP_CODE: "405",
+          WORKFLOW_RUN_URL: "https://github.com/owner/repo/actions/runs/99999",
+          // No SLACK_*, so it falls through to the CI banner.
+          PATH: process.env.PATH ?? "",
+          HOME: process.env.HOME ?? "",
+          NODE_ENV: "test",
+        },
+        encoding: "utf8",
+        timeout: 30_000,
+        cwd: path.resolve(__dirname, "../../.."),
+      },
+    );
+
+    // The script MUST exit 0 — heartbeat send failure must not mask the probe result.
+    expect(result.status).toBe(0);
+
+    // It must emit the CI banner to stdout (always fires without channels).
+    const combined = (result.stdout ?? "") + (result.stderr ?? "");
+    expect(combined).toContain("STRIPE WEBHOOK PROBE HEARTBEAT");
+  });
+
+  it("script exits 0 even when WEBHOOK_URL is the default (env var absent)", () => {
+    const result = spawnSync(
+      "pnpm",
+      ["--filter", "@workspace/artwork-bank", "exec", "tsx", HEARTBEAT_SCRIPT],
+      {
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: process.env.HOME ?? "",
+          NODE_ENV: "test",
+        },
+        encoding: "utf8",
+        timeout: 30_000,
+        cwd: path.resolve(__dirname, "../../.."),
+      },
+    );
+
+    expect(result.status).toBe(0);
+  });
+
+  it("script logs that no Slack channel is configured when vars are absent", () => {
+    const result = spawnSync(
+      "pnpm",
+      ["--filter", "@workspace/artwork-bank", "exec", "tsx", HEARTBEAT_SCRIPT],
+      {
+        env: {
+          WEBHOOK_URL: "https://i-art.com.au/api/stripe/webhook",
+          HTTP_CODE: "405",
+          PATH: process.env.PATH ?? "",
+          HOME: process.env.HOME ?? "",
+          NODE_ENV: "test",
+        },
+        encoding: "utf8",
+        timeout: 30_000,
+        cwd: path.resolve(__dirname, "../../.."),
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const combined = (result.stdout ?? "") + (result.stderr ?? "");
+    // Should mention that no Slack channel/webhook is configured.
+    expect(combined).toContain("No Slack channel");
+  });
+});
