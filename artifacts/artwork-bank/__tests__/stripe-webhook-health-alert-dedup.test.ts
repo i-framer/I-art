@@ -418,6 +418,145 @@ describe("multi-run scenario within the same UTC hour", () => {
   });
 });
 
+// ── 5. Manual-dispatch bypass — unique key per run, never matches scheduled format
+//
+// When the workflow is triggered via workflow_dispatch, the "Compute alert dedup
+// key" step uses `github.run_id` instead of `date -u +%Y-%m-%d-%H`.  This
+// produces a key that:
+//   a) is unique per run (no two manual runs share a cache key → no silencing)
+//   b) never collides with the scheduled key format (YYYY-MM-DD-HH)
+//
+// A future edit that collapses the two branches (e.g. by removing the if/else
+// and always using `date`) would silently suppress operator-triggered alerts.
+// These tests catch that regression at the structural and bash-simulation levels.
+
+describe("stripe-webhook-health.yml — manual-dispatch dedup bypass", () => {
+  // ── 5a. Structural: manual branch contains github.run_id, not date ──────────
+
+  it("the 'Compute alert dedup key' step contains 'github.run_id' (manual branch)", () => {
+    const block = extractStepBlock("Compute alert dedup key");
+    // The manual branch must reference github.run_id so each dispatch run gets
+    // a unique cache key and cannot be suppressed by a prior run's cache entry.
+    expect(block).toContain("github.run_id");
+  });
+
+  it("the manual branch key contains the literal prefix 'webhook-redirect-alerted-manual-'", () => {
+    const block = extractStepBlock("Compute alert dedup key");
+    expect(block).toContain("webhook-redirect-alerted-manual-");
+  });
+
+  it("the manual branch does NOT contain 'date' (run_id, not timestamp)", () => {
+    // Isolate just the manual (workflow_dispatch) branch of the if/else.
+    // The block looks like:
+    //   if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+    //     KEY="webhook-redirect-alerted-manual-${{ github.run_id }}"
+    //     ...
+    //   else
+    //     KEY="webhook-redirect-alerted-$(date -u +%Y-%m-%d-%H)"
+    //   fi
+    const block = extractStepBlock("Compute alert dedup key");
+    const dispatchBranchMatch = block.match(
+      /workflow_dispatch.*?\n([\s\S]*?)else/,
+    );
+    expect(dispatchBranchMatch).not.toBeNull();
+    const dispatchBranch = dispatchBranchMatch![1];
+    // The manual branch must NOT call `date` — it uses run_id for uniqueness.
+    expect(dispatchBranch).not.toContain("date");
+    expect(dispatchBranch).toContain("run_id");
+  });
+
+  it("the scheduled branch does NOT reference run_id (date-based rotation only)", () => {
+    const block = extractStepBlock("Compute alert dedup key");
+    // Isolate the else (scheduled) branch.
+    const elseBranchMatch = block.match(/else\n([\s\S]*?)fi/);
+    expect(elseBranchMatch).not.toBeNull();
+    const elseBranch = elseBranchMatch![1];
+    // Scheduled branch must use date, not run_id.
+    expect(elseBranch).toContain("date");
+    expect(elseBranch).not.toContain("run_id");
+  });
+
+  it("the two branches are guarded by an event_name == 'workflow_dispatch' check", () => {
+    const block = extractStepBlock("Compute alert dedup key");
+    expect(block).toContain("workflow_dispatch");
+    // Confirm the check is an equality comparison so scheduled runs go to else.
+    expect(block).toMatch(/github\.event_name.*==.*workflow_dispatch/);
+  });
+
+  // ── 5b. Bash simulation: two run IDs → two distinct keys, no collision with scheduled ──
+
+  /**
+   * Simulate the manual-branch key computation with a given run_id.
+   * Mirrors the exact bash fragment in the workflow step:
+   *   KEY="webhook-redirect-alerted-manual-${{ github.run_id }}"
+   */
+  function computeManualKey(runId: string): string {
+    const script = `
+GITHUB_RUN_ID="${runId}"
+KEY="webhook-redirect-alerted-manual-\${GITHUB_RUN_ID}"
+echo "$KEY"
+`;
+    const { stdout, exitCode } = runBash(script);
+    expect(exitCode).toBe(0);
+    return stdout.trim();
+  }
+
+  it("manual key for run_id=111 has the expected format", () => {
+    const key = computeManualKey("111");
+    expect(key).toBe("webhook-redirect-alerted-manual-111");
+  });
+
+  it("two different run IDs produce two distinct keys (no silencing between runs)", () => {
+    const key1 = computeManualKey("9000000001");
+    const key2 = computeManualKey("9000000002");
+    expect(key1).not.toBe(key2);
+  });
+
+  it("manual key does not match the scheduled key format YYYY-MM-DD-HH", () => {
+    // The scheduled format is: webhook-redirect-alerted-2026-08-10-14
+    // The manual format is:    webhook-redirect-alerted-manual-<run_id>
+    // They must never collide.
+    const scheduledKeyPattern = /^webhook-redirect-alerted-\d{4}-\d{2}-\d{2}-\d{2}$/;
+    const key1 = computeManualKey("9000000001");
+    const key2 = computeManualKey("9000000002");
+    expect(key1).not.toMatch(scheduledKeyPattern);
+    expect(key2).not.toMatch(scheduledKeyPattern);
+  });
+
+  it("manual key contains 'manual' as a literal segment (visually distinct from scheduled)", () => {
+    const key = computeManualKey("9000000001");
+    // Splitting on '-' must include 'manual' as one of the segments.
+    const parts = key.split("-");
+    expect(parts).toContain("manual");
+  });
+
+  it("scheduled key does NOT contain 'manual' (paths are fully separate)", () => {
+    const script = `
+KEY="webhook-redirect-alerted-$(date -u +%Y-%m-%d-%H)"
+echo "$KEY"
+`;
+    const { stdout, exitCode } = runBash(script);
+    expect(exitCode).toBe(0);
+    const scheduledKey = stdout.trim();
+    expect(scheduledKey).not.toContain("manual");
+  });
+
+  it("100 simulated manual run IDs all produce keys distinct from any scheduled key", () => {
+    // Generate a plausible scheduled key for right now.
+    const { stdout } = runBash(`echo "webhook-redirect-alerted-$(date -u +%Y-%m-%d-%H)"`);
+    const scheduledKey = stdout.trim();
+    const scheduledPattern = /^webhook-redirect-alerted-\d{4}-\d{2}-\d{2}-\d{2}$/;
+
+    for (let i = 1; i <= 100; i++) {
+      const manualKey = computeManualKey(String(9_000_000_000 + i));
+      // Must not equal any scheduled key.
+      expect(manualKey).not.toBe(scheduledKey);
+      // Must not match the scheduled key format.
+      expect(manualKey).not.toMatch(scheduledPattern);
+    }
+  });
+});
+
 // ── 6. Summary step: correct label for every cache-hit value ─────────────────
 //
 // The Summary step uses a single-bracket  [ "$CACHE_HIT" = "true" ]  to decide
