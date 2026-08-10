@@ -260,7 +260,15 @@ jobs:
         id: heartbeat-dedup
         if: steps.probe.outputs.redirect == 'false'
         run: |
-          KEY="webhook-heartbeat-$(date -u +%Y-%m-%d)"
+          # Rotate daily — heartbeat fires at most once per UTC day.
+          # Manual workflow_dispatch runs bypass dedup so the operator can
+          # always force an immediate re-heartbeat on demand.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            KEY="webhook-heartbeat-manual-${{ github.run_id }}"
+            echo "Manual trigger — dedup bypassed (unique key per run)."
+          else
+            KEY="webhook-heartbeat-$(date -u +%Y-%m-%d)"
+          fi
           echo "key=$KEY" >> "$GITHUB_OUTPUT"
           echo "Heartbeat dedup key: $KEY"
 
