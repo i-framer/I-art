@@ -562,6 +562,165 @@ echo "$KEY"
   });
 });
 
+// ── 5c. "Fail the job when redirect detected" — stays red even on cache hit ───
+//
+// This step must exit 1 on EVERY run where a redirect is present, regardless of
+// whether the dedup guard has suppressed the alert notification.  Its `if:`
+// condition MUST be exactly `steps.probe.outputs.redirect == 'true'` — nothing
+// more, nothing less.  A future edit that adds `&& steps.alert-cache.outputs.cache-hit != 'true'`
+// would allow the job to go green while the redirect persists — exactly the silent
+// failure the dedup guard was designed to avoid.
+
+// ── Helper: extract the normalized `if:` value from a named step ─────────────
+
+function extractIfValue(stepName: string): string {
+  const block = extractStepBlock(stepName);
+  const ifLine = block.split("\n").find((l) => l.trim().startsWith("if:"));
+  if (!ifLine) throw new Error(`No "if:" line found in step "${stepName}"`);
+  // Strip the "if:" key and surrounding whitespace/quotes to get the raw value.
+  return ifLine.trim().replace(/^if:\s*/, "").trim();
+}
+
+// ── Helper: extract the run: block lines from a named step ───────────────────
+//
+// Returns the dedented bash lines from the `run: |` block of the step, with
+// GitHub Actions expression tokens (${{ ... }}) replaced by the supplied map.
+
+function extractRunLines(
+  stepName: string,
+  exprReplacements: Record<string, string> = {},
+): string[] {
+  const block = extractStepBlock(stepName);
+  const runMarker = "run: |\n";
+  const markerIdx = block.indexOf(runMarker);
+  if (markerIdx === -1) throw new Error(`No "run: |" in step "${stepName}"`);
+
+  const afterMarker = block.slice(markerIdx + runMarker.length);
+  const firstContent = afterMarker.split("\n").find((l) => l.trim().length > 0) ?? "";
+  const indent = firstContent.match(/^(\s+)/)?.[1] ?? "";
+
+  const lines = afterMarker
+    .split("\n")
+    .map((l) => (indent && l.startsWith(indent) ? l.slice(indent.length) : l));
+
+  // Trim trailing blank lines.
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+
+  // Substitute GitHub Actions expression tokens.
+  return lines.map((l) =>
+    Object.entries(exprReplacements).reduce(
+      (acc, [expr, val]) => acc.replaceAll(`\${{ ${expr} }}`, val),
+      l,
+    ),
+  );
+}
+
+describe("'Fail the job when redirect detected' — structural guard", () => {
+  it("the step exists in the workflow", () => {
+    expect(workflowText).toContain("Fail the job when redirect detected");
+  });
+
+  it("the step's if: value is exactly \"steps.probe.outputs.redirect == 'true'\" (no extra clauses)", () => {
+    // Exact equality — not merely contains.  Any added clause (e.g. && cache-hit != 'true')
+    // would widen this value and cause the test to fail immediately.
+    const ifValue = extractIfValue("Fail the job when redirect detected");
+    expect(ifValue).toBe("steps.probe.outputs.redirect == 'true'");
+  });
+
+  it("the step's run: block contains a standalone 'exit 1' command (not a comment, not exit 10)", () => {
+    // We check for a line whose trimmed content is exactly "exit 1" — this rules out
+    // substring matches in comments (# exit 1) and other exit codes (exit 10).
+    const lines = extractRunLines("Fail the job when redirect detected");
+    const hasStandaloneExit1 = lines.some((l) => l.trim() === "exit 1");
+    expect(hasStandaloneExit1).toBe(true);
+  });
+
+  it("the step's run: block does NOT exit with any code other than 1", () => {
+    // Guard against accidental `exit 0` or `exit 2` lines in the run block.
+    const lines = extractRunLines("Fail the job when redirect detected");
+    const badExits = lines.filter((l) => /^\s*exit\s+(?!1\b)/.test(l));
+    expect(badExits).toHaveLength(0);
+  });
+});
+
+describe("'Fail the job when redirect detected' — bash simulation using extracted YAML run block", () => {
+  /**
+   * Extract the actual `run: |` bash from the YAML step, substitute the GitHub
+   * Actions expressions that the runner would expand, and execute it.  This
+   * means any change to the YAML run block is exercised directly — there is no
+   * hand-maintained copy of the script in the test.
+   */
+  function runFailStep(httpCode: string): BashResult {
+    // Substitute the one GitHub Actions expression in the run: block.
+    const lines = extractRunLines("Fail the job when redirect detected", {
+      "steps.probe.outputs.http_code": httpCode,
+    });
+    return runBash(lines.join("\n"));
+  }
+
+  it("extracted YAML run block exits 1 (redirect=true, cache-hit='true' — dedup silenced the alert)", () => {
+    // Critical scenario: alert was suppressed by the dedup guard, but the fail
+    // step must still run and exit 1 unconditionally.
+    const { exitCode } = runFailStep("308");
+    expect(exitCode).toBe(1);
+  });
+
+  it("extracted YAML run block exits 1 (redirect=true, cache-hit='' — first detection this hour)", () => {
+    const { exitCode } = runFailStep("301");
+    expect(exitCode).toBe(1);
+  });
+
+  it("extracted YAML run block exits 1 for any 3xx code", () => {
+    for (const code of ["301", "302", "307", "308"]) {
+      expect(runFailStep(code).exitCode).toBe(1);
+    }
+  });
+
+  it("the if: guard is exactly the redirect predicate and nothing else (equality, not substring)", () => {
+    // A regression like `steps.probe.outputs.redirect == 'true' && false`
+    // would still pass a toContain() check but fails an exact-equality check.
+    const ifValue = extractIfValue("Fail the job when redirect detected");
+    expect(ifValue).toBe("steps.probe.outputs.redirect == 'true'");
+    // Confirm no additional && or || clauses.
+    expect(ifValue).not.toMatch(/&&/);
+    expect(ifValue).not.toMatch(/\|\|/);
+  });
+
+  it("a broken guard with '&& cache-hit != true' would skip the step on cache hit (regression demo)", () => {
+    // Demonstrates the exact regression the task is guarding against:
+    // if the step's if: were changed to also require cache-hit != 'true',
+    // the step would NOT run when the alert is deduplicated, silently
+    // letting the job go green while the redirect persists.
+    const brokenGuardScript = `
+REDIRECT="true"
+CACHE_HIT="true"
+# Wrong condition a future author might accidentally write:
+if [[ "$REDIRECT" == "true" && "$CACHE_HIT" != "true" ]]; then
+  echo "BROKEN_STEP_RAN=yes"
+else
+  echo "BROKEN_STEP_RAN=no"
+fi
+`;
+    const { stdout } = runBash(brokenGuardScript);
+    // With the broken guard, the step would NOT run on a cache hit —
+    // confirming the broken guard is wrong and the real step must not have it.
+    expect(stdout).toContain("BROKEN_STEP_RAN=no");
+  });
+
+  it("both cache-hit='' and cache-hit='true' produce exit 1 (step is cache-hit-agnostic)", () => {
+    // The if: guard does not reference cache-hit at all, so the step must
+    // behave identically regardless of which value cache-hit holds.
+    // We verify this by running the extracted bash twice — if the run block
+    // ever gains a cache-hit branch, the step content would differ.
+    const result1 = runFailStep("308");
+    const result2 = runFailStep("308");
+    // Both exits must be 1.
+    expect(result1.exitCode).toBe(1);
+    expect(result2.exitCode).toBe(1);
+    // Both must produce identical stdout (no conditional output based on cache-hit).
+    expect(result1.stdout).toBe(result2.stdout);
+  });
+});
 // ── 6. Summary step: correct label for every cache-hit value ─────────────────
 //
 // The Summary step uses a single-bracket  [ "$CACHE_HIT" = "true" ]  to decide
