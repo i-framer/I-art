@@ -862,3 +862,138 @@ await import(${JSON.stringify(NOTIFIER_SCRIPT)});
     expect(combined).toMatch(/Slack webhook (post )?failed/i);
   });
 });
+
+// ── 7. Manual-dispatch key uniqueness with unusual run_id shapes ──────────────
+//
+// GitHub run IDs are currently integers, but the bash fragment embeds
+// `github.run_id` without sanitisation.  A future platform change or a
+// non-standard run ID (leading zeros, very long integer) must NOT collapse two
+// distinct run IDs into the same cache key.
+//
+// run_id shapes tested:
+//   "0"                    — boundary / single-digit minimum
+//   "00001"                — leading zeros (bash preserves them in a string)
+//   "99999999999999999999" — 20-digit integer (well beyond current integer range)
+//   "9834710234"           — typical 10-digit integer seen in production today
+//
+// All four must:
+//   a) match  ^webhook-redirect-alerted-manual-.+$
+//   b) be mutually distinct (no two collapse to the same key)
+
+describe("bash simulation — manual-dispatch key is unique for unusual run_id shapes", () => {
+  /**
+   * Extract the full "Compute alert dedup key" bash from the actual workflow
+   * YAML, substitute the two GitHub expression tokens with concrete values,
+   * and run the resulting script.  Returns the KEY value the workflow would
+   * emit for this run_id on a workflow_dispatch trigger.
+   *
+   * Using the live YAML bash (not a hand-written copy) means any future edit
+   * to the key formula is automatically exercised by these tests.
+   */
+  function computeManualKeyFromWorkflow(runId: string): string {
+    const stepBlock = extractStepBlock("Compute alert dedup key");
+
+    // Locate the `run: |` literal block scalar within the step.
+    const runMarker = "run: |\n";
+    const markerIdx = stepBlock.indexOf(runMarker);
+    if (markerIdx === -1)
+      throw new Error("Could not find 'run: |' in 'Compute alert dedup key' step");
+
+    const afterMarker = stepBlock.slice(markerIdx + runMarker.length);
+
+    // Strip YAML indentation (detect from the first non-empty line).
+    const firstContentLine =
+      afterMarker.split("\n").find((l) => l.trim().length > 0) ?? "";
+    const indent = firstContentLine.match(/^(\s+)/)?.[1] ?? "";
+    const lines = afterMarker
+      .split("\n")
+      .map((line) =>
+        indent && line.startsWith(indent) ? line.slice(indent.length) : line,
+      );
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "")
+      lines.pop();
+    const rawBash = lines.join("\n");
+
+    // Substitute both GitHub expression tokens:
+    //   ${{ github.event_name }} → "workflow_dispatch"  (takes the manual branch)
+    //   ${{ github.run_id }}     → the fixture run_id value
+    const bash = rawBash
+      .replace(/\$\{\{\s*github\.event_name\s*\}\}/g, "workflow_dispatch")
+      .replace(/\$\{\{\s*github\.run_id\s*\}\}/g, runId);
+
+    // Stub the Actions-specific GITHUB_OUTPUT redirect so the step doesn't fail
+    // when it tries to write `key=$KEY` to the Actions output file.
+    // Append a sentinel echo so the KEY value is recoverable from stdout
+    // even when the workflow step emits other lines before it.
+    const sentinel = `__KEY_OUTPUT__`;
+    const script = `GITHUB_OUTPUT=/dev/null\n${bash}\necho "${sentinel}$KEY"`;
+    const { stdout, exitCode } = runBash(script);
+    expect(exitCode).toBe(0);
+    // Extract the KEY value from the sentinel line, ignoring other workflow echoes.
+    const sentinelLine = stdout
+      .split("\n")
+      .find((l) => l.startsWith(sentinel));
+    return (sentinelLine ?? "").slice(sentinel.length).trim();
+  }
+
+  // run_id shapes that probe numeric coercion / leading-zero loss:
+  //   "0"                    — single-digit boundary
+  //   "1"                    — numeric value of "00001"; must differ from it
+  //   "00001"                — leading zeros; numeric value 1 but string "00001"
+  //   "99999999999999999999" — 20-digit integer, beyond JS/bash safe-integer range
+  //   "9834710234"           — typical 10-digit integer seen in production
+  const unusualRunIds: Array<[runId: string, label: string]> = [
+    ["0",                    "single-digit zero"],
+    ["1",                    "numeric value 1 (numeric equivalent of '00001')"],
+    ["00001",                "leading zeros — numeric value 1 but string '00001'"],
+    ["99999999999999999999", "20-digit integer (beyond safe-integer range)"],
+    ["9834710234",           "typical 10-digit integer"],
+  ];
+
+  it.each(unusualRunIds)(
+    "run_id=%j (%s) → key matches ^webhook-redirect-alerted-manual-.+$",
+    (runId) => {
+      const key = computeManualKeyFromWorkflow(runId);
+      expect(key).toMatch(/^webhook-redirect-alerted-manual-.+$/);
+    },
+  );
+
+  it("all unusual run_id shapes produce mutually distinct keys", () => {
+    const keys = unusualRunIds.map(([runId]) =>
+      computeManualKeyFromWorkflow(runId),
+    );
+    // Every key must be unique — no two run_id shapes must collapse to the same key.
+    const uniqueKeys = new Set(keys);
+    expect(uniqueKeys.size).toBe(keys.length);
+  });
+
+  it("run_id='1' and run_id='00001' produce different keys (leading zeros are not numeric-coerced)", () => {
+    // If the shell performed arithmetic expansion, both "1" and "00001" would
+    // reduce to the integer 1 and produce the same key.  Plain string
+    // interpolation must preserve the literal characters verbatim.
+    const key1 = computeManualKeyFromWorkflow("1");
+    const key00001 = computeManualKeyFromWorkflow("00001");
+    expect(key1).not.toBe(key00001);
+  });
+
+  it("20-digit run_id produces a key distinct from the typical 10-digit run_id", () => {
+    const keyLong = computeManualKeyFromWorkflow("99999999999999999999");
+    const keyTypical = computeManualKeyFromWorkflow("9834710234");
+    expect(keyLong).not.toBe(keyTypical);
+  });
+
+  it("no unusual run_id key matches the scheduled key format YYYY-MM-DD-HH", () => {
+    const scheduledPattern = /^webhook-redirect-alerted-\d{4}-\d{2}-\d{2}-\d{2}$/;
+    for (const [runId] of unusualRunIds) {
+      const key = computeManualKeyFromWorkflow(runId);
+      expect(key).not.toMatch(scheduledPattern);
+    }
+  });
+
+  it("each unusual key contains 'manual' as a literal segment", () => {
+    for (const [runId] of unusualRunIds) {
+      const key = computeManualKeyFromWorkflow(runId);
+      expect(key.split("-")).toContain("manual");
+    }
+  });
+});
