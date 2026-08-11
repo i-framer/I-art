@@ -226,6 +226,45 @@ describeIntegration(
       expect(mockPutObject).not.toHaveBeenCalled();
     });
 
+    it("no Content-Length header + body exactly at MAX_SIZE_BYTES → 200, putObject called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      mockPutObject.mockResolvedValue(undefined);
+      // Exactly 25 MB — must be accepted, not rejected.
+      const MAX_SIZE_BYTES = 25 * 1024 * 1024;
+      const exactChunk = new Uint8Array(MAX_SIZE_BYTES);
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(exactChunk);
+          controller.close();
+        },
+      });
+      const req = makeRequest({ contentType: "image/jpeg", body });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(200);
+      expect(mockPutObject).toHaveBeenCalledTimes(1);
+    });
+
+    it("no Content-Length header + body is MAX_SIZE_BYTES + 1 → 413, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      // One byte over the limit — must be rejected.
+      const ONE_OVER = 25 * 1024 * 1024 + 1;
+      const overChunk = new Uint8Array(ONE_OVER);
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(overChunk);
+          controller.close();
+        },
+      });
+      const req = makeRequest({ contentType: "image/jpeg", body });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(413);
+      expect(mockPutObject).not.toHaveBeenCalled();
+    });
+
     it("valid session → putObject IS called with correct entityId format and content-type", async () => {
       mockSession.value = { userId: `user-${uid()}` };
       mockPutObject.mockResolvedValue(undefined);
