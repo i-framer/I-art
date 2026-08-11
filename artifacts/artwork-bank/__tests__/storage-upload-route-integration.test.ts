@@ -577,6 +577,78 @@ describeIntegration(
       expect(mockPutObject).toHaveBeenCalledTimes(1);
     }, 30_000 /* async delays: allow generous wall-clock budget */);
 
+    it("async-drip stream over limit: route calls reader.cancel() after crossing the limit, not after draining all remaining chunks", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      // This test proves TWO things:
+      //   1. reader.cancel() is actually invoked (the stream's cancel() hook fires).
+      //   2. The route stops pulling after at most CHUNKS_TO_LIMIT + 1 chunks —
+      //      not after draining the much-larger TOTAL_CHUNKS available in the stream.
+      //
+      // With 1-KiB chunks:
+      //   CHUNKS_TO_LIMIT = 25,600  → cumulative = 25 MiB exactly (accepted boundary)
+      //   CHUNKS_TO_LIMIT + 1 = 25,601 → cumulative = 25 MiB + 1 KiB (first over-limit read)
+      //
+      // The stream is deliberately over-provisioned with TOTAL_CHUNKS = 50,000 chunks
+      // (≈ 48.8 MiB).  A broken implementation that buffered everything before
+      // returning 413 would pull all 50,000 chunks; the assertion
+      // chunksRead ≤ CHUNKS_TO_LIMIT + 1 catches that.
+      const CHUNK_SIZE = 1024; // 1 KiB
+      const MAX_SIZE_BYTES = 25 * 1024 * 1024;
+      const CHUNKS_TO_LIMIT = MAX_SIZE_BYTES / CHUNK_SIZE; // 25,600
+      const TOTAL_CHUNKS = 50_000; // ≈ 2× the limit — stream keeps offering more data
+
+      let chunksRead = 0; // count of pull() invocations = chunks actually consumed
+      let cancelCalled = false; // flips to true when the stream's cancel() hook fires
+      let sent = 0;
+      const chunk = new Uint8Array(CHUNK_SIZE);
+
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent >= TOTAL_CHUNKS) {
+            controller.close();
+            return;
+          }
+          // Yield to the event loop between each chunk (async-drip pattern).
+          return new Promise<void>((resolve) => {
+            setImmediate(() => {
+              if (sent < TOTAL_CHUNKS) {
+                chunksRead++;
+                controller.enqueue(chunk);
+                sent++;
+              }
+              resolve();
+            });
+          });
+        },
+        // This cancel() hook is called by the WHATWG streams spec whenever
+        // reader.cancel() is invoked.  Asserting it fired proves the route
+        // calls reader.cancel() rather than merely breaking out of the loop
+        // and leaving the stream open.
+        cancel() {
+          cancelCalled = true;
+        },
+      });
+
+      const req = makeRequest({ contentType: "image/jpeg", body });
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(413);
+      expect(mockPutObject).not.toHaveBeenCalled();
+
+      // Direct proof that reader.cancel() was invoked by the route.
+      expect(cancelCalled).toBe(true);
+
+      // Early-abort proof: the route must stop consuming chunks as soon as the
+      // running total exceeds MAX_SIZE_BYTES.  The stream still had
+      // TOTAL_CHUNKS - chunksRead chunks left to offer; a buffering implementation
+      // would have consumed all 50,000.  We allow at most CHUNKS_TO_LIMIT + 1
+      // (the over-limit chunk that triggers the abort).
+      expect(chunksRead).toBeLessThanOrEqual(CHUNKS_TO_LIMIT + 1);
+      // Lower bound: the route must have read at least the chunks needed to
+      // reach the limit (25,600) plus the one that crossed it (25,601).
+      expect(chunksRead).toBeGreaterThanOrEqual(CHUNKS_TO_LIMIT + 1);
+    }, 30_000 /* async delays: allow generous wall-clock budget */);
+
     it("zero-byte body (ReadableStream that closes immediately) → 400, putObject not called", async () => {
       mockSession.value = { userId: `user-${uid()}` };
       // A non-null ReadableStream that closes without yielding any data.
