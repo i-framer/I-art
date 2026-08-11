@@ -15,6 +15,10 @@ export default defineConfig({
     // The __tests__/slow/ directory contains tests that each take ~50 s of
     // real wall-clock time.  They are excluded here and run via `pnpm test:slow`
     // in a dedicated CI slot so the default `pnpm test` stays fast.
-    exclude: ["__tests__/slow/**"],
+    //
+    // Exception: helper unit tests directly inside __tests__/slow/helpers/
+    // exercise pure logic (no servers) and DO run in the default suite.  The
+    // exclude pattern therefore targets only files at the slow/ root level.
+    exclude: ["__tests__/slow/*.test.ts"],
   },
 });
