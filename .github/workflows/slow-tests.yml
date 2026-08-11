@@ -107,9 +107,11 @@ jobs:
     # confirm the guard is still effective; it should not block PRs.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # The meta-test spawns next dev (up to 90 s startup) plus the helper server,
-    # then runs test:slow once with the injected regression.  Budget generously.
-    timeout-minutes: 15
+    # The meta-test runs the probe first with PROBE_RETAIN_CACHE=1, then hands
+    # the warm .next-probe cache to test:slow so next-dev is only cold-started
+    # once (~90 s saved vs the old two-cold-start pattern).  The budget was
+    # tightened from 15 → 13 min to match the confirmed saving.
+    timeout-minutes: 13
 
     steps:
       - uses: actions/checkout@v4
