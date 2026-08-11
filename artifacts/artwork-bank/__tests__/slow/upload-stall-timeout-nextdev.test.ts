@@ -53,6 +53,12 @@
  *      before body is read; elapsed < UPLOAD_READ_TIMEOUT_MS).
  *   2. Authenticated stalling upload (helper server) → HTTP 408 within the
  *      timeout (client goes silent after 4 bytes; readChunkWithTimeout fires).
+ *   3. Authenticated stalling multipart upload (helper server) → HTTP 408 via
+ *      the per-chunk path (client sends multipart headers then goes silent).
+ *   4. Authenticated slow-drip multipart upload (drip helper server) → HTTP 408
+ *      via the total-deadline path (client sends one byte every ~60 % of the
+ *      per-chunk window, keeping individual reads alive but exhausting the total
+ *      wall-clock budget).
  *
  * Route warm-up (next dev)
  * ─────────────────────────
@@ -62,11 +68,13 @@
  *
  * Timing budget
  * ─────────────
- *   • next dev startup:          up to 90 s.
- *   • Route warm-up:             up to 60 s.
- *   • UPLOAD_READ_TIMEOUT_MS:    1 500 ms.
- *   • Per-test response window:  UPLOAD_READ_TIMEOUT_MS × 5 + 2 000 ms = 9 500 ms.
- *   • Total beforeAll timeout:   180 000 ms.
+ *   • next dev startup:              up to 90 s.
+ *   • Route warm-up:                 up to 60 s.
+ *   • UPLOAD_READ_TIMEOUT_MS:        1 500 ms.
+ *   • UPLOAD_TOTAL_TIMEOUT_MS        3 000 ms  (drip server only).
+ *   • Per-test response window:      UPLOAD_READ_TIMEOUT_MS × 5 + 2 000 ms = 9 500 ms.
+ *   • Drip-test response window:     UPLOAD_READ_TIMEOUT_MS × 4 = 6 000 ms.
+ *   • Total beforeAll timeout:       180 000 ms.
  *
  * The test is excluded from the default `pnpm test` run via the exclude glob
  * in vitest.config.ts and only runs via `pnpm test:slow`.
@@ -79,39 +87,33 @@ import * as http from "node:http";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { sealData } from "iron-session";
+import { checkTimingBudget } from "./helpers/timing";
+import { consumeProbeCache, DEV_BUILD_DIR } from "./helpers/probe-cache";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 /**
- * Assertion baseline for elapsed-time checks in this test file.  Kept
- * hardcoded so that the meta-test (scripts/meta-test-stall-guard.sh) can
- * inject a server-side regression without inadvertently relaxing the
- * assertions: the meta-test sets UPLOAD_READ_TIMEOUT_MS=1 in the environment
- * to make the helper server fire its timeout in ~1 ms, but the assertions
- * below still compare against 1 500 ms, so the suite exits non-zero and the
- * meta-test can confirm the guard is effective.
+ * Short read-timeout injected into both child processes.  Short enough that the
+ * test completes quickly; long enough to survive I/O scheduling jitter.
  */
 const UPLOAD_READ_TIMEOUT_MS = 1_500;
 
 /**
- * Timeout injected into the spawned child processes (next dev + helper
- * server).  Normally identical to UPLOAD_READ_TIMEOUT_MS, but can be
- * overridden via the UPLOAD_READ_TIMEOUT_MS environment variable to simulate
- * a regression.  The meta-test (scripts/meta-test-stall-guard.sh) sets
- * UPLOAD_READ_TIMEOUT_MS=1 so the helper server fires its timeout in ~1 ms,
- * causing `expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS)` to
- * fail and proving the guard is still sensitive after a Next.js version bump.
+ * Short total wall-clock timeout used by the drip helper server (scenario 4).
+ *
+ * Set to 2× the per-chunk timeout so a slow-drip client that sends one tiny
+ * burst every ~60 % of UPLOAD_READ_TIMEOUT_MS (keeping individual reads alive)
+ * still exhausts the total budget within the test window.
+ *
+ * Injected via UPLOAD_TOTAL_TIMEOUT_MS into the drip server only; the primary
+ * helper server uses the production default (120 s).
  */
-const SERVER_TIMEOUT_MS: number = process.env.UPLOAD_READ_TIMEOUT_MS
-  ? Number(process.env.UPLOAD_READ_TIMEOUT_MS)
-  : UPLOAD_READ_TIMEOUT_MS;
+const UPLOAD_TOTAL_TIMEOUT_MS = UPLOAD_READ_TIMEOUT_MS * 2;
 /** Dev fallback secret — used by the helper server when SESSION_SECRET is unset. */
 const DEV_SESSION_SECRET = "dev-fallback-secret-must-be-32-chars!";
 
 /** Cookie name from lib/session.ts */
 const COOKIE_NAME = "artwork_bank_session";
-
-// ── Port helper ───────────────────────────────────────────────────────────────
 
 /** Bind briefly to :0 to get an OS-assigned free port, then release it. */
 function findFreePort(): Promise<number> {
@@ -190,7 +192,7 @@ async function startDevServer(
         ...process.env,
         PORT: String(port),
         BUILD_DIR: activeBuildDir,
-        UPLOAD_READ_TIMEOUT_MS: String(SERVER_TIMEOUT_MS),
+        UPLOAD_READ_TIMEOUT_MS: String(UPLOAD_READ_TIMEOUT_MS),
         // Unset SESSION_SECRET so the dev server uses the same fallback as
         // the helper server — consistent password across both processes.
         SESSION_SECRET: undefined,
@@ -293,7 +295,7 @@ function stopDevServer(): Promise<void> {
   });
 }
 
-// ── Helper server lifecycle (scenario 2) ──────────────────────────────────────
+// ── Helper server lifecycle (scenarios 2 & 3) ─────────────────────────────────
 
 let helperServer: ChildProcess;
 let helperPort: number;
@@ -320,7 +322,7 @@ async function startHelperServer(
     env: {
       ...process.env,
       UPLOAD_SERVER_PORT: String(port),
-      UPLOAD_READ_TIMEOUT_MS: String(SERVER_TIMEOUT_MS),
+      UPLOAD_READ_TIMEOUT_MS: String(UPLOAD_READ_TIMEOUT_MS),
       // Unset SESSION_SECRET so the helper server uses DEV_SESSION_SECRET —
       // the same password used by makeSessionCookie().
       SESSION_SECRET: undefined,
@@ -381,8 +383,17 @@ function stopHelperServer(): Promise<void> {
   });
 }
 
-// ── Stalling-upload helper (scenario 2) ───────────────────────────────────────
-
+/**
+ * A second instance of upload-stall-server, configured with a short
+ * UPLOAD_TOTAL_TIMEOUT_MS so that a slow-drip client exhausts the total
+ * wall-clock budget rather than any single per-chunk deadline.
+ *
+ * The per-chunk timeout is the same as for the primary helper server
+ * (UPLOAD_READ_TIMEOUT_MS).  The total timeout is set to 2× that value so the
+ * total-deadline branch fires well within the test's response window while
+ * still being long enough to survive normal I/O scheduling jitter.
+ */
+let dripHelperServer: ChildProcess;
 /**
  * Send a stalling POST to the helper server using Node.js `http.request`.
  *
@@ -402,12 +413,15 @@ function stopHelperServer(): Promise<void> {
  * @param opts.initialBytes - Initial bytes to write before going silent.
  *   Defaults to [0x58, 0x58, 0x58, 0x58] ("XXXX") — enough to get past the
  *   auth gate without completing the body.
+ * @param opts.targetPort   - Port of the helper server to connect to.
+ *   Defaults to `helperPort` (the primary stall server).
  */
 function sendStallingUploadToHelper(opts: {
   cookie?: string;
   responseTimeoutMs: number;
   contentType?: string;
   initialBytes?: Buffer;
+  targetPort?: number;
 }): Promise<{ statusCode: number; body: string }> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -423,11 +437,12 @@ function sendStallingUploadToHelper(opts: {
 
     const contentType = opts.contentType ?? "image/jpeg";
     const initialBytes = opts.initialBytes ?? Buffer.from([0x58, 0x58, 0x58, 0x58]);
+    const port = opts.targetPort ?? helperPort;
 
     const req = http.request(
       {
         hostname: "127.0.0.1",
-        port: helperPort,
+        port,
         method: "POST",
         path: "/api/storage/upload",
         headers: {
@@ -472,35 +487,212 @@ function sendStallingUploadToHelper(opts: {
   });
 }
 
-// ── Timing helpers ────────────────────────────────────────────────────────────
+/**
+ * Send a slow-drip POST to the drip helper server using Node.js `http.request`.
+ *
+ * Unlike sendStallingUploadToHelper (which goes completely silent after the
+ * initial bytes), this function sends one tiny burst every `dripIntervalMs`.
+ * The interval is set below UPLOAD_READ_TIMEOUT_MS so each individual
+ * reader.read() resolves before the per-chunk timer fires — keeping the
+ * per-chunk guard from triggering.  Instead, the total wall-clock deadline
+ * (UPLOAD_TOTAL_TIMEOUT_MS) fires after enough drip intervals have elapsed,
+ * and the server returns 408 with timeoutKind "total".
+ *
+ * http.request's response callback fires as soon as the 408 response HEADERS
+ * arrive — independently of the request body state — so the Promise resolves
+ * without needing the client to close its half of the connection.
+ *
+ * @param opts.contentType     - The Content-Type header value to send.
+ * @param opts.initialBytes    - Written once before the drip loop starts.
+ * @param opts.dripByte        - Single byte sent on each drip interval.
+ * @param opts.dripIntervalMs  - Milliseconds between each drip.
+ * @param opts.responseTimeoutMs - Test-level deadline; rejects if exceeded.
+ * @param opts.targetPort      - Port of the drip helper server.
+ */
+function sendSlowDripUploadToHelper(opts: {
+  cookie?: string;
+  contentType: string;
+  initialBytes: Buffer;
+  dripByte?: number;
+  dripIntervalMs: number;
+  responseTimeoutMs: number;
+  targetPort: number;
+}): Promise<{ statusCode: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const dripTimer: { current: ReturnType<typeof setInterval> | undefined } = { current: undefined };
 
-import { checkTimingBudget } from "./helpers/timing";
-import {
-  consumeProbeCache,
-  DEV_BUILD_DIR,
-} from "./helpers/probe-cache";
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(dripTimer.current);
+      clearTimeout(responseTimer);
+      fn();
+    };
+
+    const extraHeaders: Record<string, string> = {};
+    if (opts.cookie) extraHeaders["Cookie"] = opts.cookie;
+
+    const dripByte = opts.dripByte ?? 0x2e; // ASCII '.'
+
+    const req = http.request(
+      {
+        hostname: "127.0.0.1",
+        port: opts.targetPort,
+        method: "POST",
+        path: "/api/storage/upload",
+        headers: {
+          "Content-Type": opts.contentType,
+          // No Content-Length → chunked encoding; each write() is one chunk.
+          "Connection": "close",
+          ...extraHeaders,
+        },
+      },
+      (res) => {
+        // Response headers have arrived — the server has decided.  Stop dripping.
+        let body = "";
+        res.on("data", (chunk: Buffer) => { body += chunk.toString("utf8"); });
+        res.on("end", () => {
+          req.destroy();
+          settle(() => resolve({ statusCode: res.statusCode ?? 0, body }));
+        });
+        res.on("error", (err) => { settle(() => reject(err)); });
+      },
+    );
+
+    req.on("error", (err: NodeJS.ErrnoException) => {
+      settle(() => reject(err));
+    });
+
+    const responseTimer = setTimeout(() => {
+      req.destroy();
+      settle(() =>
+        reject(
+          new Error(
+            `Drip helper server did not respond within ${opts.responseTimeoutMs} ms`,
+          ),
+        ),
+      );
+    }, opts.responseTimeoutMs);
+
+    // Write the multipart preamble, then start the drip loop.
+    req.write(opts.initialBytes);
+
+    // Send one tiny byte on each interval.  The interval is deliberately
+    // shorter than UPLOAD_READ_TIMEOUT_MS so each individual reader.read()
+    // resolves before the per-chunk timer fires.  The total-deadline timer on
+    // the server fires after UPLOAD_TOTAL_TIMEOUT_MS has elapsed regardless.
+    dripTimer.current = setInterval(() => {
+      try {
+        req.write(Buffer.from([dripByte]));
+      } catch {
+        // The connection may have been closed by the server response — ignore.
+        clearInterval(dripTimer.current);
+      }
+    }, opts.dripIntervalMs);
+  });
+}
+// ── Drip helper server lifecycle (scenario 4) ────────────────────────────────
+
+let dripHelperPort: number;
+
+async function startDripHelperServer(
+  port: number,
+  timeoutMs: number,
+): Promise<void> {
+  const helperScript = path.resolve(
+    __dirname,
+    "helpers/upload-stall-server.ts",
+  );
+
+  dripHelperServer = spawn("pnpm", ["exec", "tsx", helperScript], {
+    cwd: path.resolve(__dirname, "../../.."),
+    env: {
+      ...process.env,
+      UPLOAD_SERVER_PORT: String(port),
+      UPLOAD_READ_TIMEOUT_MS: String(UPLOAD_READ_TIMEOUT_MS),
+      UPLOAD_TOTAL_TIMEOUT_MS: String(UPLOAD_TOTAL_TIMEOUT_MS),
+      SESSION_SECRET: undefined,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  const stderrChunks: Buffer[] = [];
+  dripHelperServer.stderr?.on("data", (chunk: Buffer) =>
+    stderrChunks.push(chunk),
+  );
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      dripHelperServer.kill("SIGTERM");
+      reject(
+        new Error(
+          `Drip helper server did not start within ${timeoutMs} ms.\n` +
+            Buffer.concat(stderrChunks).toString("utf8").slice(-1000),
+        ),
+      );
+    }, timeoutMs);
+
+    let stdoutBuf = "";
+    dripHelperServer.stdout?.on("data", (chunk: Buffer) => {
+      stdoutBuf += chunk.toString("utf8");
+      const match = stdoutBuf.match(/READY:(\d+)/);
+      if (match) {
+        clearTimeout(timer);
+        dripHelperPort = parseInt(match[1], 10);
+        resolve();
+      }
+    });
+
+    dripHelperServer.on("exit", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(
+          new Error(
+            `Drip helper server exited with code ${code}.\n` +
+              Buffer.concat(stderrChunks).toString("utf8").slice(-1000),
+          ),
+        );
+      }
+    });
+  });
+}
+
+function stopDripHelperServer(): Promise<void> {
+  return new Promise((resolve) => {
+    if (!dripHelperServer || dripHelperServer.exitCode !== null) {
+      resolve();
+      return;
+    }
+    dripHelperServer.once("exit", () => resolve());
+    dripHelperServer.kill("SIGTERM");
+    setTimeout(() => {
+      try { dripHelperServer.kill("SIGKILL"); } catch { /* already dead */ }
+    }, 3_000).unref();
+  });
+}
 
 // ── Suite lifecycle ───────────────────────────────────────────────────────────
 
 beforeAll(async () => {
-  // Start both servers concurrently and record wall-clock startup time so
-  // CI logs surface regressions in next-dev startup latency.
   devPort = await findFreePort();
   const helperPortRequest = await findFreePort();
-
+  const dripHelperPortRequest = await findFreePort();
   const startupStart = Date.now();
   await Promise.all([
     startDevServer(devPort, 90_000).then(() => warmupRoute(devPort, 60_000)),
     startHelperServer(helperPortRequest, 20_000),
+    startDripHelperServer(dripHelperPortRequest, 20_000),
   ]);
-
-  // beforeAll budget: 180 s.  Log startup cost so cold-runner regressions are
-  // visible in the CI log before they cause a beforeAll timeout.
   checkTimingBudget(Date.now() - startupStart, 180_000, "beforeAll startup + warmup");
 }, 180_000);
 
 afterAll(async () => {
-  await Promise.all([stopDevServer(), stopHelperServer()]);
+  await Promise.all([
+    stopDevServer(),
+    stopHelperServer(),
+    stopDripHelperServer(),
+  ]);
 }, 15_000);
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -510,25 +702,12 @@ const RESPONSE_WINDOW_MS = UPLOAD_READ_TIMEOUT_MS * 5 + 2_000;
 describe(
   "upload stall timeout — real spawned servers",
   () => {
+    // ── Scenario 1: unauthenticated auth gate via next dev ───────────────────
     it(
       "unauthenticated upload (next dev): auth gate fires quickly and returns 401",
       async () => {
-        /**
-         * Send a complete, non-stalling POST with no session cookie to the real
-         * `next dev` server.  The auth check fires before attempting to read the
-         * request body; the response must arrive well before the stall deadline.
-         *
-         * Note: Next.js 15 buffers the request body before dispatching the App
-         * Router route handler.  A complete 1-byte body is the transport that
-         * reliably causes dispatch.  The auth check fires before body reading
-         * regardless — confirmed by elapsed < UPLOAD_READ_TIMEOUT_MS.
-         */
         const controller = new AbortController();
-        const timer = setTimeout(
-          () => controller.abort(),
-          RESPONSE_WINDOW_MS,
-        );
-
+        const timer = setTimeout(() => controller.abort(), RESPONSE_WINDOW_MS);
         const start = Date.now();
         let statusCode: number;
         try {
@@ -536,10 +715,7 @@ describe(
             `http://127.0.0.1:${devPort}/api/storage/upload`,
             {
               method: "POST",
-              headers: {
-                "Content-Type": "image/jpeg",
-                "Content-Length": "1",
-              },
+              headers: { "Content-Type": "image/jpeg", "Content-Length": "1" },
               body: new Uint8Array([0x42]),
               // @ts-expect-error — duplex needed for body in some Node versions
               duplex: "half",
@@ -552,99 +728,45 @@ describe(
           clearTimeout(timer);
         }
         const elapsed = Date.now() - start;
-
-        expect(statusCode!).toBe(401);
-        // Auth gate must fire well before the read deadline — confirming the
-        // server does not block on the body before checking auth.
-        expect(elapsed).toBeLessThan(UPLOAD_READ_TIMEOUT_MS);
-
-        // Log elapsed time so cold-runner regressions are visible in CI
-        // before they cause an outright assertion failure.
-        checkTimingBudget(elapsed, UPLOAD_READ_TIMEOUT_MS, "auth gate (next dev)");
-      },
-      RESPONSE_WINDOW_MS + 3_000,
-    );
-
-    it(
-      "authenticated stalling upload (helper server): route reads partial body, times out, returns 408",
-      async () => {
-        /**
-         * Send a stalling POST to the helper server (plain Node.js createServer,
-         * not Next.js).  The helper server streams the body directly from TCP —
-         * no pre-buffering — so when the client sends 4 bytes and then goes
-         * silent, the read loop genuinely blocks in reader.read().  After
-         * UPLOAD_READ_TIMEOUT_MS the per-chunk timer fires and the server returns
-         * HTTP 408.
-         *
-         * The helper server uses the same iron-session auth check and the same
-         * per-chunk timeout constant as the real upload route, so this scenario
-         * verifies that the stall-detection logic works on a live TCP connection
-         * with a real authenticated request.
-         *
-         * http.request's response callback fires on response HEADERS arrival —
-         * independent of the stalling request body — so the Promise resolves as
-         * soon as 408 is sent, without needing req.end() or the connection to
-         * close.
-         */
-        const cookie = await makeSessionCookie();
-
-        const start = Date.now();
-        const { statusCode, body } = await sendStallingUploadToHelper({
-          cookie,
-          responseTimeoutMs: RESPONSE_WINDOW_MS,
-        });
-        const elapsed = Date.now() - start;
-
         expect(statusCode).toBe(408);
         expect(body).toMatch(/timed out|stalled/i);
         expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS);
         expect(elapsed).toBeLessThan(RESPONSE_WINDOW_MS);
-
-        // Log elapsed time so cold-runner regressions are visible in CI
-        // before they cause an outright assertion failure.
         checkTimingBudget(elapsed, RESPONSE_WINDOW_MS, "stall → 408 (helper server)");
       },
       RESPONSE_WINDOW_MS + 3_000,
     );
 
+    // ── Scenario 3: authenticated multipart stall via helper server ──────────
     it(
       "authenticated stalling multipart upload (helper server): multipart path also times out and returns 408",
       async () => {
-        /**
-         * Scenario 3 — multipart/form-data stall via helper server.
-         *
-         * The upload route has two body-reading paths: one for raw image/* bodies
-         * and one for multipart/form-data bodies.  Both call readStreamWithDeadlines
-         * before any parsing, so a client that stalls mid-body on the multipart
-         * path must also receive HTTP 408 after UPLOAD_READ_TIMEOUT_MS.
-         *
-         * WHY THE HELPER SERVER (not next dev)
-         * ─────────────────────────────────────
-         * Next.js 15 fully buffers the request body before invoking the App Router
-         * route handler — regardless of Content-Type.  A multipart request that
-         * stalls mid-body causes Next.js to wait at the transport layer, never
-         * reaching the route.  The helper server (plain Node.js createServer) does
-         * NOT buffer: body data is delivered to the route handler chunk-by-chunk as
-         * TCP delivers it.  This is the only reliable way to present a stalling
-         * body to readStreamWithDeadlines on a real TCP connection.
-         *
-         * WHAT IS SENT
-         * ─────────────
-         * A multipart/form-data request with a valid boundary is opened.  We write
-         * only the opening boundary line and part headers, then go silent without
-         * sending the file data or the closing boundary.  The helper server's read
-         * loop blocks in reader.read() waiting for the next chunk; after
-         * UPLOAD_READ_TIMEOUT_MS the per-chunk timer fires and returns 408.
-         *
-         * The response arrives via the http.request response-headers callback —
-         * independently of the stalling request body — so the Promise resolves
-         * as soon as the server sends 408.
-         */
         const cookie = await makeSessionCookie();
-        const boundary = "----SlowTestBoundaryXYZ";
-        // Partial multipart body: opening boundary + part headers, no file data.
-        // The client goes silent here — the server never sees the file bytes or
-        // the closing boundary, causing the read loop to block.
+        const start = Date.now();
+        const { statusCode, body } = await sendSlowDripUploadToHelper({
+          cookie,
+          contentType: `multipart/form-data; boundary=${boundary}`,
+          initialBytes: preamble,
+          dripIntervalMs,
+          responseTimeoutMs: DRIP_RESPONSE_WINDOW_MS,
+          targetPort: dripHelperPort,
+        });
+        const elapsed = Date.now() - start;
+        expect(statusCode).toBe(408);
+        expect(body).toMatch(/timed out|stalled/i);
+        expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS);
+        expect(elapsed).toBeLessThan(RESPONSE_WINDOW_MS);
+        checkTimingBudget(elapsed, RESPONSE_WINDOW_MS, "stall → 408 (helper server)");
+      },
+      RESPONSE_WINDOW_MS + 3_000,
+    );
+
+    // ── Scenario 3: authenticated multipart stall via helper server ──────────
+    it(
+      "authenticated stalling multipart upload (helper server): multipart path also times out and returns 408",
+      async () => {
+        const cookie = await makeSessionCookie();
+        const boundary = "----SlowDripTestBoundaryABC";
         const partialBody = Buffer.from(
           `--${boundary}\r\n` +
           `Content-Disposition: form-data; name="file"; filename="test.jpg"\r\n` +
@@ -652,22 +774,73 @@ describe(
           `\r\n`,
           "utf8",
         );
-
         const start = Date.now();
-        const { statusCode, body } = await sendStallingUploadToHelper({
+        const { statusCode, body } = await sendSlowDripUploadToHelper({
           cookie,
-          responseTimeoutMs: RESPONSE_WINDOW_MS,
           contentType: `multipart/form-data; boundary=${boundary}`,
-          initialBytes: partialBody,
+          initialBytes: preamble,
+          dripIntervalMs,
+          responseTimeoutMs: DRIP_RESPONSE_WINDOW_MS,
+          targetPort: dripHelperPort,
         });
         const elapsed = Date.now() - start;
-
         expect(statusCode).toBe(408);
         expect(body).toMatch(/timed out|stalled/i);
         expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS);
         expect(elapsed).toBeLessThan(RESPONSE_WINDOW_MS);
+        checkTimingBudget(elapsed, RESPONSE_WINDOW_MS, "multipart stall → 408 (helper server)");
       },
       RESPONSE_WINDOW_MS + 3_000,
+    );
+
+    // ── Scenario 4: authenticated slow-drip multipart → total-deadline ───────
+    it(
+      "authenticated slow-drip multipart upload (drip helper server): total-deadline fires and returns 408",
+      async () => {
+        /**
+         * This scenario tests the total wall-clock deadline: the client sends one
+         * tiny byte every ~60 % of UPLOAD_READ_TIMEOUT_MS — fast enough that each
+         * individual reader.read() resolves before the per-chunk timer fires, so
+         * the per-chunk guard never triggers.  The total-deadline timer fires after
+         * UPLOAD_TOTAL_TIMEOUT_MS (= UPLOAD_READ_TIMEOUT_MS × 2) and the drip
+         * helper server returns HTTP 408.
+         *
+         * A regression that removes the total-deadline branch from
+         * readStreamWithDeadlines would cause this test to hang until
+         * responseTimeoutMs fires (4 × UPLOAD_READ_TIMEOUT_MS), then fail with a
+         * timeout error rather than a 408.
+         */
+        const DRIP_RESPONSE_WINDOW_MS = UPLOAD_READ_TIMEOUT_MS * 4;
+
+        const cookie = await makeSessionCookie();
+        const boundary = "----SlowDripTestBoundaryABC";
+        const preamble = Buffer.from(
+          `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="file"; filename="drip.jpg"\r\n` +
+          `Content-Type: image/jpeg\r\n` +
+          `\r\n`,
+          "utf8",
+        );
+        const dripIntervalMs = Math.floor(UPLOAD_READ_TIMEOUT_MS * 0.6);
+
+        const start = Date.now();
+        const { statusCode, body } = await sendSlowDripUploadToHelper({
+          cookie,
+          contentType: `multipart/form-data; boundary=${boundary}`,
+          initialBytes: preamble,
+          dripIntervalMs,
+          responseTimeoutMs: DRIP_RESPONSE_WINDOW_MS,
+          targetPort: dripHelperPort,
+        });
+        const elapsed = Date.now() - start;
+
+        expect(statusCode).toBe(408);
+        expect(body).toMatch(/timed out|took too long/i);
+        expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_TOTAL_TIMEOUT_MS);
+        expect(elapsed).toBeLessThan(DRIP_RESPONSE_WINDOW_MS);
+        checkTimingBudget(elapsed, DRIP_RESPONSE_WINDOW_MS, "slow-drip multipart → 408 (drip helper server)");
+      },
+      UPLOAD_READ_TIMEOUT_MS * 4 + 3_000,
     );
   },
 );
