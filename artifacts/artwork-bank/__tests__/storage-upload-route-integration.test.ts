@@ -488,6 +488,53 @@ describeIntegration(
       expect(mockPutObject).toHaveBeenCalledTimes(1);
     }, 5_000 /* must complete within 5 s */);
 
+    it("drip stream: thousands of tiny async-delayed chunks whose cumulative total exceeds 25 MiB → 413, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      // Simulate an adversarial or network-dripped upload where each chunk
+      // arrives after a micro-task delay (setImmediate / Promise.resolve), as
+      // would happen with HTTP/2 multiplexed DATA frames or a slow sender that
+      // yields control between frames.
+      //
+      // Each chunk is 1 KiB — individually negligible.  We send 25,601 chunks:
+      //   25,600 × 1 KiB = 25 MiB exactly (the accepted boundary)
+      //   25,601 × 1 KiB = 25 MiB + 1 KiB (one chunk over — must be rejected)
+      //
+      // The async gap between chunks means the route's byte-counter must keep
+      // its running total across await boundaries without resetting it.  This
+      // mirrors a real out-of-order or interleaved delivery pattern.
+      const CHUNK_SIZE = 1024; // 1 KiB
+      const MAX_SIZE_BYTES = 25 * 1024 * 1024;
+      const CHUNKS_TO_LIMIT = MAX_SIZE_BYTES / CHUNK_SIZE; // 25,600 — exactly at the limit (accepted)
+      const CHUNK_COUNT = CHUNKS_TO_LIMIT + 1; // 25,601 — one extra chunk pushes total to MAX + 1 KiB
+      const chunk = new Uint8Array(CHUNK_SIZE);
+      let sent = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent >= CHUNK_COUNT) {
+            controller.close();
+            return;
+          }
+          // Yield to the event loop between each chunk, simulating async drip
+          // delivery and ensuring the route handles interleaved await points.
+          return new Promise<void>((resolve) => {
+            setImmediate(() => {
+              if (sent < CHUNK_COUNT) {
+                controller.enqueue(chunk);
+                sent++;
+              }
+              resolve();
+            });
+          });
+        },
+      });
+      const req = makeRequest({ contentType: "image/jpeg", body });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(413);
+      expect(mockPutObject).not.toHaveBeenCalled();
+    }, 30_000 /* async delays: allow generous wall-clock budget */);
+
     it("zero-byte body (ReadableStream that closes immediately) → 400, putObject not called", async () => {
       mockSession.value = { userId: `user-${uid()}` };
       // A non-null ReadableStream that closes without yielding any data.
