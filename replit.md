@@ -12,6 +12,7 @@ _Replace the heading above with the project's name, and this line with one sente
 - Required env: `DATABASE_URL` — Postgres connection string
 - Optional env: `PLATFORM_ADMIN_EMAILS` — comma-separated allowlist of platform-owner emails; grants access to `/platform` (tenant billing comp page) in Artwork Bank. Unset = nobody has access (fails closed)
 - Optional env: `SLACK_BILLING_ALERTS_CHANNEL` — channel name (e.g. `#billing-alerts`) or Slack channel ID (e.g. `C0123456789`) for billing-alert Slack messages; unset = Slack alerts silently disabled. Requires the Slack OAuth connector wired via Replit Integrations.
+- Optional env: `UPLOAD_READ_TIMEOUT_MS` — per-chunk stall deadline for `POST /api/storage/upload`, in milliseconds (default `30000` = 30 s). If a single stream read does not complete within this window the upload is aborted with HTTP 408. Tighten to defend against slow-loris clients; relax for high-latency hosts. Integration tests set this to `2000`.
 - See `artifacts/artwork-bank/.env.example` for the full list of env vars with descriptions
 
 ## Stack
