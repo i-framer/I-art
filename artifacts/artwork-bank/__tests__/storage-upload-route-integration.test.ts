@@ -920,6 +920,39 @@ describeIntegration(
       expect(cancelCalled).toBe(true);
     }, 6_000 /* 2 s timeout + generous headroom; hangs caught immediately */);
 
+    it("multipart/form-data with sub-25-MiB image → 200, putObject called with file bytes", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      mockPutObject.mockResolvedValue(undefined);
+
+      // Build a well-formed multipart/form-data body using the platform FormData
+      // and File APIs so the boundary encoding is handled correctly.  The file
+      // field must be named "file" and contain an image/* blob.
+      const fileBytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]); // JPEG magic header
+      const file = new File([fileBytes], "photo.jpg", { type: "image/jpeg" });
+      const formData = new FormData();
+      formData.append("file", file);
+
+      // new Request() with a FormData body sets Content-Type automatically
+      // to "multipart/form-data; boundary=…".
+      const req = new Request("https://example.com/api/storage/upload", {
+        method: "POST",
+        body: formData,
+      }) as any;
+
+      const res = await uploadPOST(req);
+      const resBody = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(resBody.objectPath).toMatch(/^\/objects\/uploads\//);
+      expect(mockPutObject).toHaveBeenCalledTimes(1);
+
+      // putObject must have received the exact bytes from the file field —
+      // not just a blob of the right length, but the same byte sequence.
+      const blobArg: Blob = mockPutObject.mock.calls[0]![1] as Blob;
+      const uploadedBytes = new Uint8Array(await blobArg.arrayBuffer());
+      expect(uploadedBytes).toEqual(fileBytes);
+    });
+
     it("concurrent uploads: near-limit → 200 and over-limit → 413 independently", async () => {
       // This test confirms that the per-request byte counter (totalBytes) is
       // local to each invocation and does not bleed between concurrent calls.
