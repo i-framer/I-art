@@ -7,7 +7,7 @@
  *   1. POST /api/storage/upload  — authenticated, small image body
  *                                → 200 with { objectPath }
  *   2. GET  /api/storage/serve?path=<objectPath>
- *                                → redirect (302/307) to a signed URL,
+ *                                → 200 with Content-Type header and body bytes,
  *                                  confirming the object is reachable
  *   3. deleteObject(<objectPath>) — removes the object from the store
  *   4. GET  /api/storage/serve?path=<objectPath>
@@ -28,7 +28,8 @@ import { BlobNotFoundError } from "@vercel/blob";
 /** Objects are keyed by entityId ("uploads/<uuid>"). */
 const fakeStore = new Map<string, { contentType: string }>();
 
-const FAKE_BASE_URL = "https://fake-blob.example.com";
+/** Placeholder body returned for every served object (non-empty, type-safe). */
+const FAKE_BODY = "fake-object-bytes";
 
 vi.mock("@/lib/object-storage", () => {
   class StorageNotConfiguredError extends Error {
@@ -40,18 +41,25 @@ vi.mock("@/lib/object-storage", () => {
 
   async function putObject(
     entityId: string,
-    _body: ReadableStream | null,
+    _body: ReadableStream<Uint8Array> | Blob,
     contentType: string,
   ): Promise<void> {
     fakeStore.set(entityId, { contentType });
   }
 
-  async function getServeUrl(objectPath: string, _ttl: number): Promise<string> {
+  async function fetchObject(objectPath: string): Promise<Response> {
     const entityId = objectPath.replace(/^\/objects\//, "");
-    if (!fakeStore.has(entityId)) {
+    const entry = fakeStore.get(entityId);
+    if (!entry) {
       throw new BlobNotFoundError();
     }
-    return `${FAKE_BASE_URL}/${encodeURIComponent(entityId)}?signed=1`;
+    return new Response(FAKE_BODY, {
+      status: 200,
+      headers: {
+        "Content-Type": entry.contentType,
+        "Content-Length": String(FAKE_BODY.length),
+      },
+    });
   }
 
   async function deleteObject(objectPath: string): Promise<void> {
@@ -59,7 +67,7 @@ vi.mock("@/lib/object-storage", () => {
     fakeStore.delete(entityId);
   }
 
-  return { putObject, getServeUrl, deleteObject, StorageNotConfiguredError };
+  return { putObject, fetchObject, deleteObject, StorageNotConfiguredError };
 });
 
 // ── Session mock ──────────────────────────────────────────────────────────────
@@ -146,7 +154,7 @@ describeIntegration(
   "Storage upload → serve → delete — end-to-end flow",
   () => {
     it(
-      "upload returns objectPath, serve redirects to signed URL, " +
+      "upload returns objectPath, serve streams bytes with Content-Type, " +
         "delete makes serve return 404",
       async () => {
         const userId = `user-${uid()}`;
@@ -165,12 +173,15 @@ describeIntegration(
         expect(uploadBody.objectPath).toMatch(/^\/objects\/uploads\//);
         const { objectPath } = uploadBody;
 
-        // ── Step 2: serve route redirects to a signed URL ────────────────────
+        // ── Step 2: serve route streams the bytes (200, not a redirect) ──────
         const serveRes = await serveGET(makeServeRequest(objectPath));
-        // NextResponse.redirect yields 302 or 307 in Node.
-        expect([301, 302, 307, 308]).toContain(serveRes.status);
-        const location = serveRes.headers.get("location");
-        expect(location).toMatch(/^https:\/\/fake-blob\.example\.com\//);
+        expect(serveRes.status).toBe(200);
+        expect(serveRes.headers.get("Content-Type")).toMatch(/image\/png/);
+        // Must not issue a redirect.
+        expect(serveRes.headers.get("location")).toBeNull();
+        // Body must be non-empty (the 67-byte PNG we uploaded).
+        const bytes = await serveRes.arrayBuffer();
+        expect(bytes.byteLength).toBeGreaterThan(0);
 
         // ── Step 3: delete the object ─────────────────────────────────────────
         await deleteObject(objectPath);

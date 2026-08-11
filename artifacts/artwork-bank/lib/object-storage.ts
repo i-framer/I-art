@@ -228,6 +228,37 @@ export async function putObject(
   }
 }
 
+/**
+ * Fetch the raw bytes of a stored object, returning the upstream Response so
+ * the caller can stream the body directly to the browser.
+ *
+ * For Replit this fetches through the sidecar-signed GET URL.
+ * For Vercel Blob this fetches the public blob URL.
+ *
+ * The returned Response's `body` and `headers` (Content-Type, Content-Length,
+ * etc.) come straight from the storage backend.
+ */
+export async function fetchObject(objectPath: string): Promise<Response> {
+  const entityId = toEntityId(objectPath);
+  const provider = getStorageProvider();
+
+  let url: string;
+  if (provider === "replit") {
+    const { bucketName, objectName } = replitGcsLocation(entityId);
+    url = await signObjectURL(bucketName, objectName, "GET", 60);
+  } else {
+    url = await blobUrlFor(entityId);
+  }
+
+  const upstream = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!upstream.ok) {
+    throw new Error(
+      `Storage backend returned ${upstream.status} for ${objectPath}`,
+    );
+  }
+  return upstream;
+}
+
 /** Delete a stored object. Throws on backend errors (callers may best-effort). */
 export async function deleteObject(objectPath: string): Promise<void> {
   const entityId = toEntityId(objectPath);

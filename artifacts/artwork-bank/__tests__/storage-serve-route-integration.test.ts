@@ -5,14 +5,14 @@
  *   GET /api/storage/serve?path=/objects/...
  *   Auth: session.userId required → 401 if missing.
  *   Path: must start with /objects/ → 400 if invalid.
- *   Success: redirects to signed URL from getServeUrl.
+ *   Success: streams blob bytes with correct Content-Type (200).
  *   Missing object: 404.
  *   Storage misconfigured: 500.
  *
  *  1. No session (unauthenticated) → 401.
  *  2. Valid session + missing ?path query → 400.
  *  3. Valid session + path not starting with /objects/ → 400.
- *  4. Valid session + valid /objects/ path → redirect (302/307) to signed URL.
+ *  4. Valid session + valid /objects/ path → 200 with Content-Type header.
  *  5. Valid session + valid path + object not found → 404.
  *  6. Valid session + valid path + storage misconfigured → 500.
  */
@@ -31,26 +31,31 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 vi.mock("@/lib/object-storage", () => ({
-  getServeUrl: vi.fn(),
+  fetchObject: vi.fn(),
   StorageNotConfiguredError: class StorageNotConfiguredError extends Error {
     constructor(msg = "Storage not configured") { super(msg); this.name = "StorageNotConfiguredError"; }
   },
 }));
 
 import { GET as serveGET } from "@/app/api/storage/serve/route";
-import { getServeUrl } from "@/lib/object-storage";
-const mockGetServeUrl = vi.mocked(getServeUrl);
+import { fetchObject } from "@/lib/object-storage";
+const mockFetchObject = vi.mocked(fetchObject);
 
 function get(path?: string) {
-  const _url = path != null
-    ? `http://localhost/api/storage/serve?path=${encodeURIComponent(path)}`
-    : "http://localhost/api/storage/serve";
   return serveGET({ nextUrl: { searchParams: new URLSearchParams(path != null ? { path } : {}) } } as any);
+}
+
+/** Build a minimal upstream Response as fetchObject would return. */
+function fakeUpstreamResponse(contentType = "image/jpeg", body = "fake-bytes") {
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": contentType, "Content-Length": String(body.length) },
+  });
 }
 
 afterEach(() => {
   mockSession.value = { userId: null };
-  mockGetServeUrl.mockReset();
+  mockFetchObject.mockReset();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -80,20 +85,25 @@ describeIntegration("Storage serve route auth/path guard — real-DB integration
     expect(res.status).toBe(400);
   });
 
-  it("valid session + valid /objects/ path → redirect to signed URL", async () => {
+  it("valid session + valid /objects/ path → 200 with Content-Type", async () => {
     mockSession.value = { userId: `user-${uid()}` };
-    mockGetServeUrl.mockResolvedValue("https://blob.example.com/signed?token=abc");
+    mockFetchObject.mockResolvedValue(fakeUpstreamResponse("image/jpeg"));
 
     const res = await get("/objects/tenant/artwork.jpg");
 
-    // NextResponse.redirect → 302 or 307.
-    expect([301, 302, 307, 308]).toContain(res.status);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toMatch(/image\/jpeg/);
+    // Must not be a redirect.
+    expect(res.headers.get("location")).toBeNull();
+    // Safe image types are served inline; MIME sniffing disabled.
+    expect(res.headers.get("Content-Disposition")).toBe("inline");
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
   });
 
   it("valid session + valid path + BlobNotFoundError → 404", async () => {
     mockSession.value = { userId: `user-${uid()}` };
     const { BlobNotFoundError } = await import("@vercel/blob");
-    mockGetServeUrl.mockRejectedValue(new BlobNotFoundError());
+    mockFetchObject.mockRejectedValue(new BlobNotFoundError());
 
     const res = await get("/objects/tenant/missing.jpg");
 
@@ -103,7 +113,7 @@ describeIntegration("Storage serve route auth/path guard — real-DB integration
   it("valid session + valid path + StorageNotConfiguredError → 500", async () => {
     mockSession.value = { userId: `user-${uid()}` };
     const { StorageNotConfiguredError } = await import("@/lib/object-storage");
-    mockGetServeUrl.mockRejectedValue(new StorageNotConfiguredError("not set up"));
+    mockFetchObject.mockRejectedValue(new StorageNotConfiguredError("not set up"));
 
     const res = await get("/objects/tenant/file.jpg");
 

@@ -1,7 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getServeUrl, StorageNotConfiguredError } from "@/lib/object-storage";
+import { fetchObject, StorageNotConfiguredError } from "@/lib/object-storage";
 import { BlobError, BlobNotFoundError } from "@vercel/blob";
+
+/**
+ * Content types that can execute script when opened as a document in the
+ * browser. These must never be served inline from the app origin.
+ */
+const ACTIVE_CONTENT_TYPES = new Set([
+  "image/svg+xml",
+  "text/html",
+  "text/xml",
+  "application/xml",
+  "application/xhtml+xml",
+  "application/javascript",
+  "text/javascript",
+]);
+
+function isActiveContentType(contentType: string): boolean {
+  // Strip parameters (e.g. "image/svg+xml; charset=utf-8")
+  const base = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  return ACTIVE_CONTENT_TYPES.has(base);
+}
 
 export async function GET(request: NextRequest) {
   const session = await getSession();
@@ -13,8 +33,28 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
   try {
-    const signedUrl = await getServeUrl(objectPath, 3600);
-    return NextResponse.redirect(signedUrl);
+    const upstream = await fetchObject(objectPath);
+    const contentType =
+      upstream.headers.get("Content-Type") ?? "application/octet-stream";
+    const contentLength = upstream.headers.get("Content-Length");
+
+    const headers = new Headers({
+      "Content-Type": contentType,
+      // Prevent browsers from MIME-sniffing away from the declared type.
+      "X-Content-Type-Options": "nosniff",
+      // Active content types (SVG, HTML, …) must never open as a document at
+      // the app origin — force a download so scripts cannot run in our context.
+      "Content-Disposition": isActiveContentType(contentType)
+        ? "attachment"
+        : "inline",
+      // Tell browsers not to cache this authenticated endpoint aggressively.
+      "Cache-Control": "private, max-age=3600",
+    });
+    if (contentLength) {
+      headers.set("Content-Length", contentLength);
+    }
+
+    return new NextResponse(upstream.body, { status: 200, headers });
   } catch (err) {
     // StorageNotConfiguredError: no storage backend env vars set at all.
     // BlobError subclasses other than BlobNotFoundError (e.g.

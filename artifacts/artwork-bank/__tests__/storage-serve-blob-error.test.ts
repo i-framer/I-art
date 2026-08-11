@@ -1,7 +1,7 @@
 /**
  * Unit tests confirming that BlobStoreNotFoundError (and StorageNotConfiguredError)
- * thrown during a serve-URL lookup are surfaced as hard 500 errors rather than
- * being silently swallowed as generic 404s.
+ * thrown during a fetch are surfaced as hard 500 errors rather than being
+ * silently swallowed as generic 404s.
  *
  * BlobNotFoundError means a specific file is absent — that should remain a 404.
  * BlobStoreNotFoundError / StorageNotConfiguredError means the store itself is
@@ -20,7 +20,7 @@ vi.mock("@/lib/auth", () => ({
 // ── object-storage mock ────────────────────────────────────────────────────────
 
 vi.mock("@/lib/object-storage", () => ({
-  getServeUrl: vi.fn(),
+  fetchObject: vi.fn(),
   StorageNotConfiguredError: class StorageNotConfiguredError extends Error {
     constructor(message: string) {
       super(message);
@@ -29,7 +29,7 @@ vi.mock("@/lib/object-storage", () => ({
   },
 }));
 
-import { getServeUrl, StorageNotConfiguredError } from "@/lib/object-storage";
+import { fetchObject, StorageNotConfiguredError } from "@/lib/object-storage";
 import { GET as serveGET } from "@/app/api/storage/serve/route";
 import { NextRequest } from "next/server";
 
@@ -39,13 +39,21 @@ function makeServeRequest(path = "/objects/uploads/abc-123") {
   );
 }
 
+/** Build a minimal upstream Response as fetchObject would return. */
+function fakeUpstreamResponse(contentType = "image/jpeg", body = "fake-bytes") {
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": contentType, "Content-Length": String(body.length) },
+  });
+}
+
 describe("GET /api/storage/serve — BlobError / StorageNotConfiguredError handling", () => {
   beforeEach(() => {
-    vi.mocked(getServeUrl).mockReset();
+    vi.mocked(fetchObject).mockReset();
   });
 
-  it("returns 500 when getServeUrl throws BlobStoreNotFoundError", async () => {
-    vi.mocked(getServeUrl).mockRejectedValueOnce(new BlobStoreNotFoundError());
+  it("returns 500 when fetchObject throws BlobStoreNotFoundError", async () => {
+    vi.mocked(fetchObject).mockRejectedValueOnce(new BlobStoreNotFoundError());
 
     const res = await serveGET(makeServeRequest());
 
@@ -54,8 +62,8 @@ describe("GET /api/storage/serve — BlobError / StorageNotConfiguredError handl
     expect(body.error).toMatch(/misconfigured/i);
   });
 
-  it("returns 500 when getServeUrl throws StorageNotConfiguredError", async () => {
-    vi.mocked(getServeUrl).mockRejectedValueOnce(
+  it("returns 500 when fetchObject throws StorageNotConfiguredError", async () => {
+    vi.mocked(fetchObject).mockRejectedValueOnce(
       new StorageNotConfiguredError("PRIVATE_OBJECT_DIR not set"),
     );
 
@@ -73,7 +81,7 @@ describe("GET /api/storage/serve — BlobError / StorageNotConfiguredError handl
         this.name = "OtherBlobError";
       }
     }
-    vi.mocked(getServeUrl).mockRejectedValueOnce(new OtherBlobError());
+    vi.mocked(fetchObject).mockRejectedValueOnce(new OtherBlobError());
 
     const res = await serveGET(makeServeRequest());
 
@@ -81,7 +89,7 @@ describe("GET /api/storage/serve — BlobError / StorageNotConfiguredError handl
   });
 
   it("returns 404 (not 500) for a BlobNotFoundError", async () => {
-    vi.mocked(getServeUrl).mockRejectedValueOnce(new BlobNotFoundError());
+    vi.mocked(fetchObject).mockRejectedValueOnce(new BlobNotFoundError());
 
     const res = await serveGET(makeServeRequest());
 
@@ -91,31 +99,50 @@ describe("GET /api/storage/serve — BlobError / StorageNotConfiguredError handl
   });
 
   it("returns 404 for a generic non-config error", async () => {
-    vi.mocked(getServeUrl).mockRejectedValueOnce(new Error("blob lookup failed"));
+    vi.mocked(fetchObject).mockRejectedValueOnce(new Error("blob lookup failed"));
 
     const res = await serveGET(makeServeRequest());
 
     expect(res.status).toBe(404);
   });
 
-  it("returns 302 redirect to the signed URL on success", async () => {
-    vi.mocked(getServeUrl).mockResolvedValueOnce(
-      "https://example-store.public.blob.vercel-storage.com/uploads/abc-123",
+  it("returns 200 with Content-Type and body on success (no redirect)", async () => {
+    vi.mocked(fetchObject).mockResolvedValueOnce(
+      fakeUpstreamResponse("image/png", "PNG bytes"),
     );
 
     const res = await serveGET(makeServeRequest());
 
-    expect(res.status).toBe(307);
-    expect(res.headers.get("location")).toBe(
-      "https://example-store.public.blob.vercel-storage.com/uploads/abc-123",
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toMatch(/image\/png/);
+    // Must not redirect.
+    expect(res.headers.get("location")).toBeNull();
+    // Safe image types are served inline.
+    expect(res.headers.get("Content-Disposition")).toBe("inline");
+    // MIME sniffing must be disabled.
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    const text = await res.text();
+    expect(text).toBe("PNG bytes");
+  });
+
+  it("forces Content-Disposition: attachment for image/svg+xml to prevent stored XSS", async () => {
+    vi.mocked(fetchObject).mockResolvedValueOnce(
+      fakeUpstreamResponse("image/svg+xml", "<svg><script>alert(1)</script></svg>"),
     );
+
+    const res = await serveGET(makeServeRequest());
+
+    expect(res.status).toBe(200);
+    // SVG must be forced to download — never opened as an app-origin document.
+    expect(res.headers.get("Content-Disposition")).toBe("attachment");
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
   });
 
   it("returns 400 for an invalid (non-/objects/) path", async () => {
     const res = await serveGET(makeServeRequest("/bad/path"));
 
     expect(res.status).toBe(400);
-    expect(vi.mocked(getServeUrl)).not.toHaveBeenCalled();
+    expect(vi.mocked(fetchObject)).not.toHaveBeenCalled();
   });
 
   it("returns 400 when no path query param is supplied", async () => {
@@ -123,6 +150,6 @@ describe("GET /api/storage/serve — BlobError / StorageNotConfiguredError handl
     const res = await serveGET(req);
 
     expect(res.status).toBe(400);
-    expect(vi.mocked(getServeUrl)).not.toHaveBeenCalled();
+    expect(vi.mocked(fetchObject)).not.toHaveBeenCalled();
   });
 });
