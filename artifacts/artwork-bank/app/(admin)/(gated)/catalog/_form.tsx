@@ -75,31 +75,22 @@ export function ArtworkForm({
     setUploadError("");
     e.target.value = "";
     try {
-      const urlRes = await fetch("/api/storage/upload-url", { method: "POST" });
-      if (!urlRes.ok) throw new Error("Failed to get upload URL");
-      const { provider, uploadURL, objectPath, pathname } =
-        (await urlRes.json()) as {
-          provider: "replit" | "vercel-blob";
-          uploadURL?: string;
-          objectPath: string;
-          pathname?: string;
-        };
-      if (provider === "vercel-blob") {
-        // Direct browser → Blob store upload (token issued by our API route)
-        const { upload } = await import("@vercel/blob/client");
-        await upload(pathname!, file, {
-          access: "public",
-          handleUploadUrl: "/api/storage/blob-upload",
-          contentType: file.type,
-        });
-      } else {
-        const uploadRes = await fetch(uploadURL!, {
-          method: "PUT",
-          body: file,
-          headers: { "Content-Type": file.type },
-        });
-        if (!uploadRes.ok) throw new Error("Upload failed");
+      // Upload via our server-side proxy route. This keeps BLOB_READ_WRITE_TOKEN
+      // server-side and avoids CORS issues that arise when the browser tries to
+      // PUT directly to https://vercel.com/api/blob (the Vercel management API,
+      // which does not emit CORS headers for arbitrary browser origins).
+      const uploadRes = await fetch("/api/storage/upload", {
+        method: "POST",
+        body: file,
+        headers: { "Content-Type": file.type },
+      });
+      if (!uploadRes.ok) {
+        const body = await uploadRes.json().catch(() => ({}));
+        throw new Error(
+          (body as { error?: string }).error ?? "Upload failed",
+        );
       }
+      const { objectPath } = (await uploadRes.json()) as { objectPath: string };
       const updated = await addArtworkImage(artwork.id, objectPath, file.name);
       setImages(updated);
     } catch {

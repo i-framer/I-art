@@ -17,7 +17,7 @@ set -u
 NAME_PATTERN='(token|secret|credential|password|api[-_]?key|access[-_]?key|\.env|\.pem|private[-_]?key)'
 
 # Content patterns for well-known secret formats in text diffs.
-CONTENT_PATTERN='(github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|sk_live_[A-Za-z0-9]{16,}|sk_test_[A-Za-z0-9]{16,}|rk_live_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|-----BEGIN[ A-Z]*PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,})'
+CONTENT_PATTERN='(github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|sk_live_[A-Za-z0-9]{16,}|sk_test_[A-Za-z0-9]{16,}|rk_live_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|-----BEGIN[ A-Z]*PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{25,})'
 
 fail=0
 

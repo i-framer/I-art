@@ -16,7 +16,7 @@
  * "/objects/uploads/<uuid>" so records stay portable between backends.
  */
 
-import { del as blobDel, list as blobList } from "@vercel/blob";
+import { del as blobDel, list as blobList, put as blobPut } from "@vercel/blob";
 
 export type StorageProvider = "replit" | "vercel-blob";
 
@@ -175,6 +175,57 @@ export async function getServeUrl(
   }
 
   return blobUrlFor(entityId);
+}
+
+/**
+ * Upload an object body directly to the storage backend.
+ *
+ * For Vercel Blob this uses the server-side put() API (server-to-server, no
+ * CORS). For Replit it proxies the PUT through the sidecar-signed URL.
+ *
+ * Warms the in-process URL cache so the first getServeUrl() call after an
+ * upload is instant (no blobList() round-trip required).
+ */
+export async function putObject(
+  entityId: string,
+  body: ReadableStream<Uint8Array> | Blob,
+  contentType: string,
+): Promise<void> {
+  const provider = getStorageProvider();
+
+  if (provider === "vercel-blob") {
+    const result = await blobPut(entityId, body, {
+      access: "public",
+      contentType,
+      addRandomSuffix: false,
+    });
+    // Warm the serve-URL cache so the first render after upload is instant.
+    blobUrlCache.set(entityId, result.url);
+    if (!blobBaseUrl) {
+      blobBaseUrl = result.url.slice(
+        0,
+        result.url.length - entityId.length - 1,
+      );
+    }
+    return;
+  }
+
+  // Replit: proxy through the sidecar-signed PUT URL.
+  const { bucketName, objectName } = replitGcsLocation(entityId);
+  const putUrl = await signObjectURL(bucketName, objectName, "PUT", 900);
+  const res = await fetch(putUrl, {
+    method: "PUT",
+    body,
+    headers: { "Content-Type": contentType },
+    // Node.js requires duplex:"half" when the request body is a stream.
+    // @ts-expect-error -- non-standard but required at runtime
+    duplex: "half",
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to upload object (${res.status}): ${text}`);
+  }
 }
 
 /** Delete a stored object. Throws on backend errors (callers may best-effort). */

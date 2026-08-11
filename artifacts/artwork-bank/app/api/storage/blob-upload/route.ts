@@ -54,12 +54,11 @@ export async function POST(request: NextRequest) {
           maximumSizeInBytes: 25 * 1024 * 1024, // 25 MB
         };
       },
-      onUploadCompleted: async () => {
-        // The DB record is created by the client via addArtworkImage after
-        // the upload succeeds — nothing to do here.  The handler is defined
-        // so handleUpload embeds a callbackUrl in the token; Vercel calls back
-        // and handleUpload verifies the x-vercel-signature before invoking it.
-      },
+      // onUploadCompleted is intentionally omitted. The DB record is created
+      // by the client via addArtworkImage after the upload resolves. Providing
+      // an empty callback causes handleUpload to embed a callbackUrl in the
+      // client token, which can trigger Vercel's CORS-less 400 path; omitting
+      // it keeps the token minimal.
     });
     return NextResponse.json(jsonResponse);
   } catch (err) {

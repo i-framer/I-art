@@ -1,0 +1,41 @@
+Investigate and fix the production image-upload failure on www.i-art.com.au.
+
+Current browser errors:
+
+- PUT https://vercel.com/api/blob/?pathname=uploads/... returns 400
+- Browser reports CORS: No Access-Control-Allow-Origin header
+- Existing /api/storage/serve?path=/objects/uploads/... requests return 404
+- /favicon.ico also returns 404
+
+Important:
+Vercel Blob is already connected to the production project and BLOB_READ_WRITE_TOKEN is configured. Do not treat Blob setup as the blocker.
+
+The main suspected issue is that the frontend is incorrectly constructing or using https://vercel.com/api/blob as the upload endpoint.
+
+Please:
+
+1. Trace the complete image upload flow from the frontend through the storage abstraction.
+2. Find exactly where `https://vercel.com/api/blob` is being generated.
+3. Verify the implementation against the current @vercel/blob API.
+4. Use the correct Vercel Blob client/server upload flow:
+   - frontend upload via @vercel/blob/client if appropriate
+   - server-side token generation/handleUpload endpoint
+   - keep BLOB_READ_WRITE_TOKEN server-side only
+5. Do not solve this by simply adding permissive CORS headers to our application. The browser is contacting the wrong Vercel endpoint, so fix the underlying upload URL/SDK integration.
+6. Confirm uploaded files return and persist the actual Blob URL/path.
+7. Verify artwork records save the correct Blob URL or storage identifier.
+8. Investigate the existing `/api/storage/serve?path=/objects/uploads/...` 404 records. Determine whether these are legacy Replit/local-object paths that no longer exist after migration to Vercel Blob.
+9. If legacy database records require migration, preserve them safely and provide a migration/fallback strategy rather than breaking existing artwork.
+10. Add/fix favicon.ico separately; this is low priority and must not distract from the Blob failure.
+
+After fixing:
+- run unit/integration tests
+- deploy to production
+- test a real image upload from www.i-art.com.au
+- reload the page and verify the image renders
+- delete the image and confirm it is removed correctly
+- check browser console for CORS/400/404 storage errors
+- verify /api/storage/health remains ok
+- update LIVE_SERVER_TEST_CHECKLIST.md for 5.1 and 5.2 only after real production verification
+
+Do not mark the task complete based only on automated tests. Production upload, display, reload, and delete must all work.
