@@ -186,6 +186,21 @@ describeIntegration(
       expect(body.error).toMatch(/upload failed/i);
     });
 
+    it("Content-Length > 25 MB → 413, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      const OVER_LIMIT = 25 * 1024 * 1024 + 1; // one byte over 25 MB
+      const req = makeRequest({
+        contentType: "image/jpeg",
+        body: new ReadableStream(),
+        contentLength: OVER_LIMIT,
+      });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(413);
+      expect(mockPutObject).not.toHaveBeenCalled();
+    });
+
     it("valid session → putObject IS called with correct entityId format and content-type", async () => {
       mockSession.value = { userId: `user-${uid()}` };
       mockPutObject.mockResolvedValue(undefined);
