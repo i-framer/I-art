@@ -66,16 +66,31 @@ export async function POST(request: NextRequest) {
 
   // Enforce the limit on the actual byte stream regardless of whether the
   // client supplied a Content-Length header (chunked / streaming uploads skip
-  // it).  We buffer the whole body so we can count bytes before forwarding to
-  // the storage backend.
-  let bodyBuffer: ArrayBuffer;
+  // it).  We count bytes incrementally so we can abort as soon as the limit is
+  // exceeded, avoiding buffering the entire oversized body into RAM.
+  const chunks: BlobPart[] = [];
+  let totalBytes = 0;
+  let oversized = false;
+
   try {
-    bodyBuffer = await request.arrayBuffer();
+    const reader = request.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_SIZE_BYTES) {
+        oversized = true;
+        // Cancel the stream to signal the sender to stop sending.
+        await reader.cancel();
+        break;
+      }
+      chunks.push(value);
+    }
   } catch {
     return NextResponse.json({ error: "Failed to read request body" }, { status: 400 });
   }
 
-  if (bodyBuffer.byteLength > MAX_SIZE_BYTES) {
+  if (oversized) {
     return NextResponse.json(
       { error: `File exceeds the maximum allowed size of ${MAX_SIZE_BYTES / (1024 * 1024)} MB` },
       { status: 413 },
@@ -87,7 +102,7 @@ export async function POST(request: NextRequest) {
   const objectPath = `/objects/${entityId}`;
 
   try {
-    await putObject(entityId, new Blob([bodyBuffer], { type: contentType }), contentType);
+    await putObject(entityId, new Blob(chunks, { type: contentType }), contentType);
     return NextResponse.json({ objectPath });
   } catch (err) {
     if (
