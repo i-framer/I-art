@@ -39,6 +39,11 @@ import {
   StorageNotConfiguredError,
 } from "@/lib/object-storage";
 import { BlobError, BlobNotFoundError } from "@vercel/blob";
+import {
+  getReadTimeoutMs,
+  getTotalTimeoutMs,
+  readStreamWithDeadlines,
+} from "@/lib/upload-read-stream";
 
 export const dynamic = "force-dynamic";
 
@@ -75,43 +80,8 @@ function handleStorageError(err: unknown) {
   return NextResponse.json({ error: "Upload failed" }, { status: 500 });
 }
 
-/**
- * Per-chunk read deadline in milliseconds.  If a single reader.read() call
- * does not resolve within this window the upload is aborted with 408.
- *
- * Configurable via UPLOAD_READ_TIMEOUT_MS so integration tests can inject a
- * short deadline without altering production behaviour.  Defaults to 30 s.
- */
-function getReadTimeoutMs(): number {
-  return Number(process.env.UPLOAD_READ_TIMEOUT_MS ?? "30000");
-}
-
-/**
- * Total wall-clock deadline for the entire body-reading loop, in milliseconds.
- *
- * A slow-drip attacker can evade the per-chunk deadline by sending one tiny
- * chunk just before each per-read timeout fires, keeping the connection alive
- * indefinitely while never triggering the byte-limit guard.  This deadline
- * caps the total time spent in the reading loop regardless of chunk cadence.
- *
- * The deadline is enforced by including it in every Promise.race() call so
- * that a read which began just before the deadline is interrupted the moment
- * the timer fires — not after the per-chunk timeout fires independently.
- *
- * Configurable via UPLOAD_TOTAL_TIMEOUT_MS so integration tests can inject a
- * short deadline without altering production behaviour.  Defaults to 2 min.
- */
-function getTotalTimeoutMs(): number {
-  return Number(process.env.UPLOAD_TOTAL_TIMEOUT_MS ?? "120000");
-}
-
-type ReadResult = {
-  chunks: BlobPart[];
-  totalBytes: number;
-  oversized: boolean;
-  timedOut: boolean;
-  timeoutKind: "read" | "total" | null;
-};
+// getReadTimeoutMs, getTotalTimeoutMs, ReadResult, and readStreamWithDeadlines
+// are all imported from @/lib/upload-read-stream above.
 export async function POST(request: NextRequest) {
   const session = await getSession();
   if (!session.userId) {
@@ -149,7 +119,7 @@ export async function POST(request: NextRequest) {
     // Reading through readStreamWithDeadlines enforces both limits before the
     // multipart parser ever sees the bytes.
     const reader = request.body.getReader();
-    const { chunks, oversized, timedOut, timeoutKind } =
+    const { chunks, oversized, timedOut, timeoutKind, readError } =
       await readStreamWithDeadlines(
         reader,
         MAX_MULTIPART_TOTAL_BYTES,
@@ -158,6 +128,12 @@ export async function POST(request: NextRequest) {
       );
 
     if (timedOut) return timeoutResponse(timeoutKind);
+    if (readError) {
+      return NextResponse.json(
+        { error: "Failed to read request body" },
+        { status: 400 },
+      );
+    }
 
     if (oversized) {
       // Total request body exceeded MAX_MULTIPART_TOTAL_BYTES — definitely over
@@ -239,7 +215,7 @@ export async function POST(request: NextRequest) {
   //     deadline is caught by the total-wall-clock guard
   //   - a client that lies about Content-Length is caught by the byte counter
   const reader = request.body.getReader();
-  const { chunks, totalBytes, oversized, timedOut, timeoutKind } =
+  const { chunks, totalBytes, oversized, timedOut, timeoutKind, readError } =
     await readStreamWithDeadlines(
       reader,
       MAX_SIZE_BYTES,
@@ -248,6 +224,12 @@ export async function POST(request: NextRequest) {
     );
 
   if (timedOut) return timeoutResponse(timeoutKind);
+  if (readError) {
+    return NextResponse.json(
+      { error: "Failed to read request body" },
+      { status: 400 },
+    );
+  }
   if (oversized) return storageSizeError();
 
   if (totalBytes === 0) {
@@ -266,114 +248,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * Read all chunks from `reader` with two concurrently enforced deadlines:
- *
- *   Per-chunk deadline (readTimeoutMs):
- *     Each individual reader.read() must resolve within this window.  A client
- *     that sends data and then stalls indefinitely is caught here.
- *
- *   Total wall-clock deadline (totalTimeoutMs):
- *     The entire reading loop must complete within this window.  A slow-drip
- *     client that sends one tiny burst just under the per-chunk deadline and
- *     then repeats — never stalling long enough on any single read to trigger
- *     the per-chunk guard — is caught here.
- *
- * Both deadlines are wired into every Promise.race() so that a read that is
- * already in-flight is interrupted the instant either timer fires, rather than
- * waiting for the current read to resolve first.
- *
- * Also enforces a running byte limit: cancels the reader and sets oversized if
- * the accumulated byte count exceeds `limitBytes`.
- */
-async function readStreamWithDeadlines(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  limitBytes: number,
-  readTimeoutMs: number,
-  totalTimeoutMs: number,
-): Promise<ReadResult> {
-  const chunks: BlobPart[] = [];
-  let totalBytes = 0;
-  let oversized = false;
-  let timedOut = false;
-  let timeoutKind: "read" | "total" | null = null;
-
-  // Build the total-deadline promise once outside the loop.  It persists
-  // across all iterations, so it fires at the absolute wall-clock limit
-  // regardless of how many reads have completed — unlike a per-iteration
-  // Date.now() check, which can only detect an overrun *after* the current
-  // read returns.
-  //
-  // Adding .catch(() => {}) suppresses the unhandled-rejection warning for the
-  // brief moments between loop iterations when no Promise.race is active.  The
-  // rejection is still consumed correctly inside the race when it fires.
-  let totalTimer: ReturnType<typeof setTimeout> | undefined;
-  const totalTimeoutPromise = new Promise<never>((_, reject) => {
-    totalTimer = setTimeout(() => {
-      const err = new Error("Upload timed out: upload took too long");
-      err.name = "UploadTotalTimeout";
-      reject(err);
-    }, totalTimeoutMs);
-  });
-  totalTimeoutPromise.catch(() => {});
-
-  try {
-    while (true) {
-      // Per-chunk deadline: a fresh timer for each reader.read() call.
-      // Cleared in the inner finally so fast reads leave no lingering handles.
-      let readTimer: ReturnType<typeof setTimeout> | undefined;
-      const readTimeoutPromise = new Promise<never>((_, reject) => {
-        readTimer = setTimeout(() => {
-          const err = new Error(
-            `Upload stalled: no data received within ${readTimeoutMs} ms`,
-          );
-          err.name = "UploadReadTimeout";
-          reject(err);
-        }, readTimeoutMs);
-      });
-
-      let result: ReadableStreamReadResult<Uint8Array>;
-      try {
-        result = await Promise.race([
-          reader.read(),
-          readTimeoutPromise,
-          totalTimeoutPromise,
-        ]);
-      } finally {
-        clearTimeout(readTimer);
-      }
-
-      if (result.done) break;
-      totalBytes += result.value.byteLength;
-      if (totalBytes > limitBytes) {
-        oversized = true;
-        // Cancel the stream to signal the sender to stop sending.
-        reader.cancel().catch(() => {});
-        break;
-      }
-      // Cast required: Uint8Array<ArrayBufferLike> is not assignable to BlobPart
-      // (which requires ArrayBufferView<ArrayBuffer>) in strict TS, but the
-      // runtime behaviour is identical.
-      chunks.push(result.value as unknown as BlobPart);
-    }
-  } catch (err) {
-    // Best-effort cleanup — ignore errors from cancel() itself.
-    reader.cancel().catch(() => {});
-    timedOut = true;
-    if (err instanceof Error && err.name === "UploadTotalTimeout") {
-      timeoutKind = "total";
-    } else if (err instanceof Error && err.name === "UploadReadTimeout") {
-      timeoutKind = "read";
-    }
-  } finally {
-    // Always clear the total-deadline timer.  If the loop completed normally
-    // (no timeout), this prevents the timer from firing after the function
-    // returns and causing a spurious unhandled rejection.
-    clearTimeout(totalTimer);
-  }
-
-  return { chunks, totalBytes, oversized, timedOut, timeoutKind };
-}
+// readStreamWithDeadlines is imported from @/lib/upload-read-stream above.
 
 function timeoutResponse(kind: "read" | "total" | null) {
   const message =

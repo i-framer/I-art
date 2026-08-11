@@ -331,6 +331,50 @@ describe(
     );
 
     it(
+      "stream read error (non-timeout): route returns 400, not 408",
+      async () => {
+        /**
+         * Regression guard for a bug where the catch block in
+         * readStreamWithDeadlines unconditionally set timedOut = true for ALL
+         * thrown errors.  A genuine stream read error (e.g. ECONNRESET, protocol
+         * error) should map to HTTP 400 — the client did not stall, the
+         * connection simply broke.  Returning 408 would be incorrect: the error
+         * name `UploadReadTimeout` would not be present in the caught error.
+         *
+         * Setup:
+         *   - Phase 1: 2 bytes are delivered immediately.
+         *   - Phase 2: the stream controller fires a non-timeout error, simulating
+         *              a mid-stream connection failure.
+         */
+        let phase = 0;
+        const streamError = new Error("Connection reset by peer");
+        // Any name that is NOT "UploadReadTimeout" or "UploadTotalTimeout".
+        streamError.name = "NetworkError";
+
+        const erroringStream = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (phase === 0) {
+              phase++;
+              controller.enqueue(new Uint8Array([0x58, 0x59]));
+              return;
+            }
+            // Phase 2: fire a genuine (non-timeout) stream error.
+            controller.error(streamError);
+          },
+        });
+
+        const request = buildRequest(erroringStream);
+        const response = await POST(request as any);
+
+        // Must be 400 — not 408 (which would indicate the timeout path was
+        // incorrectly taken for a non-timeout error).
+        expect(response.status).toBe(400);
+        expect(mockPutObject).not.toHaveBeenCalled();
+      },
+      3_000,
+    );
+
+    it(
       "stall with no initial buffered data: route returns 408 (baseline consistency)",
       async () => {
         /**
