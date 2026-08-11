@@ -35,7 +35,7 @@ import { BlobError, BlobNotFoundError } from "@vercel/blob";
 export const dynamic = "force-dynamic";
 
 const ALLOWED_CONTENT_TYPE_PREFIX = "image/";
-const MAX_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB guard (informational)
+const MAX_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
 
 export async function POST(request: NextRequest) {
   const session = await getSession();
@@ -55,8 +55,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Request body is empty" }, { status: 400 });
   }
 
+  // Fast-path: reject early if the client declares an oversized Content-Length.
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   if (contentLength > MAX_SIZE_BYTES) {
+    return NextResponse.json(
+      { error: `File exceeds the maximum allowed size of ${MAX_SIZE_BYTES / (1024 * 1024)} MB` },
+      { status: 413 },
+    );
+  }
+
+  // Enforce the limit on the actual byte stream regardless of whether the
+  // client supplied a Content-Length header (chunked / streaming uploads skip
+  // it).  We buffer the whole body so we can count bytes before forwarding to
+  // the storage backend.
+  let bodyBuffer: ArrayBuffer;
+  try {
+    bodyBuffer = await request.arrayBuffer();
+  } catch {
+    return NextResponse.json({ error: "Failed to read request body" }, { status: 400 });
+  }
+
+  if (bodyBuffer.byteLength > MAX_SIZE_BYTES) {
     return NextResponse.json(
       { error: `File exceeds the maximum allowed size of ${MAX_SIZE_BYTES / (1024 * 1024)} MB` },
       { status: 413 },
@@ -68,7 +87,7 @@ export async function POST(request: NextRequest) {
   const objectPath = `/objects/${entityId}`;
 
   try {
-    await putObject(entityId, request.body, contentType);
+    await putObject(entityId, new Blob([bodyBuffer], { type: contentType }), contentType);
     return NextResponse.json({ objectPath });
   } catch (err) {
     if (

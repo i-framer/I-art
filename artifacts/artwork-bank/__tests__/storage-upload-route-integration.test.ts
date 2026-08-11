@@ -41,6 +41,11 @@ import { POST as uploadPOST } from "@/app/api/storage/upload/route";
 import { putObject } from "@/lib/object-storage";
 const mockPutObject = vi.mocked(putObject);
 
+/** A ReadableStream that closes immediately (empty body). */
+function closedStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream({ start(controller) { controller.close(); } });
+}
+
 function makeRequest(opts: {
   contentType?: string;
   body?: ReadableStream | null;
@@ -127,7 +132,7 @@ describeIntegration(
       mockPutObject.mockResolvedValue(undefined);
       const req = makeRequest({
         contentType: "image/jpeg",
-        body: new ReadableStream(),
+        body: closedStream(),
       });
 
       const res = await uploadPOST(req);
@@ -142,10 +147,10 @@ describeIntegration(
       mockPutObject.mockResolvedValue(undefined);
 
       const res1 = await uploadPOST(
-        makeRequest({ contentType: "image/png", body: new ReadableStream() }),
+        makeRequest({ contentType: "image/png", body: closedStream() }),
       );
       const res2 = await uploadPOST(
-        makeRequest({ contentType: "image/png", body: new ReadableStream() }),
+        makeRequest({ contentType: "image/png", body: closedStream() }),
       );
 
       const { objectPath: p1 } = (await res1.json()) as { objectPath: string };
@@ -161,7 +166,7 @@ describeIntegration(
       );
       const req = makeRequest({
         contentType: "image/jpeg",
-        body: new ReadableStream(),
+        body: closedStream(),
       });
 
       const res = await uploadPOST(req);
@@ -176,7 +181,7 @@ describeIntegration(
       mockPutObject.mockRejectedValue(new Error("network timeout"));
       const req = makeRequest({
         contentType: "image/jpeg",
-        body: new ReadableStream(),
+        body: closedStream(),
       });
 
       const res = await uploadPOST(req);
@@ -201,12 +206,32 @@ describeIntegration(
       expect(mockPutObject).not.toHaveBeenCalled();
     });
 
+    it("no Content-Length header but body > 25 MB → 413, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      // Build a ReadableStream that yields one chunk just over the 25 MB limit.
+      // No content-length header is set, simulating a chunked/streaming upload.
+      const OVER_LIMIT = 25 * 1024 * 1024 + 1;
+      const bigChunk = new Uint8Array(OVER_LIMIT);
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bigChunk);
+          controller.close();
+        },
+      });
+      const req = makeRequest({ contentType: "image/jpeg", body });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(413);
+      expect(mockPutObject).not.toHaveBeenCalled();
+    });
+
     it("valid session → putObject IS called with correct entityId format and content-type", async () => {
       mockSession.value = { userId: `user-${uid()}` };
       mockPutObject.mockResolvedValue(undefined);
       const req = makeRequest({
         contentType: "image/webp",
-        body: new ReadableStream(),
+        body: closedStream(),
       });
 
       await uploadPOST(req);
