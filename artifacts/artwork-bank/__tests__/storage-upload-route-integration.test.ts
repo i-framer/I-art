@@ -41,9 +41,19 @@ import { POST as uploadPOST } from "@/app/api/storage/upload/route";
 import { putObject } from "@/lib/object-storage";
 const mockPutObject = vi.mocked(putObject);
 
-/** A ReadableStream that closes immediately (empty body). */
+/** A ReadableStream that closes immediately (zero bytes — empty body). */
 function closedStream(): ReadableStream<Uint8Array> {
   return new ReadableStream({ start(controller) { controller.close(); } });
+}
+
+/** A ReadableStream that yields exactly one byte then closes. */
+function oneByte(): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array([0x42]));
+      controller.close();
+    },
+  });
 }
 
 function makeRequest(opts: {
@@ -132,7 +142,7 @@ describeIntegration(
       mockPutObject.mockResolvedValue(undefined);
       const req = makeRequest({
         contentType: "image/jpeg",
-        body: closedStream(),
+        body: oneByte(),
       });
 
       const res = await uploadPOST(req);
@@ -147,10 +157,10 @@ describeIntegration(
       mockPutObject.mockResolvedValue(undefined);
 
       const res1 = await uploadPOST(
-        makeRequest({ contentType: "image/png", body: closedStream() }),
+        makeRequest({ contentType: "image/png", body: oneByte() }),
       );
       const res2 = await uploadPOST(
-        makeRequest({ contentType: "image/png", body: closedStream() }),
+        makeRequest({ contentType: "image/png", body: oneByte() }),
       );
 
       const { objectPath: p1 } = (await res1.json()) as { objectPath: string };
@@ -166,7 +176,7 @@ describeIntegration(
       );
       const req = makeRequest({
         contentType: "image/jpeg",
-        body: closedStream(),
+        body: oneByte(),
       });
 
       const res = await uploadPOST(req);
@@ -181,7 +191,7 @@ describeIntegration(
       mockPutObject.mockRejectedValue(new Error("network timeout"));
       const req = makeRequest({
         contentType: "image/jpeg",
-        body: closedStream(),
+        body: oneByte(),
       });
 
       const res = await uploadPOST(req);
@@ -337,7 +347,7 @@ describeIntegration(
       mockPutObject.mockResolvedValue(undefined);
       const req = makeRequest({
         contentType: "image/webp",
-        body: closedStream(),
+        body: oneByte(),
       });
 
       await uploadPOST(req);
@@ -452,6 +462,22 @@ describeIntegration(
       expect(res.status).toBe(200);
       expect(mockPutObject).toHaveBeenCalledTimes(1);
     }, 5_000 /* must complete within 5 s */);
+
+    it("zero-byte body (ReadableStream that closes immediately) → 400, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      // A non-null ReadableStream that closes without yielding any data.
+      // The route must reject this with 400, not silently pass an empty Blob
+      // to putObject and create a corrupt DB record.
+      const req = makeRequest({
+        contentType: "image/jpeg",
+        body: closedStream(),
+      });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(400);
+      expect(mockPutObject).not.toHaveBeenCalled();
+    });
 
     it("no Content-Length header + exactly 1-byte body → 200, putObject called with the byte", async () => {
       mockSession.value = { userId: `user-${uid()}` };

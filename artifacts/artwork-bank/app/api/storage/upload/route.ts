@@ -97,6 +97,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  if (totalBytes === 0) {
+    return NextResponse.json({ error: "Request body is empty" }, { status: 400 });
+  }
+
   const uuid = crypto.randomUUID();
   const entityId = `uploads/${uuid}`;
   const objectPath = `/objects/${entityId}`;
