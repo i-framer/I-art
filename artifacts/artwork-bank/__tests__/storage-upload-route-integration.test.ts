@@ -535,6 +535,48 @@ describeIntegration(
       expect(mockPutObject).not.toHaveBeenCalled();
     }, 30_000 /* async delays: allow generous wall-clock budget */);
 
+    it("async-drip stream: exactly 25,600 × 1-KiB chunks (= 25 MiB exactly) via pull-based stream → 200, putObject called once", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      mockPutObject.mockResolvedValue(undefined);
+      // Exactly 25 MiB delivered as 25,600 individual 1-KiB chunks, each
+      // separated by a setImmediate delay — the same async-drip pattern used
+      // by the over-limit counterpart, but stopping at the boundary rather
+      // than one chunk past it.  The route's `> MAX_SIZE_BYTES` guard must
+      // accept this: 25,600 × 1,024 = 26,214,400 bytes = MAX_SIZE_BYTES
+      // exactly, which is NOT greater than the limit.
+      const CHUNK_SIZE = 1024; // 1 KiB
+      const MAX_SIZE_BYTES = 25 * 1024 * 1024;
+      const CHUNK_COUNT = MAX_SIZE_BYTES / CHUNK_SIZE; // 25,600 — exactly at the limit
+      const chunk = new Uint8Array(CHUNK_SIZE);
+      let sent = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent >= CHUNK_COUNT) {
+            controller.close();
+            return;
+          }
+          // Yield to the event loop between each chunk, mirroring HTTP/2
+          // DATA-frame drip delivery and ensuring the byte counter holds its
+          // running total across all await boundaries.
+          return new Promise<void>((resolve) => {
+            setImmediate(() => {
+              if (sent < CHUNK_COUNT) {
+                controller.enqueue(chunk);
+                sent++;
+              }
+              resolve();
+            });
+          });
+        },
+      });
+      const req = makeRequest({ contentType: "image/jpeg", body });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(200);
+      expect(mockPutObject).toHaveBeenCalledTimes(1);
+    }, 30_000 /* async delays: allow generous wall-clock budget */);
+
     it("zero-byte body (ReadableStream that closes immediately) → 400, putObject not called", async () => {
       mockSession.value = { userId: `user-${uid()}` };
       // A non-null ReadableStream that closes without yielding any data.
