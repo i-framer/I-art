@@ -53,9 +53,16 @@ jobs:
         # Fails (exit 1) if startup exceeds NEXTDEV_STARTUP_THRESHOLD_S seconds
         # so that regressions are caught at the CI step level — not silently
         # swallowed by the 180 s beforeAll budget in the slow-test suite.
-        # Adjust the threshold by setting NEXTDEV_STARTUP_THRESHOLD_S here.
+        # Adjust the threshold by setting NEXTDEV_STARTUP_THRESHOLD_S here or
+        # passing startup_threshold_s via workflow_dispatch.
+        #
+        # PROBE_RETAIN_CACHE=1: on success the probe keeps its .next-probe build
+        # directory and writes a sentinel file.  The following slow-test step
+        # detects the sentinel and reuses the warm cache, so next-dev is only
+        # cold-started once per CI job instead of twice (~90 s saved).
         env:
           NEXTDEV_STARTUP_THRESHOLD_S: ${{ inputs.startup_threshold_s || '90' }}
+          PROBE_RETAIN_CACHE: "1"
         run: pnpm --filter @workspace/artwork-bank run probe:nextdev-startup
 
       - name: Run slow test suite

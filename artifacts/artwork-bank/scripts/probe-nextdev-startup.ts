@@ -64,11 +64,27 @@ const THRESHOLD_S = parseInt(
 const THRESHOLD_MS = THRESHOLD_S * 1_000;
 
 /**
+ * When set to "1", the probe skips deleting the build-output directory on a
+ * successful run and writes a sentinel file so the following slow-test suite
+ * can reuse the warm cache instead of cold-starting again.
+ *
+ * Set via the CI workflow step env: PROBE_RETAIN_CACHE=1
+ */
+const RETAIN_CACHE = process.env.PROBE_RETAIN_CACHE === "1";
+
+/**
  * Isolated Next.js build-output directory — distinct from the main workspace
  * .next cache and from the slow-test suite's own .next-slow-test directory so
  * this probe and the test suite can run in sequence without cache collisions.
  */
 const PROBE_BUILD_DIR = ".next-probe";
+
+/**
+ * Sentinel file written next to the build directory when the probe succeeds
+ * and PROBE_RETAIN_CACHE=1.  The slow-test suite reads this file to detect a
+ * warm cache; the file is removed once the suite has consumed it.
+ */
+const PROBE_CACHE_SENTINEL = ".next-probe-cache-ready";
 
 // ── Port helper ───────────────────────────────────────────────────────────────
 
@@ -187,30 +203,50 @@ async function main(): Promise<void> {
   const stderrChunks: Buffer[] = [];
   proc.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
-  // Guaranteed cleanup: kill the process group and remove the build dir.
-  // Called on every exit path including SIGINT/SIGTERM to the probe itself.
+  const sentinelPath = path.join(artworkBankDir, PROBE_CACHE_SENTINEL);
+
+  // Remove any leftover sentinel from a previous run so we never hand stale
+  // cache metadata to the test suite.
+  try {
+    fs.rmSync(sentinelPath, { force: true });
+  } catch {
+    // Best-effort.
+  }
+
+  // Guaranteed cleanup: kill the process group and (by default) remove the
+  // build directory.  Pass keepBuildDir=true on the success path when
+  // PROBE_RETAIN_CACHE=1 so the test suite can reuse the warm cache.
   let cleaned = false;
-  async function cleanup(): Promise<void> {
+  async function cleanup(keepBuildDir = false): Promise<void> {
     if (cleaned) return;
     cleaned = true;
     const pid = proc.pid;
     if (pid !== undefined) {
       await killProcessGroup(pid);
     }
-    try {
-      fs.rmSync(buildOutputPath, { recursive: true, force: true });
-    } catch {
-      // Best-effort — ignore errors.
+    if (!keepBuildDir) {
+      // Remove both the build directory and any sentinel we may have written.
+      try {
+        fs.rmSync(buildOutputPath, { recursive: true, force: true });
+      } catch {
+        // Best-effort — ignore errors.
+      }
+      try {
+        fs.rmSync(sentinelPath, { force: true });
+      } catch {
+        // Best-effort.
+      }
     }
   }
 
   // Handle probe-process signals so Ctrl-C / CI job cancellation also cleans up.
+  // Always do a full cleanup (no cache retain) on unexpected termination.
   let signalReceived = false;
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.on(sig, () => {
       if (signalReceived) return;
       signalReceived = true;
-      cleanup().finally(() => process.exit(1));
+      cleanup(false).finally(() => process.exit(1));
     });
   }
 
@@ -257,9 +293,18 @@ async function main(): Promise<void> {
 
   const elapsedMs = Date.now() - startMs;
   const elapsedS = (elapsedMs / 1_000).toFixed(1);
+  const ratio = elapsedMs / THRESHOLD_MS;
+  const pct = (ratio * 100).toFixed(1);
 
-  // Always tear down the process group before exiting.
-  await cleanup();
+  // Decide whether to retain the build cache before tearing down the process.
+  // Only retain on a clean, within-threshold success and when opted in.
+  const probeSucceeded = ready && !earlyExit && ratio < 1;
+  const shouldRetainCache = probeSucceeded && RETAIN_CACHE;
+
+  // Tear down the process group.  On a successful probe with PROBE_RETAIN_CACHE=1,
+  // keep the build directory so the slow-test suite can reuse the warm cache
+  // instead of cold-starting next-dev a second time.
+  await cleanup(shouldRetainCache);
 
   // ── Outcome reporting ─────────────────────────────────────────────────────
 
@@ -288,9 +333,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const ratio = elapsedMs / THRESHOLD_MS;
-  const pct = (ratio * 100).toFixed(1);
-
   if (ratio >= 1) {
     // Startup succeeded but measurement exceeded the threshold — still a failure.
     console.error(
@@ -301,6 +343,21 @@ async function main(): Promise<void> {
         `Investigate next-dev compilation time or increase NEXTDEV_STARTUP_THRESHOLD_S.`,
     );
     process.exit(1);
+  }
+
+  // ── Success ───────────────────────────────────────────────────────────────
+
+  // Write the cache sentinel so the slow-test suite can detect the warm build.
+  if (shouldRetainCache) {
+    try {
+      fs.writeFileSync(sentinelPath, PROBE_BUILD_DIR, "utf8");
+      console.log(
+        `[probe] Build cache retained in ${PROBE_BUILD_DIR}; sentinel written for test suite reuse.`,
+      );
+    } catch (err) {
+      // Non-fatal: the test suite will fall back to a cold start.
+      console.warn(`[probe] Failed to write cache sentinel: ${err}`);
+    }
   }
 
   if (ratio >= 0.8) {
