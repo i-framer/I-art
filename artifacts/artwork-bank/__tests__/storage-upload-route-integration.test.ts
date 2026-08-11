@@ -347,5 +347,49 @@ describeIntegration(
       expect(entityId).toMatch(/^uploads\/[0-9a-f-]{36}$/);
       expect(contentType).toBe("image/webp");
     });
+
+    it("concurrent uploads: near-limit → 200 and over-limit → 413 independently", async () => {
+      // This test confirms that the per-request byte counter (totalBytes) is
+      // local to each invocation and does not bleed between concurrent calls.
+      mockSession.value = { userId: `user-${uid()}` };
+      mockPutObject.mockResolvedValue(undefined);
+
+      const MAX_SIZE_BYTES = 25 * 1024 * 1024;
+
+      // Near-limit request: exactly MAX_SIZE_BYTES (should be accepted → 200).
+      const nearLimitChunk = new Uint8Array(MAX_SIZE_BYTES);
+      const nearLimitBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(nearLimitChunk);
+          controller.close();
+        },
+      });
+      const nearLimitReq = makeRequest({
+        contentType: "image/jpeg",
+        body: nearLimitBody,
+      });
+
+      // Over-limit request: MAX_SIZE_BYTES + 1 (should be rejected → 413).
+      const overLimitChunk = new Uint8Array(MAX_SIZE_BYTES + 1);
+      const overLimitBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(overLimitChunk);
+          controller.close();
+        },
+      });
+      const overLimitReq = makeRequest({
+        contentType: "image/jpeg",
+        body: overLimitBody,
+      });
+
+      // Fire both concurrently.
+      const [nearRes, overRes] = await Promise.all([
+        uploadPOST(nearLimitReq),
+        uploadPOST(overLimitReq),
+      ]);
+
+      expect(nearRes.status).toBe(200);
+      expect(overRes.status).toBe(413);
+    });
   },
 );
