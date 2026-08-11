@@ -312,6 +312,26 @@ describeIntegration(
       expect(mockPutObject).not.toHaveBeenCalled();
     });
 
+    it("no Content-Length header + body is MAX_SIZE_BYTES - 1 → 200, putObject called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      mockPutObject.mockResolvedValue(undefined);
+      // One byte under the limit — must be accepted.
+      const MAX_SIZE_BYTES = 25 * 1024 * 1024;
+      const underChunk = new Uint8Array(MAX_SIZE_BYTES - 1);
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(underChunk);
+          controller.close();
+        },
+      });
+      const req = makeRequest({ contentType: "image/jpeg", body });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(200);
+      expect(mockPutObject).toHaveBeenCalledTimes(1);
+    });
+
     it("valid session → putObject IS called with correct entityId format and content-type", async () => {
       mockSession.value = { userId: `user-${uid()}` };
       mockPutObject.mockResolvedValue(undefined);
