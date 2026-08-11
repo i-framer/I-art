@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # meta-test-probe-nextdev.sh
 #
-# Verifies that probe-nextdev-startup.ts exits non-zero under two known
-# failure conditions so that regressions in the probe itself are caught
-# before they matter.
+# Verifies that probe-nextdev-startup.ts behaves correctly under three
+# scenarios so that regressions in the probe itself are caught before they
+# matter.
 #
-# Both scenarios use a fake `pnpm` shim prepended to PATH so the probe's
+# All scenarios use a fake `pnpm` shim prepended to PATH so the probe's
 # inner spawn("pnpm", ...) is intercepted without spawning real next-dev.
-# This makes both tests fast and fully deterministic.
+# This makes all tests fast and fully deterministic.
 #
 #   Scenario 1 (timeout)     — fake pnpm sleeps indefinitely (no HTTP server).
 #                              NEXTDEV_STARTUP_THRESHOLD_S=2 causes the probe
@@ -18,6 +18,16 @@
 #                              "next-dev exited with code N before becoming
 #                              ready" exit path.
 #
+#   Scenario 3 (WARN path)   — fake pnpm serves real HTTP on $PORT after a
+#                              delay that puts startup at ≥ 80% of the
+#                              threshold (NEXTDEV_STARTUP_THRESHOLD_S=4,
+#                              HTTP ready at ~3.1 s → ~87%).  Confirms the
+#                              probe exits 0, emits status=WARN, and writes
+#                              the warm-cache sentinel when PROBE_RETAIN_CACHE=1.
+#                              Without this check, a future change that skips
+#                              the sentinel write on the WARN path would
+#                              silently break the warm-cache hand-off.
+#
 # The probe is invoked via tsx directly (not through pnpm) so that the fake
 # pnpm shim only intercepts the inner spawn("pnpm", ...) call inside the probe
 # — not the outer runner used to launch the probe itself.
@@ -27,9 +37,9 @@
 #   bash scripts/meta-test-probe-nextdev.sh   (from workspace root)
 #
 # Exit codes
-#   0  — both scenarios correctly caused the probe to exit non-zero with the
-#         expected diagnostic message.
-#   1  — at least one scenario failed (probe exited 0, or wrong failure message).
+#   0  — all scenarios produced the expected result.
+#   1  — at least one scenario failed (probe exited 0 on a failure path,
+#         exited non-zero on the WARN success path, or sentinel was missing).
 
 set -euo pipefail
 
@@ -160,7 +170,91 @@ rm -f "${OUTPUT_FILE_2}"
 echo "✓ Scenario 2 PASSED: probe correctly exited ${PROBE_EXIT_2} on early crash."
 echo ""
 
-echo "✓ Probe cold-start meta-test PASSED: both timeout and early-crash"
-echo "  scenarios correctly caused the probe to exit non-zero with the"
-echo "  expected diagnostic output."
+# ── Scenario 3: WARN path — sentinel must be written at 80–99% threshold ─────
+echo "Scenario 3: probe must exit 0, emit status=WARN, and write the warm-cache"
+echo "sentinel when startup uses ≥ 80% of the threshold"
+echo "(fake pnpm serves HTTP after 3.1 s; threshold is 4 s → ~87% ≥ 80%)"
+echo ""
+
+# Shim: opens a real HTTP server on \$PORT after a 3.1 s delay.
+# With NEXTDEV_STARTUP_THRESHOLD_S=4 the probe will poll and succeed at the
+# first opportunity after t=3.1 s (i.e. at t≈3.5 s), giving ratio≈0.875
+# which is ≥ 0.8 — the WARN window.  The probe must still exit 0 and write
+# the sentinel in this case.
+cat >"${FAKE_BIN}/pnpm" <<'SHIM'
+#!/usr/bin/env bash
+# Fake pnpm: wait 3.1 s, then open an HTTP server on $PORT.
+# Simulates a slow-but-successful next-dev startup that lands in the WARN band.
+node -e "
+const http = require('http');
+const port = parseInt(process.env.PORT, 10);
+setTimeout(function() {
+  const server = http.createServer(function(req, res) {
+    res.writeHead(200);
+    res.end('ok');
+  });
+  server.listen(port, '127.0.0.1');
+}, 3100);
+" &
+# Keep the shell alive so the probe's killProcessGroup finds a running leader.
+wait
+SHIM
+chmod +x "${FAKE_BIN}/pnpm"
+
+# The sentinel is written relative to the artwork-bank package directory.
+SENTINEL_PATH="${WORKSPACE_ROOT}/artifacts/artwork-bank/.next-probe-cache-ready"
+# Remove any sentinel left by an earlier invocation.
+rm -f "${SENTINEL_PATH}"
+
+OUTPUT_FILE_3="$(mktemp)"
+PROBE_EXIT_3=0
+PATH="${FAKE_BIN}:${PATH}" \
+  NEXTDEV_STARTUP_THRESHOLD_S=4 \
+  PROBE_RETAIN_CACHE=1 \
+  "${TSX}" "${PROBE_SCRIPT}" \
+  >"${OUTPUT_FILE_3}" 2>&1 \
+  && PROBE_EXIT_3=0 || PROBE_EXIT_3=$?
+
+cat "${OUTPUT_FILE_3}"
+echo ""
+echo "Scenario 3: probe exited with code: ${PROBE_EXIT_3}"
+
+if [[ "${PROBE_EXIT_3}" -ne 0 ]]; then
+  echo ""
+  echo "✗ Meta-test FAILED (scenario 3): probe exited ${PROBE_EXIT_3} on the WARN"
+  echo "  path.  The probe must exit 0 when startup succeeds within the threshold"
+  echo "  even if it used ≥ 80% of the allowed time."
+  rm -f "${OUTPUT_FILE_3}"
+  exit 1
+fi
+
+EXPECTED_WARN_PATTERN="status=WARN"
+if ! grep -qF "${EXPECTED_WARN_PATTERN}" "${OUTPUT_FILE_3}"; then
+  echo ""
+  echo "✗ Meta-test FAILED (scenario 3): probe exited 0 but output does not"
+  echo "  contain '${EXPECTED_WARN_PATTERN}'."
+  echo "  The fake pnpm delay may not have pushed the ratio past 0.8 —"
+  echo "  check that NEXTDEV_STARTUP_THRESHOLD_S and the node delay are"
+  echo "  still calibrated to produce ratio ≥ 0.8."
+  rm -f "${OUTPUT_FILE_3}"
+  exit 1
+fi
+
+if [[ ! -f "${SENTINEL_PATH}" ]]; then
+  echo ""
+  echo "✗ Meta-test FAILED (scenario 3): probe exited 0 with WARN status but"
+  echo "  did not write the warm-cache sentinel at '${SENTINEL_PATH}'."
+  echo "  The sentinel write must execute on the WARN path (80–99%), not only"
+  echo "  on the OK path — otherwise the warm-cache hand-off is silently lost"
+  echo "  whenever startup happens to land in the warning band."
+  rm -f "${OUTPUT_FILE_3}"
+  exit 1
+fi
+
+rm -f "${OUTPUT_FILE_3}"
+echo "✓ Scenario 3 PASSED: probe exited 0 (WARN), warm-cache sentinel written."
+echo ""
+
+echo "✓ Probe cold-start meta-test PASSED: timeout, early-crash, and WARN-path"
+echo "  scenarios all produced the expected outcome."
 exit 0

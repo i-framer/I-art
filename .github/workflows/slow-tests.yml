@@ -109,13 +109,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Confirm probe exits non-zero on timeout and early crash
-        # Exercises both failure paths in probe-nextdev-startup.ts:
-        #   • timeout  — NEXTDEV_STARTUP_THRESHOLD_S=2 causes the probe to
-        #                give up before next-dev could ever become ready.
-        #   • early crash — a fake pnpm shim that exits 1 immediately is
-        #                   prepended to PATH so the probe sees a process
-        #                   that dies before the first HTTP poll.
+      - name: Confirm probe exits non-zero on timeout and early crash, and exits 0 with sentinel on WARN path
+        # Exercises the three key paths in probe-nextdev-startup.ts via a fake
+        # pnpm shim — no real next-dev is spawned so all scenarios run in
+        # seconds and are fully deterministic:
+        #   • timeout    — NEXTDEV_STARTUP_THRESHOLD_S=2 causes the probe to
+        #                  give up before next-dev could ever become ready.
+        #   • early crash — fake pnpm exits 1 immediately; probe must detect
+        #                   the process death before the first HTTP poll.
+        #   • WARN path  — fake pnpm serves HTTP at ~3.1 s with a 4 s
+        #                  threshold (≥ 80%); probe must exit 0, emit
+        #                  status=WARN, and write the warm-cache sentinel so
+        #                  the hand-off still works in the warning band.
         run: bash scripts/meta-test-probe-nextdev.sh
 
   stall-guard-meta-test:
