@@ -1,0 +1,40 @@
+name: Slow tests
+
+# Runs the next-dev stall test suite (`pnpm test:slow`) on every pull request
+# and on every push to main.  These tests each take ~50 s of real wall-clock
+# time, so they run in a dedicated job with a generous timeout rather than
+# alongside the fast unit-test suite.
+#
+# A failed slow test blocks the PR via the required status check
+# "Slow tests / slow-tests (artwork-bank)".
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  slow-tests:
+    name: Slow tests (artwork-bank)
+    runs-on: ubuntu-latest
+    # Each test file takes ~50 s; allow ample headroom for startup + teardown.
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run slow test suite
+        run: pnpm --filter @workspace/artwork-bank run test:slow
