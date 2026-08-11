@@ -12,7 +12,7 @@ import {
   type ArtworkFormState,
 } from "./actions";
 import type { Artwork, ArtworkImage, ArtworkCategory, RepresentedArtist } from "@workspace/db";
-import { Upload, Star, ArrowUp, ArrowDown, X, Loader2, ImagePlus } from "lucide-react";
+import { Upload, Star, ArrowUp, ArrowDown, X, Loader2, ImagePlus, AlertTriangle } from "lucide-react";
 
 const initialState: ArtworkFormState = { error: "" };
 
@@ -66,7 +66,12 @@ export function ArtworkForm({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [imageError, setImageError] = useState("");
+  const [missingImageIds, setMissingImageIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function handleImageError(imageId: string) {
+    setMissingImageIds((prev) => new Set(prev).add(imageId));
+  }
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -460,11 +465,21 @@ export function ArtworkForm({
                 >
                   {/* Thumbnail */}
                   <div className="aspect-square overflow-hidden">
-                    <img
-                      src={`/api/storage/serve?path=${encodeURIComponent(img.objectPath)}`}
-                      alt={img.filename}
-                      className="w-full h-full object-cover"
-                    />
+                    {missingImageIds.has(img.id) ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 bg-amber-50 border border-amber-200 p-2">
+                        <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />
+                        <p className="text-[10px] font-medium text-amber-700 text-center leading-tight">
+                          Image not found — please re-upload
+                        </p>
+                      </div>
+                    ) : (
+                      <img
+                        src={`/api/storage/serve?path=${encodeURIComponent(img.objectPath)}`}
+                        alt={img.filename}
+                        className="w-full h-full object-cover"
+                        onError={() => handleImageError(img.id)}
+                      />
+                    )}
                   </div>
                   {/* Primary badge */}
                   {img.isPrimary && (
