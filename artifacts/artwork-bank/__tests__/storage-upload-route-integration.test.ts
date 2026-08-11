@@ -544,6 +544,37 @@ describeIntegration(
       expect(blobArg.size).toBe(1);
     }, 1_000 /* must complete within 1 s */);
 
+    it("forged small Content-Length + multipart-like multi-chunk body whose cumulative total exceeds 25 MB → 413, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      // Attack scenario: the client declares Content-Length: 100 (tiny, well under
+      // the fast-path limit) but then streams 101 independent chunks of 256 KiB each.
+      //   101 × 256 KiB = 25,856 KiB ≈ 25.25 MiB — over the 25 MiB limit.
+      //   Each individual chunk is only 256 KiB — far under the limit on its own.
+      // The fast-path must not trust the declared Content-Length.
+      // The per-request byte counter must accumulate across all chunks and
+      // return 413 once the running total exceeds MAX_SIZE_BYTES.
+      const CHUNK_COUNT = 101;
+      const CHUNK_SIZE = 256 * 1024; // 256 KiB — each chunk is individually tiny
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let i = 0; i < CHUNK_COUNT; i++) {
+            controller.enqueue(new Uint8Array(CHUNK_SIZE));
+          }
+          controller.close();
+        },
+      });
+      const req = makeRequest({
+        contentType: "image/jpeg",
+        body,
+        contentLength: 100, // forged — deliberately much smaller than the real body
+      });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(413);
+      expect(mockPutObject).not.toHaveBeenCalled();
+    });
+
     it("concurrent uploads: near-limit → 200 and over-limit → 413 independently", async () => {
       // This test confirms that the per-request byte counter (totalBytes) is
       // local to each invocation and does not bleed between concurrent calls.
