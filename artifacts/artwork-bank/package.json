@@ -14,7 +14,8 @@
     "db:seed": "tsx scripts/seed.ts",
     "smoke:billing-alert": "tsx scripts/smoke-billing-alert.ts",
     "smoke:schema-push-alert": "tsx scripts/smoke-schema-push-alert.ts",
-    "smoke:drift-alert": "tsx scripts/smoke-drift-alert.ts"
+    "smoke:drift-alert": "tsx scripts/smoke-drift-alert.ts",
+    "probe:nextdev-startup": "tsx scripts/probe-nextdev-startup.ts"
   },
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.1",
