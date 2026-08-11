@@ -19,6 +19,12 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
+    inputs:
+      startup_threshold_s:
+        description: "Max seconds next-dev may take to become ready (overrides the hard-coded default)"
+        default: "90"
+        required: false
 
 jobs:
   slow-tests:
@@ -49,7 +55,7 @@ jobs:
         # swallowed by the 180 s beforeAll budget in the slow-test suite.
         # Adjust the threshold by setting NEXTDEV_STARTUP_THRESHOLD_S here.
         env:
-          NEXTDEV_STARTUP_THRESHOLD_S: "90"
+          NEXTDEV_STARTUP_THRESHOLD_S: ${{ inputs.startup_threshold_s || '90' }}
         run: pnpm --filter @workspace/artwork-bank run probe:nextdev-startup
 
       - name: Run slow test suite
