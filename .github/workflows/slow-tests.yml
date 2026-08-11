@@ -65,6 +65,23 @@ jobs:
           PROBE_RETAIN_CACHE: "1"
         run: pnpm --filter @workspace/artwork-bank run probe:nextdev-startup
 
+      - name: Assert warm-cache sentinel exists
+        # Fail fast with a clear message if the probe step did not write the
+        # sentinel.  Without the sentinel, test:slow silently falls back to a
+        # second cold start (wasting ~90 s) and CI still passes — hiding the
+        # regression.  This step turns that silent failure into a hard error.
+        run: |
+          SENTINEL="artifacts/artwork-bank/.next-probe-cache-ready"
+          if [[ ! -f "${SENTINEL}" ]]; then
+            echo "✗ Warm-cache sentinel not found at '${SENTINEL}'." >&2
+            echo "  The probe step should have written it when PROBE_RETAIN_CACHE=1" >&2
+            echo "  and the cold-start completed within the threshold." >&2
+            echo "  Without the sentinel, test:slow will cold-start next-dev a second" >&2
+            echo "  time and the ~90 s saving will not materialise." >&2
+            exit 1
+          fi
+          echo "✓ Sentinel found: $(cat "${SENTINEL}")"
+
       - name: Run slow test suite
         run: pnpm --filter @workspace/artwork-bank run test:slow
 

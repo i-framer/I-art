@@ -47,6 +47,23 @@ PROBE_RETAIN_CACHE=1 \
   pnpm --filter @workspace/artwork-bank run probe:nextdev-startup
 echo ""
 
+# ── Step 2: assert the sentinel was written ───────────────────────────────────
+# The probe writes this file when PROBE_RETAIN_CACHE=1 and the cold-start
+# completed within the threshold.  If it is absent the warm-cache hand-off
+# silently falls back to a second cold start — the ~90 s saving never
+# materialises and CI still passes, hiding the regression.
+SENTINEL="artifacts/artwork-bank/.next-probe-cache-ready"
+if [[ ! -f "${SENTINEL}" ]]; then
+  echo "✗ Meta-test FAILED: warm-cache sentinel not found at '${SENTINEL}'." >&2
+  echo "  The probe step should have written it when PROBE_RETAIN_CACHE=1 and" >&2
+  echo "  the cold-start completed within the threshold." >&2
+  echo "  Without the sentinel, test:slow will cold-start next-dev a second time" >&2
+  echo "  and the ~90 s saving will not materialise." >&2
+  exit 1
+fi
+echo "✓ Sentinel found: $(cat "${SENTINEL}")"
+echo ""
+
 echo "Injecting UPLOAD_READ_TIMEOUT_MS=1 to simulate a stall regression …"
 echo ""
 
