@@ -789,6 +789,67 @@ describeIntegration(
       expect(mockPutObject).not.toHaveBeenCalled();
     });
 
+    it("indefinitely open stream: producer never closes after crossing the limit → 413 within 1 s, no hang", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      // Adversarial scenario: the client crosses the 25 MiB limit but then
+      // stalls — holding the connection open without sending more data and
+      // without ever calling controller.close().  A naive implementation that
+      // awaits `done === true` from the reader would hang here forever.
+      //
+      // The route must call reader.cancel() as soon as the running total
+      // exceeds MAX_SIZE_BYTES.  The WHATWG streams spec guarantees that
+      // reader.cancel() invokes the underlying source's cancel() hook, which
+      // in this test unblocks the pending pull() promise so the stream can
+      // clean up.  The overall uploadPOST() call must therefore resolve within
+      // the 1 s vitest timeout rather than hanging indefinitely.
+      const CHUNK_SIZE = 1024; // 1 KiB
+      const MAX_SIZE_BYTES = 25 * 1024 * 1024;
+      const CHUNKS_TO_LIMIT = MAX_SIZE_BYTES / CHUNK_SIZE; // 25,600 — cumulative = 25 MiB exactly (accepted)
+
+      let sent = 0;
+      let cancelCalled = false;
+      // Capture the resolve callback of the blocking pull() promise so that
+      // cancel() can release it, letting the ReadableStream internals finish.
+      let pendingResolve: (() => void) | null = null;
+
+      const chunk = new Uint8Array(CHUNK_SIZE);
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent < CHUNKS_TO_LIMIT + 1) {
+            // Send chunks synchronously (no setImmediate) until one chunk past
+            // the limit has been enqueued.  At that point the route will call
+            // reader.cancel() on the very next await reader.read() return.
+            controller.enqueue(chunk);
+            sent++;
+            return;
+          }
+          // All CHUNKS_TO_LIMIT + 1 chunks have been sent.  From here the
+          // producer intentionally holds the stream open — returning a Promise
+          // that never resolves on its own.  Only the cancel() hook below can
+          // unblock it, which fires when reader.cancel() is called by the route.
+          return new Promise<void>((resolve) => {
+            pendingResolve = resolve;
+          });
+        },
+        cancel() {
+          cancelCalled = true;
+          // Unblock the stalled pull() promise so the ReadableStream internals
+          // can settle.  Without this the stream would remain suspended even
+          // after cancellation; resolving it here lets Vitest confirm no open
+          // handles remain at the end of the test.
+          if (pendingResolve) pendingResolve();
+        },
+      });
+
+      const req = makeRequest({ contentType: "image/jpeg", body });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(413);
+      expect(mockPutObject).not.toHaveBeenCalled();
+      // Confirm reader.cancel() was actually invoked — not merely a loop break.
+      expect(cancelCalled).toBe(true);
+    }, 1_000 /* must complete within 1 s — hangs would be caught immediately */);
     it("concurrent uploads: near-limit → 200 and over-limit → 413 independently", async () => {
       // This test confirms that the per-request byte counter (totalBytes) is
       // local to each invocation and does not bleed between concurrent calls.
