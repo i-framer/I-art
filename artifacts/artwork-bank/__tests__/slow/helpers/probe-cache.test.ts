@@ -81,17 +81,30 @@ describe("consumeProbeCache", () => {
   );
 
   it(
-    "logs a console.log message containing the build directory name when the cache is successfully reused",
+    "logs a console.log message containing the build directory name and a sentinel mtime when the cache is successfully reused",
     () => {
       // The log line is the operator's only signal in CI that a warm start
       // occurred.  Pin it here so an accidental deletion is caught immediately.
+      // The mtime of the sentinel file lets operators correlate the log line
+      // with the specific CI probe run that seeded the cache, even when
+      // multiple jobs run back-to-back.
       const buildDir = ".next-probe";
       fs.mkdirSync(path.join(tmpDir, buildDir));
       writeSentinel(buildDir);
 
+      // Capture the exact mtime of the sentinel file before consumeProbeCache
+      // deletes it.  The log message must contain this exact ISO string so a
+      // regression that logs the current time or any other timestamp is caught.
+      const expectedMtime = fs
+        .statSync(sentinelPath())
+        .mtime.toISOString();
+
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       try {
-        consumeProbeCache(tmpDir);
+        const result = consumeProbeCache(tmpDir);
+
+        // consumeProbeCache must return the build directory name.
+        expect(result).toBe(buildDir);
 
         // Exactly one log call must be emitted — not silently swallowed.
         expect(logSpy).toHaveBeenCalledOnce();
@@ -99,6 +112,9 @@ describe("consumeProbeCache", () => {
         // The message must name the directory so operators can trace which
         // probe cache was reused in the CI log.
         expect(logMessage).toContain(buildDir);
+        // The message must contain the exact sentinel mtime so it pinpoints
+        // which probe run seeded the cache — not just any same-day timestamp.
+        expect(logMessage).toContain(expectedMtime);
       } finally {
         logSpy.mockRestore();
       }

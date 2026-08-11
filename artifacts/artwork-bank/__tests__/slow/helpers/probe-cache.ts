@@ -79,6 +79,17 @@ export function consumeProbeCache(artworkBankDir: string): string | null {
     return null;
   }
 
+  // Capture the sentinel mtime before deleting it so the log message can
+  // record when the probe step created the cache.  This lets operators
+  // correlate a warm-start log line with a specific CI run even when
+  // multiple jobs run back-to-back.
+  let sentinelMtime = "";
+  try {
+    sentinelMtime = fs.statSync(sentinelPath).mtime.toISOString();
+  } catch {
+    /* best-effort — if stat fails we still proceed */
+  }
+
   // Consume the sentinel so it is not reused by a subsequent test run.
   try {
     fs.rmSync(sentinelPath, { force: true });
@@ -87,7 +98,8 @@ export function consumeProbeCache(artworkBankDir: string): string | null {
   }
 
   console.log(
-    `[slow-test] Reusing probe build cache from ${buildDir} — skipping cold start.`,
+    `[slow-test] Reusing probe build cache from ${buildDir} ` +
+      `(probe seeded at ${sentinelMtime}) — skipping cold start.`,
   );
   return buildDir;
 }
