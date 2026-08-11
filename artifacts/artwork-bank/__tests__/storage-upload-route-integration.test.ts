@@ -479,6 +479,23 @@ describeIntegration(
       expect(mockPutObject).not.toHaveBeenCalled();
     });
 
+    it("Content-Length: 0 + empty ReadableStream → 400, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      // Content-Length: 0 passes the fast-path guard (0 is not > MAX_SIZE_BYTES),
+      // so the route must still reach the post-read totalBytes === 0 check and
+      // reject the request rather than calling putObject with an empty Blob.
+      const req = makeRequest({
+        contentType: "image/jpeg",
+        body: closedStream(),
+        contentLength: 0,
+      });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(400);
+      expect(mockPutObject).not.toHaveBeenCalled();
+    });
+
     it("no Content-Length header + exactly 1-byte body → 200, putObject called with the byte", async () => {
       mockSession.value = { userId: `user-${uid()}` };
       mockPutObject.mockResolvedValue(undefined);
