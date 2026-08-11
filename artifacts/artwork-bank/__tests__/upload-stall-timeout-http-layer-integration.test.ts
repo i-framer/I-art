@@ -316,6 +316,72 @@ async function sendStallingUpload(opts: {
   return result;
 }
 
+/**
+ * Open a raw TCP connection, send the start of a multipart/form-data POST
+ * (boundary + part headers + 4 bytes of file data), then deliberately stop —
+ * simulating a stalling multipart client.
+ *
+ * The multipart body is deliberately left incomplete: no closing boundary is
+ * ever sent, so the server's reader.read() blocks after the first chunk until
+ * readBoundedStream's per-chunk deadline fires via readChunkWithTimeout.
+ *
+ * Returns { statusCode, body } once the server writes its response.
+ */
+async function sendStallingMultipartUpload(opts: {
+  port: number;
+  timeoutMs: number;
+  readTimeoutMs: number;
+}): Promise<{ statusCode: number; body: string }> {
+  const boundary = "----TestBoundary12345";
+  const socket = net.createConnection(opts.port, "127.0.0.1");
+
+  await new Promise<void>((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+
+  // Build a partial multipart body: start of a "file" part with 4 bytes.
+  // The closing boundary ("--" + boundary + "--") is intentionally omitted,
+  // so the server can never see EOF on the body stream.
+  const partHeader = [
+    `--${boundary}`,
+    `Content-Disposition: form-data; name="file"; filename="test.jpg"`,
+    `Content-Type: image/jpeg`,
+    ``,
+    ``,
+  ].join("\r\n");
+  const partData = "XXXX"; // 4 bytes of fake image data
+
+  // Combine part header + data into one body fragment (no closing boundary).
+  const bodyFragment = partHeader + partData;
+  const bodyBytes = Buffer.from(bodyFragment, "utf8");
+
+  const requestLines = [
+    `POST /api/storage/upload HTTP/1.1`,
+    `Host: 127.0.0.1:${opts.port}`,
+    `Content-Type: multipart/form-data; boundary=${boundary}`,
+    `Transfer-Encoding: chunked`,
+    `Connection: close`,
+    ``,
+    ``,
+  ].join("\r\n");
+
+  // Send the chunk in HTTP/1.1 chunked encoding format.
+  const chunkSize = bodyBytes.length.toString(16);
+  const chunk = `${chunkSize}\r\n${bodyFragment}\r\n`;
+
+  socket.write(requestLines);
+  socket.write(chunk);
+  // Deliberately do NOT send the closing boundary or the "0\r\n\r\n" terminator.
+  // This is the stall: the server is waiting for more data that never arrives.
+
+  const responseTimeoutMs = opts.readTimeoutMs * 3 + 500;
+  const result = await readHttpResponse(socket, responseTimeoutMs);
+
+  socket.destroy();
+  return result;
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe(
@@ -404,6 +470,114 @@ describe(
         });
 
         // The route must reject with 401 quickly — before the read timeout fires.
+        expect(statusCode).toBe(401);
+        expect(mockPutObject).not.toHaveBeenCalled();
+      },
+      3_000,
+    );
+  },
+);
+
+describe(
+  "multipart upload stall timeout — HTTP layer confirms 408 reaches the wire",
+  () => {
+    /**
+     * Why this describe block exists
+     * ────────────────────────────────
+     * The raw image/* path uses readChunkWithTimeout() directly (covered above).
+     * The multipart/form-data path funnels through readBoundedStream(), which
+     * previously called reader.read() without any deadline.  A stalling
+     * multipart client would hold the connection open indefinitely.
+     *
+     * readBoundedStream() now delegates each read to readChunkWithTimeout() and
+     * re-throws UploadReadTimeout; the multipart branch catches it and returns
+     * 408.  These tests confirm that behaviour reaches the wire.
+     */
+
+    it(
+      "stalling multipart client receives HTTP 408 on the wire within the configured deadline",
+      async () => {
+        const READ_TIMEOUT_MS = 300;
+        saveAndSet({ UPLOAD_READ_TIMEOUT_MS: String(READ_TIMEOUT_MS) });
+
+        const { statusCode, body } = await sendStallingMultipartUpload({
+          port: serverPort,
+          timeoutMs: READ_TIMEOUT_MS,
+          readTimeoutMs: READ_TIMEOUT_MS,
+        });
+
+        // The HTTP status on the wire must be 408, not 200 / 500 / a hang.
+        expect(statusCode).toBe(408);
+
+        // The body must mention the stall.
+        expect(body).toMatch(/timed out|stalled/i);
+
+        // putObject must never have been called — the upload never completed.
+        expect(mockPutObject).not.toHaveBeenCalled();
+      },
+      3_000,
+    );
+
+    it(
+      "non-stalling multipart client completes the upload and receives HTTP 200",
+      async () => {
+        // Sanity check: a fast multipart client that sends a complete body
+        // must still succeed.  Without this the 408 test above could be
+        // vacuously passing because the server is broken in a way that always
+        // returns 408.
+        const READ_TIMEOUT_MS = 300;
+        saveAndSet({ UPLOAD_READ_TIMEOUT_MS: String(READ_TIMEOUT_MS) });
+
+        mockPutObject.mockResolvedValue(undefined);
+
+        // Build a minimal but valid multipart/form-data body with a 1-byte
+        // image/jpeg file field and send it as a single fetch() call.
+        const boundary = "----TestFetchBoundary";
+        const body = [
+          `--${boundary}`,
+          `Content-Disposition: form-data; name="file"; filename="test.jpg"`,
+          `Content-Type: image/jpeg`,
+          ``,
+          `B`, // 1-byte fake image payload
+          `--${boundary}--`,
+          ``,
+        ].join("\r\n");
+
+        const res = await fetch(
+          `http://127.0.0.1:${serverPort}/api/storage/upload`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": `multipart/form-data; boundary=${boundary}`,
+            },
+            body,
+            // @ts-expect-error -- duplex needed for body in some Node versions
+            duplex: "half",
+          },
+        );
+
+        expect(res.status).toBe(200);
+        const json = (await res.json()) as { objectPath?: string };
+        expect(json.objectPath).toMatch(/^\/objects\/uploads\//);
+        expect(mockPutObject).toHaveBeenCalledTimes(1);
+      },
+      3_000,
+    );
+
+    it(
+      "unauthenticated stalling multipart client receives HTTP 401 — auth gate fires before body is read",
+      async () => {
+        const READ_TIMEOUT_MS = 300;
+        saveAndSet({ UPLOAD_READ_TIMEOUT_MS: String(READ_TIMEOUT_MS) });
+
+        mockSession.value = { userId: null };
+
+        const { statusCode } = await sendStallingMultipartUpload({
+          port: serverPort,
+          timeoutMs: READ_TIMEOUT_MS,
+          readTimeoutMs: READ_TIMEOUT_MS,
+        });
+
         expect(statusCode).toBe(401);
         expect(mockPutObject).not.toHaveBeenCalled();
       },

@@ -116,8 +116,16 @@ async function readChunkWithTimeout(
  * stream is exhausted or the running total exceeds `limitBytes`. Cancels the
  * reader as soon as the limit is exceeded so the sender stops early.
  *
+ * Each individual read is raced against the per-chunk deadline enforced by
+ * readChunkWithTimeout(), so a stalling multipart client (one that sends
+ * headers and a partial body then stops transmitting) is rejected with an
+ * UploadReadTimeout error rather than holding the connection open indefinitely.
+ *
  * Returns `{ chunks, totalBytes, oversized }`. The caller checks `oversized`
  * before using `chunks`; if true the body was discarded.
+ *
+ * Throws an Error with name "UploadReadTimeout" when a per-chunk deadline
+ * fires — the caller is responsible for converting this to a 408 response.
  */
 async function readBoundedStream(
   stream: ReadableStream<Uint8Array>,
@@ -129,7 +137,9 @@ async function readBoundedStream(
   const reader = stream.getReader();
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      // Race each read against the per-chunk deadline so a stalling client
+      // cannot hold the connection open past UPLOAD_READ_TIMEOUT_MS.
+      const { done, value } = await readChunkWithTimeout(reader);
       if (done) break;
       totalBytes += value.byteLength;
       if (totalBytes > limitBytes) {
@@ -142,8 +152,13 @@ async function readBoundedStream(
       // runtime behaviour is identical.
       chunks.push(value as BlobPart);
     }
-  } catch {
-    throw new Error("stream-read-failed");
+  } catch (err) {
+    // Re-throw UploadReadTimeout so the caller can return 408; convert all
+    // other stream errors into a generic sentinel that the caller maps to 400.
+    if (err instanceof Error && err.name === "UploadReadTimeout") {
+      throw err;
+    }
+    throw new Error("stream-read-failed", { cause: err });
   }
   return { chunks, totalBytes, oversized };
 }
@@ -192,7 +207,15 @@ export async function POST(request: NextRequest) {
         request.body,
         MAX_MULTIPART_TOTAL_BYTES,
       ));
-    } catch {
+    } catch (err) {
+      // readBoundedStream re-throws UploadReadTimeout so the multipart path
+      // enforces the same per-chunk stall deadline as the raw image/* path.
+      if (err instanceof Error && err.name === "UploadReadTimeout") {
+        return NextResponse.json(
+          { error: "Upload timed out: client stalled mid-stream" },
+          { status: 408 },
+        );
+      }
       return NextResponse.json(
         { error: "Failed to read request body" },
         { status: 400 },
