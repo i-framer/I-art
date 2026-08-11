@@ -6,7 +6,7 @@
  * not __tests__/slow/helpers/).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -90,13 +90,25 @@ describe("consumeProbeCache", () => {
       expect(fs.existsSync(sentinelPath())).toBe(true);
       expect(fs.existsSync(path.join(tmpDir, buildDir))).toBe(false);
 
-      const result = consumeProbeCache(tmpDir);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const result = consumeProbeCache(tmpDir);
 
-      // Stale sentinel → should return null.
-      expect(result).toBeNull();
+        // Stale sentinel → should return null.
+        expect(result).toBeNull();
 
-      // Stale sentinel must be removed so it doesn't mislead the next run.
-      expect(fs.existsSync(sentinelPath())).toBe(false);
+        // Stale sentinel must be removed so it doesn't mislead the next run.
+        expect(fs.existsSync(sentinelPath())).toBe(false);
+
+        // The mismatch warning must be visible in CI logs so the BUILD_DIR drift
+        // is not silently swallowed.  Assert that console.warn was called and
+        // that the message names the directory from the sentinel.
+        expect(warnSpy).toHaveBeenCalledOnce();
+        const [warnMessage] = warnSpy.mock.calls[0] as [string];
+        expect(warnMessage).toContain(buildDir);
+      } finally {
+        warnSpy.mockRestore();
+      }
     },
   );
 

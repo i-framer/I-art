@@ -728,45 +728,101 @@ describe(
           clearTimeout(timer);
         }
         const elapsed = Date.now() - start;
-        expect(statusCode).toBe(408);
-        expect(body).toMatch(/timed out|stalled/i);
-        expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS);
-        expect(elapsed).toBeLessThan(RESPONSE_WINDOW_MS);
-        checkTimingBudget(elapsed, RESPONSE_WINDOW_MS, "stall → 408 (helper server)");
+
+        expect(statusCode!).toBe(401);
+        // Auth gate must fire well before the read deadline — confirming the
+        // server does not block on the body before checking auth.
+        expect(elapsed).toBeLessThan(UPLOAD_READ_TIMEOUT_MS);
+
+        // Log elapsed time so cold-runner regressions are visible in CI
+        // before they cause an outright assertion failure.
+        checkTimingBudget(elapsed, UPLOAD_READ_TIMEOUT_MS, "auth gate (next dev)");
       },
       RESPONSE_WINDOW_MS + 3_000,
     );
 
-    // ── Scenario 3: authenticated multipart stall via helper server ──────────
+    // ── Scenario 2: authenticated stalling upload via helper server ──────────
     it(
-      "authenticated stalling multipart upload (helper server): multipart path also times out and returns 408",
+      "authenticated stalling upload (helper server): route reads partial body, times out, returns 408",
       async () => {
+        /**
+         * Send a stalling POST to the helper server (plain Node.js createServer,
+         * not Next.js).  The helper server streams the body directly from TCP —
+         * no pre-buffering — so when the client sends 4 bytes and then goes
+         * silent, the read loop genuinely blocks in reader.read().  After
+         * UPLOAD_READ_TIMEOUT_MS the per-chunk timer fires and the server returns
+         * HTTP 408.
+         *
+         * The helper server uses the same iron-session auth check and the same
+         * per-chunk timeout constant as the real upload route, so this scenario
+         * verifies that the stall-detection logic works on a live TCP connection
+         * with a real authenticated request.
+         *
+         * http.request's response callback fires on response HEADERS arrival —
+         * independent of the stalling request body — so the Promise resolves as
+         * soon as 408 is sent, without needing req.end() or the connection to
+         * close.
+         */
         const cookie = await makeSessionCookie();
+
         const start = Date.now();
-        const { statusCode, body } = await sendSlowDripUploadToHelper({
+        const { statusCode, body } = await sendStallingUploadToHelper({
           cookie,
-          contentType: `multipart/form-data; boundary=${boundary}`,
-          initialBytes: preamble,
-          dripIntervalMs,
-          responseTimeoutMs: DRIP_RESPONSE_WINDOW_MS,
-          targetPort: dripHelperPort,
+          responseTimeoutMs: RESPONSE_WINDOW_MS,
         });
         const elapsed = Date.now() - start;
+
         expect(statusCode).toBe(408);
         expect(body).toMatch(/timed out|stalled/i);
         expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS);
         expect(elapsed).toBeLessThan(RESPONSE_WINDOW_MS);
+
+        // Log elapsed time so cold-runner regressions are visible in CI
+        // before they cause an outright assertion failure.
         checkTimingBudget(elapsed, RESPONSE_WINDOW_MS, "stall → 408 (helper server)");
       },
       RESPONSE_WINDOW_MS + 3_000,
     );
 
-    // ── Scenario 3: authenticated multipart stall via helper server ──────────
+    // ── Scenario 3: authenticated stalling multipart upload via helper server ─
     it(
       "authenticated stalling multipart upload (helper server): multipart path also times out and returns 408",
       async () => {
+        /**
+         * Scenario 3 — multipart/form-data stall via helper server.
+         *
+         * The upload route has two body-reading paths: one for raw image/* bodies
+         * and one for multipart/form-data bodies.  Both call readStreamWithDeadlines
+         * before any parsing, so a client that stalls mid-body on the multipart
+         * path must also receive HTTP 408 after UPLOAD_READ_TIMEOUT_MS.
+         *
+         * WHY THE HELPER SERVER (not next dev)
+         * ─────────────────────────────────────
+         * Next.js 15 fully buffers the request body before invoking the App Router
+         * route handler — regardless of Content-Type.  A multipart request that
+         * stalls mid-body causes Next.js to wait at the transport layer, never
+         * reaching the route.  The helper server (plain Node.js createServer) does
+         * NOT buffer: body data is delivered to the route handler chunk-by-chunk as
+         * TCP delivers it.  This is the only reliable way to present a stalling
+         * body to readStreamWithDeadlines on a real TCP connection.
+         *
+         * WHAT IS SENT
+         * ─────────────
+         * A multipart/form-data request with a valid boundary is opened.  We write
+         * only the opening boundary line and part headers, then go silent without
+         * sending the file data or the closing boundary.  The helper server's read
+         * loop blocks in reader.read() waiting for the next chunk; after
+         * UPLOAD_READ_TIMEOUT_MS the per-chunk timer fires and returns 408.
+         *
+         * The response arrives via the http.request response-headers callback —
+         * independently of the stalling request body — so the Promise resolves
+         * as soon as the server sends 408.
+         */
         const cookie = await makeSessionCookie();
-        const boundary = "----SlowDripTestBoundaryABC";
+        const boundary = "----SlowTestBoundaryXYZ";
+        // Partial multipart body: opening boundary + part headers, no file data.
+        // The client goes silent here — the server never sees the file bytes or
+        // the closing boundary, causing the read loop to block.
         const partialBody = Buffer.from(
           `--${boundary}\r\n` +
           `Content-Disposition: form-data; name="file"; filename="test.jpg"\r\n` +
@@ -774,21 +830,20 @@ describe(
           `\r\n`,
           "utf8",
         );
+
         const start = Date.now();
-        const { statusCode, body } = await sendSlowDripUploadToHelper({
+        const { statusCode, body } = await sendStallingUploadToHelper({
           cookie,
+          responseTimeoutMs: RESPONSE_WINDOW_MS,
           contentType: `multipart/form-data; boundary=${boundary}`,
-          initialBytes: preamble,
-          dripIntervalMs,
-          responseTimeoutMs: DRIP_RESPONSE_WINDOW_MS,
-          targetPort: dripHelperPort,
+          initialBytes: partialBody,
         });
         const elapsed = Date.now() - start;
+
         expect(statusCode).toBe(408);
         expect(body).toMatch(/timed out|stalled/i);
         expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS);
         expect(elapsed).toBeLessThan(RESPONSE_WINDOW_MS);
-        checkTimingBudget(elapsed, RESPONSE_WINDOW_MS, "multipart stall → 408 (helper server)");
       },
       RESPONSE_WINDOW_MS + 3_000,
     );
