@@ -398,6 +398,35 @@ describeIntegration(
       expect(mockPutObject).not.toHaveBeenCalled();
     });
 
+    it("slow-drip stream: thousands of 1-KiB chunks whose cumulative total exceeds 25 MiB → 413, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      // Each individual chunk is only 1 KiB — well under the 25 MiB limit.
+      // We send MAX_SIZE_BYTES / 1 KiB + 1 = 25,601 chunks so the running
+      // total tips over MAX_SIZE_BYTES (25 MiB) on the last chunk.
+      // This confirms the incremental counter is never reset or capped between
+      // reads and that the route aborts early without buffering everything.
+      const CHUNK_SIZE = 1024; // 1 KiB
+      const MAX_SIZE_BYTES = 25 * 1024 * 1024;
+      // Number of chunks to reach exactly MAX_SIZE_BYTES, then one more to tip over.
+      const CHUNKS_TO_LIMIT = MAX_SIZE_BYTES / CHUNK_SIZE; // 25,600 — exactly at the limit (accepted)
+      const CHUNK_COUNT = CHUNKS_TO_LIMIT + 1; // 25,601 — one extra chunk pushes total to MAX+1 KiB
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const chunk = new Uint8Array(CHUNK_SIZE);
+          for (let i = 0; i < CHUNK_COUNT; i++) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        },
+      });
+      const req = makeRequest({ contentType: "image/jpeg", body });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(413);
+      expect(mockPutObject).not.toHaveBeenCalled();
+    }, 5_000 /* must complete within 5 s */);
+
     it("concurrent uploads: near-limit → 200 and over-limit → 413 independently", async () => {
       // This test confirms that the per-request byte counter (totalBytes) is
       // local to each invocation and does not bleed between concurrent calls.
