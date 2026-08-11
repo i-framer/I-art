@@ -83,11 +83,28 @@ import { sealData } from "iron-session";
 // ── Constants ────────────────────────────────────────────────────────────────
 
 /**
- * Short read-timeout injected into both child processes.  Short enough that the
- * test completes quickly; long enough to survive I/O scheduling jitter.
+ * Assertion baseline for elapsed-time checks in this test file.  Kept
+ * hardcoded so that the meta-test (scripts/meta-test-stall-guard.sh) can
+ * inject a server-side regression without inadvertently relaxing the
+ * assertions: the meta-test sets UPLOAD_READ_TIMEOUT_MS=1 in the environment
+ * to make the helper server fire its timeout in ~1 ms, but the assertions
+ * below still compare against 1 500 ms, so the suite exits non-zero and the
+ * meta-test can confirm the guard is effective.
  */
 const UPLOAD_READ_TIMEOUT_MS = 1_500;
 
+/**
+ * Timeout injected into the spawned child processes (next dev + helper
+ * server).  Normally identical to UPLOAD_READ_TIMEOUT_MS, but can be
+ * overridden via the UPLOAD_READ_TIMEOUT_MS environment variable to simulate
+ * a regression.  The meta-test (scripts/meta-test-stall-guard.sh) sets
+ * UPLOAD_READ_TIMEOUT_MS=1 so the helper server fires its timeout in ~1 ms,
+ * causing `expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS)` to
+ * fail and proving the guard is still sensitive after a Next.js version bump.
+ */
+const SERVER_TIMEOUT_MS: number = process.env.UPLOAD_READ_TIMEOUT_MS
+  ? Number(process.env.UPLOAD_READ_TIMEOUT_MS)
+  : UPLOAD_READ_TIMEOUT_MS;
 /** Dev fallback secret — used by the helper server when SESSION_SECRET is unset. */
 const DEV_SESSION_SECRET = "dev-fallback-secret-must-be-32-chars!";
 
@@ -171,7 +188,7 @@ async function startDevServer(
         ...process.env,
         PORT: String(port),
         BUILD_DIR: DEV_BUILD_DIR,
-        UPLOAD_READ_TIMEOUT_MS: String(UPLOAD_READ_TIMEOUT_MS),
+        UPLOAD_READ_TIMEOUT_MS: String(SERVER_TIMEOUT_MS),
         // Unset SESSION_SECRET so the dev server uses the same fallback as
         // the helper server — consistent password across both processes.
         SESSION_SECRET: undefined,
@@ -300,7 +317,7 @@ async function startHelperServer(
     env: {
       ...process.env,
       UPLOAD_SERVER_PORT: String(port),
-      UPLOAD_READ_TIMEOUT_MS: String(UPLOAD_READ_TIMEOUT_MS),
+      UPLOAD_READ_TIMEOUT_MS: String(SERVER_TIMEOUT_MS),
       // Unset SESSION_SECRET so the helper server uses DEV_SESSION_SECRET —
       // the same password used by makeSessionCookie().
       SESSION_SECRET: undefined,
@@ -534,9 +551,8 @@ describe(
         // server does not block on the body before checking auth.
         expect(elapsed).toBeLessThan(UPLOAD_READ_TIMEOUT_MS);
 
-        // Emit a timing line (and a warning if within 20 % of the ceiling) so
-        // that slow-runner regressions appear in the CI log before they cause
-        // an outright assertion failure.
+        // Log elapsed time so cold-runner regressions are visible in CI
+        // before they cause an outright assertion failure.
         checkTimingBudget(elapsed, UPLOAD_READ_TIMEOUT_MS, "auth gate (next dev)");
       },
       RESPONSE_WINDOW_MS + 3_000,
@@ -577,9 +593,8 @@ describe(
         expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS);
         expect(elapsed).toBeLessThan(RESPONSE_WINDOW_MS);
 
-        // Emit a timing line (and a warning if within 20 % of the ceiling) so
-        // that slow-runner regressions appear in the CI log before they cause
-        // an outright assertion failure.
+        // Log elapsed time so cold-runner regressions are visible in CI
+        // before they cause an outright assertion failure.
         checkTimingBudget(elapsed, RESPONSE_WINDOW_MS, "stall → 408 (helper server)");
       },
       RESPONSE_WINDOW_MS + 3_000,

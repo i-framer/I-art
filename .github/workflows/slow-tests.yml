@@ -7,6 +7,12 @@ name: Slow tests
 #
 # A failed slow test blocks the PR via the required status check
 # "Slow tests / slow-tests (artwork-bank)".
+#
+# stall-guard-meta-test
+# ─────────────────────
+# Runs only on pushes to main.  It deliberately injects a stall regression
+# (UPLOAD_READ_TIMEOUT_MS=1) and asserts that `pnpm test:slow` exits non-zero,
+# proving the guard is still sensitive after a Next.js version bump.
 
 on:
   push:
@@ -38,3 +44,31 @@ jobs:
 
       - name: Run slow test suite
         run: pnpm --filter @workspace/artwork-bank run test:slow
+
+  stall-guard-meta-test:
+    name: Stall-guard meta-test (main only)
+    # Only run on main merges — this job deliberately breaks the slow suite to
+    # confirm the guard is still effective; it should not block PRs.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The meta-test spawns next dev (up to 90 s startup) plus the helper server,
+    # then runs test:slow once with the injected regression.  Budget generously.
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Confirm stall guard catches a regression
+        run: bash scripts/meta-test-stall-guard.sh
