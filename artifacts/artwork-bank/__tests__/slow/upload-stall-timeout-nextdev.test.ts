@@ -689,10 +689,14 @@ function stopDripHelperServer(): Promise<void> {
 beforeAll(async () => {
   devPort = await findFreePort();
   const helperPortRequest = await findFreePort();
+
+  const nextdevStartupMs =
+    (parseInt(process.env.NEXTDEV_STARTUP_THRESHOLD_S ?? "90", 10) || 90) *
+    1_000;
   const dripHelperPortRequest = await findFreePort();
   const startupStart = Date.now();
   await Promise.all([
-    startDevServer(devPort, 90_000).then(() => warmupRoute(devPort, 60_000)),
+    startDevServer(devPort, nextdevStartupMs).then(() => warmupRoute(devPort, 60_000)),
     startHelperServer(helperPortRequest, 20_000),
     startDripHelperServer(dripHelperPortRequest, 20_000),
   ]);
@@ -743,7 +747,7 @@ describe(
         // test fails before reaching the assertions below.
         statusCode ??= 0;
         const elapsed = Date.now() - start;
-        // Auth gate must reject before the read-stall deadline fires.
+        // Auth gate fires before body reading — must return 401 quickly.
         expect(statusCode).toBe(401);
         expect(elapsed).toBeLessThan(UPLOAD_READ_TIMEOUT_MS);
         checkTimingBudget(elapsed, UPLOAD_READ_TIMEOUT_MS, "auth gate → 401 (next dev)");
@@ -751,7 +755,7 @@ describe(
       RESPONSE_WINDOW_MS + 3_000,
     );
 
-    // ── Scenario 3: authenticated multipart stall via helper server ──────────
+    // ── Scenario 3a: authenticated per-chunk multipart stall via helper server ─
     // The client sends multipart headers then goes silent — exercises the
     // per-chunk read-deadline path (readChunkWithTimeout) via the plain
     // Node.js helper server, which does not buffer the request body.
@@ -759,7 +763,9 @@ describe(
       "authenticated stalling multipart upload (helper server): multipart path also times out and returns 408",
       async () => {
         const cookie = await makeSessionCookie();
-        const boundary = "----SlowDripTestBoundaryABC";
+        const boundary = "----SlowTestBoundaryXYZ";
+        // Partial multipart body: opening boundary + part headers, no file data.
+        // The client goes silent — the server's per-chunk timer fires and returns 408.
         const initialBytes = Buffer.from(
           `--${boundary}\r\n` +
           `Content-Disposition: form-data; name="file"; filename="test.jpg"\r\n` +
@@ -768,13 +774,43 @@ describe(
           "utf8",
         );
         const start = Date.now();
-        const { statusCode, body } = await sendSlowDripUploadToHelper({
+        const { statusCode, body } = await sendStallingUploadToHelper({
           cookie,
+          responseTimeoutMs: RESPONSE_WINDOW_MS,
           contentType: `multipart/form-data; boundary=${boundary}`,
-          initialBytes: preamble,
-          dripIntervalMs,
-          responseTimeoutMs: DRIP_RESPONSE_WINDOW_MS,
-          targetPort: dripHelperPort,
+          initialBytes,
+        });
+        const elapsed = Date.now() - start;
+        expect(statusCode).toBe(408);
+        expect(body).toMatch(/timed out|stalled/i);
+        expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS);
+        expect(elapsed).toBeLessThan(RESPONSE_WINDOW_MS);
+        checkTimingBudget(elapsed, RESPONSE_WINDOW_MS, "stall → 408 (helper server)");
+      },
+      RESPONSE_WINDOW_MS + 3_000,
+    );
+
+    // ── Scenario 3b: second per-chunk multipart stall (different boundary) ────
+    it(
+      "authenticated stalling multipart upload (helper server): multipart path also times out and returns 408 (variant)",
+      async () => {
+        const cookie = await makeSessionCookie();
+        const boundary = "----SlowDripTestBoundaryABC";
+        // Partial multipart body: opening boundary + part headers, no file data.
+        // The client goes silent — the server's per-chunk timer fires and returns 408.
+        const initialBytes = Buffer.from(
+          `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="file"; filename="test.jpg"\r\n` +
+          `Content-Type: image/jpeg\r\n` +
+          `\r\n`,
+          "utf8",
+        );
+        const start = Date.now();
+        const { statusCode, body } = await sendStallingUploadToHelper({
+          cookie,
+          responseTimeoutMs: RESPONSE_WINDOW_MS,
+          contentType: `multipart/form-data; boundary=${boundary}`,
+          initialBytes,
         });
         const elapsed = Date.now() - start;
         expect(statusCode).toBe(408);

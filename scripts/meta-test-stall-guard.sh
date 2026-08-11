@@ -26,6 +26,13 @@
 # ─────
 #   bash scripts/meta-test-stall-guard.sh
 #
+# Environment variables
+#   NEXTDEV_STARTUP_THRESHOLD_S  Max seconds next-dev may take to become ready
+#                                inside the meta-test run.  Defaults to 90.
+#                                Set by the workflow from the startup_threshold_s
+#                                dispatch input so operators can tune both jobs
+#                                in a single dispatch.
+#
 # Exit codes
 #   0  — meta-test passed: the slow suite correctly detected the injected
 #          timing regression and exited non-zero.
@@ -33,6 +40,12 @@
 #          or it failed for an unrelated reason (wrong kind of failure).
 
 set -euo pipefail
+
+# Allow the caller (or CI workflow) to tune the next-dev startup budget.
+# The workflow forwards the startup_threshold_s dispatch input here so that
+# operators can adjust both the slow-tests job and this meta-test in one
+# workflow_dispatch, without needing two separate dispatch runs.
+NEXTDEV_STARTUP_THRESHOLD_S="${NEXTDEV_STARTUP_THRESHOLD_S:-90}"
 
 echo "=== Stall-guard meta-test ==="
 
@@ -44,6 +57,7 @@ echo "=== Stall-guard meta-test ==="
 # avoiding a second cold start (~90 s saved).
 echo "Probing next-dev cold-start time (PROBE_RETAIN_CACHE=1) …"
 PROBE_RETAIN_CACHE=1 \
+  NEXTDEV_STARTUP_THRESHOLD_S="${NEXTDEV_STARTUP_THRESHOLD_S}" \
   pnpm --filter @workspace/artwork-bank run probe:nextdev-startup
 echo ""
 
@@ -65,12 +79,14 @@ echo "✓ Sentinel found: $(cat "${SENTINEL}")"
 echo ""
 
 echo "Injecting UPLOAD_READ_TIMEOUT_MS=1 to simulate a stall regression …"
+echo "Using next-dev startup threshold: ${NEXTDEV_STARTUP_THRESHOLD_S}s"
 echo ""
 
 # Capture both stdout and stderr; preserve the exit code without triggering
 # set -e (the || true keeps bash happy while we inspect the code manually).
 OUTPUT_FILE="$(mktemp)"
 UPLOAD_READ_TIMEOUT_MS=1 \
+  NEXTDEV_STARTUP_THRESHOLD_S="${NEXTDEV_STARTUP_THRESHOLD_S}" \
   pnpm --filter @workspace/artwork-bank run test:slow \
   >"${OUTPUT_FILE}" 2>&1 \
   && SLOW_EXIT=0 || SLOW_EXIT=$?

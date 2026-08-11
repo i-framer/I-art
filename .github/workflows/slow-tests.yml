@@ -124,10 +124,11 @@ jobs:
         run: bash scripts/meta-test-probe-nextdev.sh
 
   stall-guard-meta-test:
-    name: Stall-guard meta-test (main only)
-    # Only run on main merges — this job deliberately breaks the slow suite to
-    # confirm the guard is still effective; it should not block PRs.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Stall-guard meta-test
+    # Only run on main merges or explicit workflow_dispatch — this job
+    # deliberately breaks the slow suite to confirm the guard is still
+    # effective; it should not block PRs.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # The meta-test runs the probe first with PROBE_RETAIN_CACHE=1, then hands
     # the warm .next-probe cache to test:slow so next-dev is only cold-started
@@ -151,4 +152,6 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Confirm stall guard catches a regression
+        env:
+          NEXTDEV_STARTUP_THRESHOLD_S: ${{ inputs.startup_threshold_s || '90' }}
         run: bash scripts/meta-test-stall-guard.sh
