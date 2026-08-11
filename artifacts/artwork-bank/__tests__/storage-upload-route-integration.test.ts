@@ -370,6 +370,34 @@ describeIntegration(
       expect(mockPutObject).not.toHaveBeenCalled();
     });
 
+    it("no Content-Length header + small early chunks then one chunk that tips total over MAX_SIZE_BYTES → 413, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      // 10 × 2 MiB = 20 MiB (well under the 25 MiB limit after each chunk).
+      // Then one final chunk of 5 MiB + 1 byte brings the running total to
+      // 25 MiB + 1 byte, which must trigger the 413 mid-stream, not on the
+      // first chunk.
+      const MAX_SIZE_BYTES = 25 * 1024 * 1024;
+      const SMALL_CHUNK_SIZE = 2 * 1024 * 1024; // 2 MiB
+      const SMALL_CHUNK_COUNT = 10; // 10 × 2 MiB = 20 MiB
+      const FINAL_CHUNK_SIZE = MAX_SIZE_BYTES - SMALL_CHUNK_COUNT * SMALL_CHUNK_SIZE + 1; // 5 MiB + 1 byte
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let i = 0; i < SMALL_CHUNK_COUNT; i++) {
+            controller.enqueue(new Uint8Array(SMALL_CHUNK_SIZE));
+          }
+          // This final chunk pushes the total to MAX_SIZE_BYTES + 1.
+          controller.enqueue(new Uint8Array(FINAL_CHUNK_SIZE));
+          controller.close();
+        },
+      });
+      const req = makeRequest({ contentType: "image/jpeg", body });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(413);
+      expect(mockPutObject).not.toHaveBeenCalled();
+    });
+
     it("concurrent uploads: near-limit → 200 and over-limit → 413 independently", async () => {
       // This test confirms that the per-request byte counter (totalBytes) is
       // local to each invocation and does not bleed between concurrent calls.
