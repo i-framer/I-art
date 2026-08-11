@@ -263,6 +263,31 @@ describeIntegration(
       expect(mockPutObject).toHaveBeenCalledTimes(1);
     });
 
+    it("Content-Length: 1 (under limit) but actual body > 25 MB → 413, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      // The fast-path sees Content-Length: 1 and lets the request through.
+      // The post-read byte counter must still catch the oversized body and
+      // return 413 without calling putObject.
+      const OVER_LIMIT = 25 * 1024 * 1024 + 1;
+      const bigChunk = new Uint8Array(OVER_LIMIT);
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bigChunk);
+          controller.close();
+        },
+      });
+      const req = makeRequest({
+        contentType: "image/jpeg",
+        body,
+        contentLength: 1, // declared small — fast-path must not trust this
+      });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(413);
+      expect(mockPutObject).not.toHaveBeenCalled();
+    });
+
     it("no Content-Length header but body > 25 MB → 413, putObject not called", async () => {
       mockSession.value = { userId: `user-${uid()}` };
       // Build a ReadableStream that yields one chunk just over the 25 MB limit.
