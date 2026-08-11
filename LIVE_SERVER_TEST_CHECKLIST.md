@@ -15,7 +15,7 @@
 >   in the matching section (or a new section) in the same commit.
 > - When the user reports a result in chat, update the checkbox for them.
 
-_Last updated: 2026-08-11 (agent probe)_
+_Last updated: 2026-08-11 (agent probe — storage routes deployed; manual UI verification pending)_
 
 ---
 
@@ -57,7 +57,13 @@ _Last updated: 2026-08-11 (agent probe)_
 
 > ✅ **Vercel Blob store confirmed live (agent probe 2026-08-11):**
 > `curl https://www.i-art.com.au/api/storage/health` → `{"ok":true,"provider":"vercel-blob"}`.
-> Blob store connected; `BLOB_READ_WRITE_TOKEN` is active in production. Ready for manual upload test below.
+> Blob store connected; `BLOB_READ_WRITE_TOKEN` is active in production.
+>
+> ✅ **Server-side upload proxy confirmed deployed (agent probe 2026-08-11):**
+> `POST /api/storage/upload` → 401 (auth guard correct; route is live).
+> `GET /api/storage/serve` → 401 (auth guard correct; route is live).
+> All storage routes are deployed. **Interactive UI test (5.1, 5.2) still requires human sign-off** —
+> log in as admin, upload an image in the catalog editor, verify it renders and persists, then delete it.
 
 - [ ] 5.1 Upload artwork images on the live site — they display via `/api/storage/serve`
 - [ ] 5.2 Delete an artwork — its images are removed from object storage
