@@ -35,6 +35,18 @@
 set -euo pipefail
 
 echo "=== Stall-guard meta-test ==="
+
+# ── Step 1: probe cold-start and retain the cache ─────────────────────────────
+# Mirror the same two-step pattern used in the main slow-tests CI job:
+# run the probe first with PROBE_RETAIN_CACHE=1 so that it keeps its
+# .next-probe build directory and writes a sentinel file.  The subsequent
+# test:slow invocation detects the sentinel and reuses the warm cache,
+# avoiding a second cold start (~90 s saved).
+echo "Probing next-dev cold-start time (PROBE_RETAIN_CACHE=1) …"
+PROBE_RETAIN_CACHE=1 \
+  pnpm --filter @workspace/artwork-bank run probe:nextdev-startup
+echo ""
+
 echo "Injecting UPLOAD_READ_TIMEOUT_MS=1 to simulate a stall regression …"
 echo ""
 
