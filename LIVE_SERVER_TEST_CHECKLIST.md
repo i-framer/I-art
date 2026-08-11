@@ -15,7 +15,7 @@
 >   in the matching section (or a new section) in the same commit.
 > - When the user reports a result in chat, update the checkbox for them.
 
-_Last updated: 2026-08-07 (agent + GG live run #2)_
+_Last updated: 2026-08-11 (agent probe)_
 
 ---
 
@@ -55,22 +55,12 @@ _Last updated: 2026-08-07 (agent + GG live run #2)_
 
 ## 5. Storage & sweeps
 
-> **⚠️ Operator action required before 5.1 and 5.2 can be tested:**
->
-> `curl https://i-art.com.au/api/storage/health` still returns `{"ok":false}` — the Vercel Blob store has not been connected to the project yet. Steps to fix:
->
-> 1. Go to **Vercel → your project → Storage tab → Create Store → Blob**.
-> 2. Give it any name (e.g. `i-art-images`) and click **Create**.
-> 3. On the next screen, click **Connect to project** and select the `i-art.com.au` project.
->    Vercel injects `BLOB_READ_WRITE_TOKEN` automatically into the Production (and Preview) environment.
-> 4. Trigger a new deployment (push a dummy commit, or use Vercel → Deployments → Redeploy).
-> 5. Confirm: `curl https://i-art.com.au/api/storage/health` returns `{"ok":true,"provider":"vercel-blob"}`.
-> 6. Then run the two tests below and check them off.
->
-> Full setup reference: `DEPLOY.md` §2 (BLOB_READ_WRITE_TOKEN row) and §3 (Storage backend).
+> ✅ **Vercel Blob store confirmed live (agent probe 2026-08-11):**
+> `curl https://www.i-art.com.au/api/storage/health` → `{"ok":true,"provider":"vercel-blob"}`.
+> Blob store connected; `BLOB_READ_WRITE_TOKEN` is active in production. Ready for manual upload test below.
 
-- [!] 5.1 Upload artwork images on the live site — they display via `/api/storage/serve` — **BLOCKED: Vercel Blob store not yet connected** (see operator steps above)
-- [!] 5.2 Delete an artwork — its images are removed from object storage — **BLOCKED: depends on 5.1**
+- [ ] 5.1 Upload artwork images on the live site — they display via `/api/storage/serve`
+- [ ] 5.2 Delete an artwork — its images are removed from object storage
 - [ ] 5.3 Orphan sweep cron runs and posts its result; operator alert arrives on errors (Task #205)
 - [x] 5.4 `/api/storage/orphan-sweep` rejects calls without the Bearer secret (GG 2026-08-07)
 
