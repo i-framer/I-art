@@ -453,6 +453,29 @@ describeIntegration(
       expect(mockPutObject).toHaveBeenCalledTimes(1);
     }, 5_000 /* must complete within 5 s */);
 
+    it("no Content-Length header + exactly 1-byte body → 200, putObject called with the byte", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      mockPutObject.mockResolvedValue(undefined);
+      // A single 1-byte chunk with no Content-Length header confirms the lower
+      // boundary: the body-reading loop must not reject or silently drop tiny uploads.
+      const oneByte = new Uint8Array([0x42]); // arbitrary single byte
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(oneByte);
+          controller.close();
+        },
+      });
+      const req = makeRequest({ contentType: "image/jpeg", body });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(200);
+      expect(mockPutObject).toHaveBeenCalledTimes(1);
+      // Confirm the blob passed to putObject contains exactly the 1 byte we sent.
+      const blobArg: Blob = mockPutObject.mock.calls[0]![1] as Blob;
+      expect(blobArg.size).toBe(1);
+    }, 1_000 /* must complete within 1 s */);
+
     it("concurrent uploads: near-limit → 200 and over-limit → 413 independently", async () => {
       // This test confirms that the per-request byte counter (totalBytes) is
       // local to each invocation and does not bleed between concurrent calls.
