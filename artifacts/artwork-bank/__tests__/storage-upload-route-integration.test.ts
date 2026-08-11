@@ -953,6 +953,224 @@ describeIntegration(
       expect(uploadedBytes).toEqual(fileBytes);
     });
 
+    it("slow-drip with gaps: tiny chunks sent just under the per-read deadline, total time exceeds wall-clock deadline → 408, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+
+      // Attack pattern: the client sends one tiny chunk, then waits just under
+      // the per-read timeout, then sends another, and repeats.  No single read
+      // ever stalls long enough to trigger the per-chunk deadline, and the body
+      // stays well within the 25 MiB size limit — so neither the existing byte
+      // guard nor the per-read timeout fires.  Only a total wall-clock deadline
+      // can catch this slow-drip-with-gaps pattern.
+      //
+      // Timeouts used here (injected via env vars):
+      //   UPLOAD_READ_TIMEOUT_MS  = 300 ms  — per-chunk read deadline
+      //   UPLOAD_TOTAL_TIMEOUT_MS = 500 ms  — total upload wall-clock deadline
+      //
+      // Stream design:
+      //   Each pull() waits GAP_MS (200 ms) before yielding a 1-byte chunk.
+      //   200 ms < 300 ms → per-read deadline is never triggered.
+      //   After ~3 reads the cumulative elapsed time ≈ 600 ms > 500 ms, so the
+      //   total-deadline guard fires and the route returns 408.
+      //   Total data sent: at most 10 bytes — nowhere near the 25 MiB limit.
+      vi.stubEnv("UPLOAD_READ_TIMEOUT_MS", "300");
+      vi.stubEnv("UPLOAD_TOTAL_TIMEOUT_MS", "500");
+
+      const GAP_MS = 200;       // just under the 300 ms per-read deadline
+      const TOTAL_CHUNKS = 10;  // if deadline weren't enforced we'd send all 10
+      const CHUNK_SIZE = 1;     // 1 byte each — nowhere near the 25 MiB limit
+
+      let sent = 0;
+      let cancelCalled = false;
+      // Guard: once reader.cancel() fires, prevent in-flight setTimeout
+      // callbacks from calling controller.enqueue() on an already-cancelled
+      // controller, which would throw ERR_INVALID_STATE.
+      let cancelled = false;
+
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent >= TOTAL_CHUNKS) {
+            controller.close();
+            return;
+          }
+          // Delay each chunk by GAP_MS to simulate a slow sender.
+          // GAP_MS (200 ms) < UPLOAD_READ_TIMEOUT_MS (300 ms), so no single
+          // read times out — but the total elapsed time grows with each chunk.
+          return new Promise<void>((resolve) => {
+            setTimeout(() => {
+              if (!cancelled && sent < TOTAL_CHUNKS) {
+                controller.enqueue(new Uint8Array(CHUNK_SIZE));
+                sent++;
+              }
+              resolve();
+            }, GAP_MS);
+          });
+        },
+        cancel() {
+          cancelCalled = true;
+          cancelled = true;
+        },
+      });
+
+      const req = makeRequest({ contentType: "image/jpeg", body });
+      const res = await uploadPOST(req);
+
+      vi.unstubAllEnvs();
+
+      // The route must detect the slow-drip pattern via the total wall-clock
+      // deadline and abort with 408, not hang indefinitely or accept the upload.
+      expect(res.status).toBe(408);
+      expect(mockPutObject).not.toHaveBeenCalled();
+
+      // reader.cancel() must have been called so the stream is cleaned up and
+      // no open handles remain after the test.
+      expect(cancelCalled).toBe(true);
+
+      // The route must have stopped well before all TOTAL_CHUNKS were sent —
+      // the total-deadline guard fires after ~3 reads (≈600 ms), not 10.
+      expect(sent).toBeLessThan(TOTAL_CHUNKS);
+    }, 4_000 /* 500 ms total deadline + generous headroom for CI */);
+
+    it("slow-drip with gaps: total deadline interrupts an already-pending read, not waiting for per-read timeout → 408 before per-read deadline, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+
+      // This test verifies that the total deadline races *inside* the
+      // Promise.race() on each reader.read() — it can interrupt a read that
+      // is already in-flight, not just check between reads.
+      //
+      // Proof strategy:
+      //   UPLOAD_READ_TIMEOUT_MS  = 2000 ms (per-read deadline, high)
+      //   UPLOAD_TOTAL_TIMEOUT_MS =  300 ms (total deadline, low)
+      //
+      // Stream sends exactly 1 chunk immediately, then stalls forever
+      // (pending pull() that never resolves on its own).  The stall begins
+      // at ~0 ms into the second read call, which is well under the 2000 ms
+      // per-read deadline.
+      //
+      // If the total deadline only checks at the top of the loop:
+      //   - it would miss the stall because the check ran before the stall began
+      //   - the route would then wait up to 2000 ms for the per-read timeout
+      //   - uploadPOST() would take ~2000 ms to return → test fails its 800 ms budget
+      //
+      // If the total deadline races inside the Promise.race():
+      //   - the 300 ms timer fires while reader.read() is still pending
+      //   - uploadPOST() returns within ~300–400 ms → test passes
+      vi.stubEnv("UPLOAD_READ_TIMEOUT_MS", "2000");
+      vi.stubEnv("UPLOAD_TOTAL_TIMEOUT_MS", "300");
+
+      let cancelCalled = false;
+      let pendingResolve: (() => void) | null = null;
+      let sent = 0;
+
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent === 0) {
+            // First pull: yield a single byte immediately.
+            controller.enqueue(new Uint8Array([0x42]));
+            sent++;
+            return;
+          }
+          // Second pull: stall indefinitely.  Only cancel() can unblock this.
+          return new Promise<void>((resolve) => {
+            pendingResolve = resolve;
+          });
+        },
+        cancel() {
+          cancelCalled = true;
+          if (pendingResolve) pendingResolve();
+        },
+      });
+
+      const req = makeRequest({ contentType: "image/jpeg", body });
+      const start = Date.now();
+      const res = await uploadPOST(req);
+      const elapsed = Date.now() - start;
+
+      vi.unstubAllEnvs();
+
+      expect(res.status).toBe(408);
+      expect(mockPutObject).not.toHaveBeenCalled();
+      // cancel() must have been called so the stalled stream unblocks cleanly.
+      expect(cancelCalled).toBe(true);
+      // The total deadline (300 ms) must have interrupted the pending read.
+      // Allow up to 800 ms for CI jitter, but NOT the full 2000 ms per-read timeout.
+      expect(elapsed).toBeLessThan(800);
+    }, 3_000 /* budget: 300 ms deadline + generous CI headroom */);
+
+    it("multipart slow-drip with gaps: tiny multipart body chunks with gaps, total time exceeds wall-clock deadline → 408, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+
+      // The multipart path must enforce the same total wall-clock deadline as
+      // the raw path.  This test sends a multipart/form-data body as a
+      // slow-drip pull-based stream: each chunk arrives after a GAP_MS delay,
+      // well under the per-read timeout, but the cumulative time exceeds the
+      // total deadline.
+      //
+      // Timeouts:
+      //   UPLOAD_READ_TIMEOUT_MS  = 300 ms
+      //   UPLOAD_TOTAL_TIMEOUT_MS = 500 ms
+      // Stream: each pull() waits 200 ms before yielding a 1-byte chunk.
+      //   200 ms < 300 ms → per-read deadline never triggers.
+      //   After ~3 reads ≈ 600 ms > 500 ms → total deadline fires → 408.
+      vi.stubEnv("UPLOAD_READ_TIMEOUT_MS", "300");
+      vi.stubEnv("UPLOAD_TOTAL_TIMEOUT_MS", "500");
+
+      const GAP_MS = 200;
+      const TOTAL_CHUNKS = 10;
+
+      let sent = 0;
+      let cancelCalled = false;
+      let cancelled = false;
+
+      // Build a raw pull-based stream that drips 1-byte chunks slowly.
+      // The bytes are not a valid multipart body, but the route aborts at the
+      // body-reading stage (before parsing), so the content doesn't matter.
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent >= TOTAL_CHUNKS) {
+            controller.close();
+            return;
+          }
+          return new Promise<void>((resolve) => {
+            setTimeout(() => {
+              if (!cancelled && sent < TOTAL_CHUNKS) {
+                controller.enqueue(new Uint8Array(1));
+                sent++;
+              }
+              resolve();
+            }, GAP_MS);
+          });
+        },
+        cancel() {
+          cancelCalled = true;
+          cancelled = true;
+        },
+      });
+
+      // Manufacture a multipart/form-data Content-Type header so the route
+      // takes the multipart branch.  The boundary value is irrelevant because
+      // the route returns 408 before it ever reaches the multipart parser.
+      const boundary = "boundary123";
+      const req = new Request("https://example.com/api/storage/upload", {
+        method: "POST",
+        headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+        body,
+        // @ts-expect-error -- duplex required for streaming bodies in Node.js fetch
+        duplex: "half",
+      }) as any;
+
+      const res = await uploadPOST(req);
+
+      vi.unstubAllEnvs();
+
+      expect(res.status).toBe(408);
+      expect(mockPutObject).not.toHaveBeenCalled();
+      // reader.cancel() must have been called to clean up the stalled stream.
+      expect(cancelCalled).toBe(true);
+      // Must have stopped before all 10 chunks were sent.
+      expect(sent).toBeLessThan(TOTAL_CHUNKS);
+    }, 4_000 /* 500 ms total deadline + generous CI headroom */);
+
     it("concurrent uploads: near-limit → 200 and over-limit → 413 independently", async () => {
       // This test confirms that the per-request byte counter (totalBytes) is
       // local to each invocation and does not bleed between concurrent calls.

@@ -87,84 +87,31 @@ function getReadTimeoutMs(): number {
 }
 
 /**
- * Race reader.read() against a deadline.  Clears the timer on success so that
- * fast streams don't accumulate open timer handles.
+ * Total wall-clock deadline for the entire body-reading loop, in milliseconds.
  *
- * Throws an Error with name "UploadReadTimeout" when the deadline fires.
+ * A slow-drip attacker can evade the per-chunk deadline by sending one tiny
+ * chunk just before each per-read timeout fires, keeping the connection alive
+ * indefinitely while never triggering the byte-limit guard.  This deadline
+ * caps the total time spent in the reading loop regardless of chunk cadence.
+ *
+ * The deadline is enforced by including it in every Promise.race() call so
+ * that a read which began just before the deadline is interrupted the moment
+ * the timer fires — not after the per-chunk timeout fires independently.
+ *
+ * Configurable via UPLOAD_TOTAL_TIMEOUT_MS so integration tests can inject a
+ * short deadline without altering production behaviour.  Defaults to 2 min.
  */
-async function readChunkWithTimeout(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-): Promise<ReadableStreamReadResult<Uint8Array>> {
-  const ms = getReadTimeoutMs();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      const err = new Error(`Upload stalled: no data received within ${ms} ms`);
-      err.name = "UploadReadTimeout";
-      reject(err);
-    }, ms);
-  });
-  try {
-    return await Promise.race([reader.read(), timeoutPromise]);
-  } finally {
-    clearTimeout(timer);
-  }
+function getTotalTimeoutMs(): number {
+  return Number(process.env.UPLOAD_TOTAL_TIMEOUT_MS ?? "120000");
 }
 
-/**
- * Read a ReadableStream<Uint8Array> incrementally, collecting chunks until the
- * stream is exhausted or the running total exceeds `limitBytes`. Cancels the
- * reader as soon as the limit is exceeded so the sender stops early.
- *
- * Each individual read is raced against the per-chunk deadline enforced by
- * readChunkWithTimeout(), so a stalling multipart client (one that sends
- * headers and a partial body then stops transmitting) is rejected with an
- * UploadReadTimeout error rather than holding the connection open indefinitely.
- *
- * Returns `{ chunks, totalBytes, oversized }`. The caller checks `oversized`
- * before using `chunks`; if true the body was discarded.
- *
- * Throws an Error with name "UploadReadTimeout" when a per-chunk deadline
- * fires — the caller is responsible for converting this to a 408 response.
- */
-async function readBoundedStream(
-  stream: ReadableStream<Uint8Array>,
-  limitBytes: number,
-): Promise<{ chunks: BlobPart[]; totalBytes: number; oversized: boolean }> {
-  const chunks: BlobPart[] = [];
-  let totalBytes = 0;
-  let oversized = false;
-  const reader = stream.getReader();
-  try {
-    while (true) {
-      // Race each read against the per-chunk deadline so a stalling client
-      // cannot hold the connection open past UPLOAD_READ_TIMEOUT_MS.
-      const { done, value } = await readChunkWithTimeout(reader);
-      if (done) break;
-      totalBytes += value.byteLength;
-      if (totalBytes > limitBytes) {
-        oversized = true;
-        await reader.cancel();
-        break;
-      }
-      // Cast required: Uint8Array<ArrayBufferLike> is not assignable to BlobPart
-      // (which requires ArrayBufferView<ArrayBuffer>) in strict TS, but the
-      // runtime behaviour is identical.
-      chunks.push(value as BlobPart);
-    }
-  } catch (err) {
-    // Re-throw UploadReadTimeout so the caller can return 408; convert all
-    // other stream errors into a generic sentinel that the caller maps to 400.
-    if (err instanceof Error && err.name === "UploadReadTimeout") {
-      throw err;
-    }
-    throw new Error("stream-read-failed", { cause: err });
-  }
-  return { chunks, totalBytes, oversized };
-}
-
-// ─── route ───────────────────────────────────────────────────────────────────
-
+type ReadResult = {
+  chunks: BlobPart[];
+  totalBytes: number;
+  oversized: boolean;
+  timedOut: boolean;
+  timeoutKind: "read" | "total" | null;
+};
 export async function POST(request: NextRequest) {
   const session = await getSession();
   if (!session.userId) {
@@ -194,33 +141,23 @@ export async function POST(request: NextRequest) {
       return storageSizeError();
     }
 
-    // Stream-cap the raw body BEFORE parsing.  request.formData() buffers the
-    // entire body internally; calling it directly would allow an attacker to
-    // force unbounded memory use on requests that omit Content-Length (chunked
-    // / streaming).  By reading the stream ourselves first with a hard byte
-    // cap, we guarantee at most MAX_MULTIPART_TOTAL_BYTES are ever in memory
-    // regardless of what the client claims.
-    let chunks: BlobPart[];
-    let oversized: boolean;
-    try {
-      ({ chunks, oversized } = await readBoundedStream(
-        request.body,
+    // Stream-cap the raw body BEFORE parsing, with the same per-chunk and total
+    // deadlines used by the raw path.  request.formData() buffers everything
+    // internally, so calling it directly would allow:
+    //   - unbounded memory use on chunked / streaming requests (no byte cap)
+    //   - a slow-drip client to hold the connection open indefinitely (no timeout)
+    // Reading through readStreamWithDeadlines enforces both limits before the
+    // multipart parser ever sees the bytes.
+    const reader = request.body.getReader();
+    const { chunks, oversized, timedOut, timeoutKind } =
+      await readStreamWithDeadlines(
+        reader,
         MAX_MULTIPART_TOTAL_BYTES,
-      ));
-    } catch (err) {
-      // readBoundedStream re-throws UploadReadTimeout so the multipart path
-      // enforces the same per-chunk stall deadline as the raw image/* path.
-      if (err instanceof Error && err.name === "UploadReadTimeout") {
-        return NextResponse.json(
-          { error: "Upload timed out: client stalled mid-stream" },
-          { status: 408 },
-        );
-      }
-      return NextResponse.json(
-        { error: "Failed to read request body" },
-        { status: 400 },
+        getReadTimeoutMs(),
+        getTotalTimeoutMs(),
       );
-    }
+
+    if (timedOut) return timeoutResponse(timeoutKind);
 
     if (oversized) {
       // Total request body exceeded MAX_MULTIPART_TOTAL_BYTES — definitely over
@@ -294,52 +231,24 @@ export async function POST(request: NextRequest) {
     return storageSizeError();
   }
 
-  // Enforce the limit on the actual byte stream regardless of whether the
-  // client supplied a Content-Length header (chunked / streaming uploads skip
-  // it).  We count bytes incrementally so we can abort as soon as the limit is
-  // exceeded, avoiding buffering the entire oversized body into RAM.
-  // readChunkWithTimeout races each read against a deadline so that a client
-  // that stalls mid-stream (sending neither data nor EOF) is rejected with 408
-  // rather than hanging the server connection indefinitely.
-  const chunks: BlobPart[] = [];
-  let totalBytes = 0;
-  let oversized = false;
-
+  // Enforce the byte limit and both timeouts on the actual byte stream.
+  // readStreamWithDeadlines races every reader.read() against a per-chunk
+  // deadline and a single persistent total-deadline timer, so:
+  //   - a client that stalls on any single read is caught by the per-chunk guard
+  //   - a slow-drip client that sends tiny bursts just under the per-chunk
+  //     deadline is caught by the total-wall-clock guard
+  //   - a client that lies about Content-Length is caught by the byte counter
   const reader = request.body.getReader();
-  try {
-    while (true) {
-      const { done, value } = await readChunkWithTimeout(reader);
-      if (done) break;
-      totalBytes += value.byteLength;
-      if (totalBytes > MAX_SIZE_BYTES) {
-        oversized = true;
-        // Cancel the stream to signal the sender to stop sending.
-        await reader.cancel();
-        break;
-      }
-      // Cast required: ReadableStreamReadResult yields Uint8Array<ArrayBufferLike>
-      // which TypeScript's strict DOM types don't consider assignable to BlobPart
-      // (which requires ArrayBufferView<ArrayBuffer>).  The runtime behaviour is
-      // identical — Blob accepts Uint8Array regardless of the buffer's concrete
-      // TypeScript brand.
-      chunks.push(value as unknown as BlobPart);
-    }
-  } catch (err) {
-    // Best-effort cleanup — ignore errors from cancel() itself.
-    reader.cancel().catch(() => {});
+  const { chunks, totalBytes, oversized, timedOut, timeoutKind } =
+    await readStreamWithDeadlines(
+      reader,
+      MAX_SIZE_BYTES,
+      getReadTimeoutMs(),
+      getTotalTimeoutMs(),
+    );
 
-    if (err instanceof Error && err.name === "UploadReadTimeout") {
-      return NextResponse.json(
-        { error: "Upload timed out: client stalled mid-stream" },
-        { status: 408 },
-      );
-    }
-    return NextResponse.json({ error: "Failed to read request body" }, { status: 400 });
-  }
-
-  if (oversized) {
-    return storageSizeError();
-  }
+  if (timedOut) return timeoutResponse(timeoutKind);
+  if (oversized) return storageSizeError();
 
   if (totalBytes === 0) {
     return NextResponse.json({ error: "Request body is empty" }, { status: 400 });
@@ -355,4 +264,121 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     return handleStorageError(err);
   }
+}
+
+/**
+ * Read all chunks from `reader` with two concurrently enforced deadlines:
+ *
+ *   Per-chunk deadline (readTimeoutMs):
+ *     Each individual reader.read() must resolve within this window.  A client
+ *     that sends data and then stalls indefinitely is caught here.
+ *
+ *   Total wall-clock deadline (totalTimeoutMs):
+ *     The entire reading loop must complete within this window.  A slow-drip
+ *     client that sends one tiny burst just under the per-chunk deadline and
+ *     then repeats — never stalling long enough on any single read to trigger
+ *     the per-chunk guard — is caught here.
+ *
+ * Both deadlines are wired into every Promise.race() so that a read that is
+ * already in-flight is interrupted the instant either timer fires, rather than
+ * waiting for the current read to resolve first.
+ *
+ * Also enforces a running byte limit: cancels the reader and sets oversized if
+ * the accumulated byte count exceeds `limitBytes`.
+ */
+async function readStreamWithDeadlines(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  limitBytes: number,
+  readTimeoutMs: number,
+  totalTimeoutMs: number,
+): Promise<ReadResult> {
+  const chunks: BlobPart[] = [];
+  let totalBytes = 0;
+  let oversized = false;
+  let timedOut = false;
+  let timeoutKind: "read" | "total" | null = null;
+
+  // Build the total-deadline promise once outside the loop.  It persists
+  // across all iterations, so it fires at the absolute wall-clock limit
+  // regardless of how many reads have completed — unlike a per-iteration
+  // Date.now() check, which can only detect an overrun *after* the current
+  // read returns.
+  //
+  // Adding .catch(() => {}) suppresses the unhandled-rejection warning for the
+  // brief moments between loop iterations when no Promise.race is active.  The
+  // rejection is still consumed correctly inside the race when it fires.
+  let totalTimer: ReturnType<typeof setTimeout> | undefined;
+  const totalTimeoutPromise = new Promise<never>((_, reject) => {
+    totalTimer = setTimeout(() => {
+      const err = new Error("Upload timed out: upload took too long");
+      err.name = "UploadTotalTimeout";
+      reject(err);
+    }, totalTimeoutMs);
+  });
+  totalTimeoutPromise.catch(() => {});
+
+  try {
+    while (true) {
+      // Per-chunk deadline: a fresh timer for each reader.read() call.
+      // Cleared in the inner finally so fast reads leave no lingering handles.
+      let readTimer: ReturnType<typeof setTimeout> | undefined;
+      const readTimeoutPromise = new Promise<never>((_, reject) => {
+        readTimer = setTimeout(() => {
+          const err = new Error(
+            `Upload stalled: no data received within ${readTimeoutMs} ms`,
+          );
+          err.name = "UploadReadTimeout";
+          reject(err);
+        }, readTimeoutMs);
+      });
+
+      let result: ReadableStreamReadResult<Uint8Array>;
+      try {
+        result = await Promise.race([
+          reader.read(),
+          readTimeoutPromise,
+          totalTimeoutPromise,
+        ]);
+      } finally {
+        clearTimeout(readTimer);
+      }
+
+      if (result.done) break;
+      totalBytes += result.value.byteLength;
+      if (totalBytes > limitBytes) {
+        oversized = true;
+        // Cancel the stream to signal the sender to stop sending.
+        reader.cancel().catch(() => {});
+        break;
+      }
+      // Cast required: Uint8Array<ArrayBufferLike> is not assignable to BlobPart
+      // (which requires ArrayBufferView<ArrayBuffer>) in strict TS, but the
+      // runtime behaviour is identical.
+      chunks.push(result.value as unknown as BlobPart);
+    }
+  } catch (err) {
+    // Best-effort cleanup — ignore errors from cancel() itself.
+    reader.cancel().catch(() => {});
+    timedOut = true;
+    if (err instanceof Error && err.name === "UploadTotalTimeout") {
+      timeoutKind = "total";
+    } else if (err instanceof Error && err.name === "UploadReadTimeout") {
+      timeoutKind = "read";
+    }
+  } finally {
+    // Always clear the total-deadline timer.  If the loop completed normally
+    // (no timeout), this prevents the timer from firing after the function
+    // returns and causing a spurious unhandled rejection.
+    clearTimeout(totalTimer);
+  }
+
+  return { chunks, totalBytes, oversized, timedOut, timeoutKind };
+}
+
+function timeoutResponse(kind: "read" | "total" | null) {
+  const message =
+    kind === "total"
+      ? "Upload timed out: upload took too long"
+      : "Upload timed out: client stalled mid-stream";
+  return NextResponse.json({ error: message }, { status: 408 });
 }
