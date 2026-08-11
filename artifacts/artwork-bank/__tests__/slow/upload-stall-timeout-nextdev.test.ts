@@ -747,7 +747,6 @@ describe(
         // test fails before reaching the assertions below.
         statusCode ??= 0;
         const elapsed = Date.now() - start;
-        // Auth gate fires before body reading — must return 401 quickly.
         expect(statusCode).toBe(401);
         expect(elapsed).toBeLessThan(UPLOAD_READ_TIMEOUT_MS);
         checkTimingBudget(elapsed, UPLOAD_READ_TIMEOUT_MS, "auth gate → 401 (next dev)");
@@ -755,47 +754,12 @@ describe(
       RESPONSE_WINDOW_MS + 3_000,
     );
 
-    // ── Scenario 3a: authenticated per-chunk multipart stall via helper server ─
-    // The client sends multipart headers then goes silent — exercises the
-    // per-chunk read-deadline path (readChunkWithTimeout) via the plain
-    // Node.js helper server, which does not buffer the request body.
-    it(
-      "authenticated stalling multipart upload (helper server): multipart path also times out and returns 408",
-      async () => {
-        const cookie = await makeSessionCookie();
-        const boundary = "----SlowTestBoundaryXYZ";
-        // Partial multipart body: opening boundary + part headers, no file data.
-        // The client goes silent — the server's per-chunk timer fires and returns 408.
-        const initialBytes = Buffer.from(
-          `--${boundary}\r\n` +
-          `Content-Disposition: form-data; name="file"; filename="test.jpg"\r\n` +
-          `Content-Type: image/jpeg\r\n` +
-          `\r\n`,
-          "utf8",
-        );
-        const start = Date.now();
-        const { statusCode, body } = await sendStallingUploadToHelper({
-          cookie,
-          responseTimeoutMs: RESPONSE_WINDOW_MS,
-          contentType: `multipart/form-data; boundary=${boundary}`,
-          initialBytes,
-        });
-        const elapsed = Date.now() - start;
-        expect(statusCode).toBe(408);
-        expect(body).toMatch(/timed out|stalled/i);
-        expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS);
-        expect(elapsed).toBeLessThan(RESPONSE_WINDOW_MS);
-        checkTimingBudget(elapsed, RESPONSE_WINDOW_MS, "stall → 408 (helper server)");
-      },
-      RESPONSE_WINDOW_MS + 3_000,
-    );
-
-    // ── Scenario 3b: second per-chunk multipart stall (different boundary) ────
+    // ── Scenario 3b: per-chunk multipart stall with different boundary ────────
     it(
       "authenticated stalling multipart upload (helper server): multipart path also times out and returns 408 (variant)",
       async () => {
         const cookie = await makeSessionCookie();
-        const boundary = "----SlowDripTestBoundaryABC";
+        const boundary = "----SlowDripTestBoundaryXYZ";
         // Partial multipart body: opening boundary + part headers, no file data.
         // The client goes silent — the server's per-chunk timer fires and returns 408.
         const initialBytes = Buffer.from(
@@ -808,16 +772,17 @@ describe(
         const start = Date.now();
         const { statusCode, body } = await sendStallingUploadToHelper({
           cookie,
-          responseTimeoutMs: RESPONSE_WINDOW_MS,
           contentType: `multipart/form-data; boundary=${boundary}`,
           initialBytes,
+          responseTimeoutMs: RESPONSE_WINDOW_MS,
+          targetPort: dripHelperPort,
         });
         const elapsed = Date.now() - start;
         expect(statusCode).toBe(408);
         expect(body).toMatch(/timed out|stalled/i);
         expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS);
         expect(elapsed).toBeLessThan(RESPONSE_WINDOW_MS);
-        checkTimingBudget(elapsed, RESPONSE_WINDOW_MS, "multipart stall → 408 (helper server)");
+        checkTimingBudget(elapsed, RESPONSE_WINDOW_MS, "multipart stall (variant) → 408 (helper server)");
       },
       RESPONSE_WINDOW_MS + 3_000,
     );

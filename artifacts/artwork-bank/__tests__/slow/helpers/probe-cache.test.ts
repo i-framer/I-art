@@ -81,6 +81,31 @@ describe("consumeProbeCache", () => {
   );
 
   it(
+    "logs a console.log message containing the build directory name when the cache is successfully reused",
+    () => {
+      // The log line is the operator's only signal in CI that a warm start
+      // occurred.  Pin it here so an accidental deletion is caught immediately.
+      const buildDir = ".next-probe";
+      fs.mkdirSync(path.join(tmpDir, buildDir));
+      writeSentinel(buildDir);
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        consumeProbeCache(tmpDir);
+
+        // Exactly one log call must be emitted — not silently swallowed.
+        expect(logSpy).toHaveBeenCalledOnce();
+        const [logMessage] = logSpy.mock.calls[0] as [string];
+        // The message must name the directory so operators can trace which
+        // probe cache was reused in the CI log.
+        expect(logMessage).toContain(buildDir);
+      } finally {
+        logSpy.mockRestore();
+      }
+    },
+  );
+
+  it(
     "returns null and deletes the stale sentinel when the sentinel is present but the build directory is missing",
     () => {
       // Write a sentinel pointing to a directory that does NOT exist.
