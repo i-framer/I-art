@@ -736,6 +736,59 @@ describeIntegration(
       expect(mockPutObject).not.toHaveBeenCalled();
     });
 
+    it("multipart/form-data body > 25 MiB → 400 or 413, putObject not called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      // Real browser file-pickers send multipart/form-data instead of a raw
+      // image/* body.  The current route rejects multipart at the content-type
+      // guard (400), but if that guard ever widens to accept form uploads the
+      // size limit must still hold (413).  Either rejection status is correct;
+      // 200 is the only failure mode.
+      //
+      // Build a minimal multipart/form-data envelope:
+      //   --<boundary>\r\n
+      //   Content-Disposition: form-data; name="file"; filename="big.jpg"\r\n
+      //   Content-Type: image/jpeg\r\n
+      //   \r\n
+      //   <25 MiB + 1 byte of file data>
+      //   \r\n--<boundary>--\r\n
+      //
+      // The outer Content-Type header is multipart/form-data, so it does NOT
+      // start with "image/" and the current guard returns 400 immediately.
+      const boundary = "----FormBoundary" + uid().replace(/-/g, "");
+      const preamble = [
+        `--${boundary}\r\n`,
+        `Content-Disposition: form-data; name="file"; filename="big.jpg"\r\n`,
+        `Content-Type: image/jpeg\r\n`,
+        `\r\n`,
+      ].join("");
+      const epilogue = `\r\n--${boundary}--\r\n`;
+      const preambleBytes = new TextEncoder().encode(preamble);
+      const epilogueBytes = new TextEncoder().encode(epilogue);
+      const OVER_LIMIT = 25 * 1024 * 1024 + 1; // one byte over 25 MiB
+      const fileData = new Uint8Array(OVER_LIMIT);
+
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(preambleBytes);
+          controller.enqueue(fileData);
+          controller.enqueue(epilogueBytes);
+          controller.close();
+        },
+      });
+
+      const req = makeRequest({
+        contentType: `multipart/form-data; boundary=${boundary}`,
+        body,
+      });
+
+      const res = await uploadPOST(req);
+
+      // 400 = content-type guard (current behaviour); 413 = size guard (future).
+      // 200 is the only forbidden outcome.
+      expect([400, 413]).toContain(res.status);
+      expect(mockPutObject).not.toHaveBeenCalled();
+    });
+
     it("concurrent uploads: near-limit → 200 and over-limit → 413 independently", async () => {
       // This test confirms that the per-request byte counter (totalBytes) is
       // local to each invocation and does not bleed between concurrent calls.
