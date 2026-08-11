@@ -57,9 +57,19 @@ export function consumeProbeCache(artworkBankDir: string): string | null {
     return null;
   }
 
-  // Validate: the build directory must actually exist.
+  // Validate: the build directory must actually exist on disk.
+  // If BUILD_DIR was customised to a value different from what the probe used,
+  // the sentinel content will name a directory that is no longer present.
+  // Emit a clear warning instead of silently falling back to a cold start so
+  // the mismatch is visible in CI logs.
   const buildOutputPath = path.join(artworkBankDir, buildDir);
   if (!fs.existsSync(buildOutputPath)) {
+    console.warn(
+      `[slow-test] WARNING: probe cache sentinel names "${buildDir}" but that ` +
+        `directory does not exist at ${buildOutputPath}. ` +
+        `This usually means BUILD_DIR was changed between the probe step and the ` +
+        `test run. Discarding stale sentinel and falling back to a cold start.`,
+    );
     // Stale sentinel — clean it up and fall back to cold start.
     try {
       fs.rmSync(sentinelPath, { force: true });
