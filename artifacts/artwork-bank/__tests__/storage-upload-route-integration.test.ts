@@ -427,6 +427,32 @@ describeIntegration(
       expect(mockPutObject).not.toHaveBeenCalled();
     }, 5_000 /* must complete within 5 s */);
 
+    it("slow-drip stream: exactly 25,600 × 1-KiB chunks (= 25 MiB exactly) → 200, putObject called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      mockPutObject.mockResolvedValue(undefined);
+      // Each individual chunk is only 1 KiB.  We send exactly MAX_SIZE_BYTES / 1 KiB
+      // = 25,600 chunks so the running total reaches MAX_SIZE_BYTES precisely.
+      // The boundary condition (> vs >=) must allow this through, not reject it.
+      const CHUNK_SIZE = 1024; // 1 KiB
+      const MAX_SIZE_BYTES = 25 * 1024 * 1024;
+      const CHUNK_COUNT = MAX_SIZE_BYTES / CHUNK_SIZE; // 25,600 — exactly at the limit
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const chunk = new Uint8Array(CHUNK_SIZE);
+          for (let i = 0; i < CHUNK_COUNT; i++) {
+            controller.enqueue(chunk);
+          }
+          controller.close();
+        },
+      });
+      const req = makeRequest({ contentType: "image/jpeg", body });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(200);
+      expect(mockPutObject).toHaveBeenCalledTimes(1);
+    }, 5_000 /* must complete within 5 s */);
+
     it("concurrent uploads: near-limit → 200 and over-limit → 413 independently", async () => {
       // This test confirms that the per-request byte counter (totalBytes) is
       // local to each invocation and does not bleed between concurrent calls.
