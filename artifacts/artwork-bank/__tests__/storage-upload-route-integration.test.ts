@@ -206,6 +206,29 @@ describeIntegration(
       expect(mockPutObject).not.toHaveBeenCalled();
     });
 
+    it("Content-Length === MAX_SIZE_BYTES (exactly 25 MB) → 200, putObject called", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+      mockPutObject.mockResolvedValue(undefined);
+      const MAX_SIZE_BYTES = 25 * 1024 * 1024;
+      const exactChunk = new Uint8Array(MAX_SIZE_BYTES);
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(exactChunk);
+          controller.close();
+        },
+      });
+      const req = makeRequest({
+        contentType: "image/jpeg",
+        body,
+        contentLength: MAX_SIZE_BYTES,
+      });
+
+      const res = await uploadPOST(req);
+
+      expect(res.status).toBe(200);
+      expect(mockPutObject).toHaveBeenCalledTimes(1);
+    });
+
     it("no Content-Length header but body > 25 MB → 413, putObject not called", async () => {
       mockSession.value = { userId: `user-${uid()}` };
       // Build a ReadableStream that yields one chunk just over the 25 MB limit.
