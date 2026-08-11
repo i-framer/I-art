@@ -68,6 +68,39 @@ jobs:
       - name: Run slow test suite
         run: pnpm --filter @workspace/artwork-bank run test:slow
 
+  probe-meta-test:
+    name: Probe cold-start meta-test
+    # Runs on every PR and push to main so that regressions in the probe
+    # itself are caught before they silently affect the slow-test job.
+    runs-on: ubuntu-latest
+    # Scenario 1 waits up to 2 s (the injected threshold); scenario 2 exits in
+    # milliseconds.  A 5-minute budget is more than sufficient.
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Confirm probe exits non-zero on timeout and early crash
+        # Exercises both failure paths in probe-nextdev-startup.ts:
+        #   • timeout  — NEXTDEV_STARTUP_THRESHOLD_S=2 causes the probe to
+        #                give up before next-dev could ever become ready.
+        #   • early crash — a fake pnpm shim that exits 1 immediately is
+        #                   prepended to PATH so the probe sees a process
+        #                   that dies before the first HTTP poll.
+        run: bash scripts/meta-test-probe-nextdev.sh
+
   stall-guard-meta-test:
     name: Stall-guard meta-test (main only)
     # Only run on main merges — this job deliberately breaks the slow suite to
