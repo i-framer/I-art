@@ -367,18 +367,27 @@ function stopHelperServer(): Promise<void> {
  * Send a stalling POST to the helper server using Node.js `http.request`.
  *
  * The helper server uses a plain Node.js createServer that streams the request
- * body directly from the TCP layer (no buffering).  After writing 4 bytes via
- * req.write() and deliberately NOT calling req.end(), the client goes silent.
- * The server's read loop blocks in reader.read() until the per-chunk timer
- * fires, then returns 408.
+ * body directly from the TCP layer (no buffering).  After writing a few bytes
+ * via req.write() and deliberately NOT calling req.end(), the client goes
+ * silent.  The server's read loop blocks in reader.read() until the per-chunk
+ * timer fires, then returns 408.
  *
  * http.request's response callback fires as soon as the 408 response HEADERS
  * arrive — independently of the request-body state — so the Promise resolves
  * without needing the client to close its half of the connection.
+ *
+ * @param opts.contentType  - The Content-Type header value to send.
+ *   Defaults to "image/jpeg" (raw path).  Pass a multipart/form-data value
+ *   to exercise the multipart stall path.
+ * @param opts.initialBytes - Initial bytes to write before going silent.
+ *   Defaults to [0x58, 0x58, 0x58, 0x58] ("XXXX") — enough to get past the
+ *   auth gate without completing the body.
  */
 function sendStallingUploadToHelper(opts: {
   cookie?: string;
   responseTimeoutMs: number;
+  contentType?: string;
+  initialBytes?: Buffer;
 }): Promise<{ statusCode: number; body: string }> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -392,6 +401,9 @@ function sendStallingUploadToHelper(opts: {
     const extraHeaders: Record<string, string> = {};
     if (opts.cookie) extraHeaders["Cookie"] = opts.cookie;
 
+    const contentType = opts.contentType ?? "image/jpeg";
+    const initialBytes = opts.initialBytes ?? Buffer.from([0x58, 0x58, 0x58, 0x58]);
+
     const req = http.request(
       {
         hostname: "127.0.0.1",
@@ -399,7 +411,7 @@ function sendStallingUploadToHelper(opts: {
         method: "POST",
         path: "/api/storage/upload",
         headers: {
-          "Content-Type": "image/jpeg",
+          "Content-Type": contentType,
           // No Content-Length → Node.js uses Transfer-Encoding: chunked.
           // Each req.write() sends one chunk; NOT calling req.end() means
           // the terminator is never sent — the server's read loop blocks.
@@ -435,8 +447,8 @@ function sendStallingUploadToHelper(opts: {
       );
     }, opts.responseTimeoutMs);
 
-    // Write 4 bytes and then go silent — stall.
-    req.write(Buffer.from([0x58, 0x58, 0x58, 0x58])); // "XXXX"
+    // Write the initial bytes and then go silent — stall.
+    req.write(initialBytes);
   });
 }
 
@@ -542,6 +554,69 @@ describe(
         const { statusCode, body } = await sendStallingUploadToHelper({
           cookie,
           responseTimeoutMs: RESPONSE_WINDOW_MS,
+        });
+        const elapsed = Date.now() - start;
+
+        expect(statusCode).toBe(408);
+        expect(body).toMatch(/timed out|stalled/i);
+        expect(elapsed).toBeGreaterThanOrEqual(UPLOAD_READ_TIMEOUT_MS);
+        expect(elapsed).toBeLessThan(RESPONSE_WINDOW_MS);
+      },
+      RESPONSE_WINDOW_MS + 3_000,
+    );
+
+    it(
+      "authenticated stalling multipart upload (helper server): multipart path also times out and returns 408",
+      async () => {
+        /**
+         * Scenario 3 — multipart/form-data stall via helper server.
+         *
+         * The upload route has two body-reading paths: one for raw image/* bodies
+         * and one for multipart/form-data bodies.  Both call readStreamWithDeadlines
+         * before any parsing, so a client that stalls mid-body on the multipart
+         * path must also receive HTTP 408 after UPLOAD_READ_TIMEOUT_MS.
+         *
+         * WHY THE HELPER SERVER (not next dev)
+         * ─────────────────────────────────────
+         * Next.js 15 fully buffers the request body before invoking the App Router
+         * route handler — regardless of Content-Type.  A multipart request that
+         * stalls mid-body causes Next.js to wait at the transport layer, never
+         * reaching the route.  The helper server (plain Node.js createServer) does
+         * NOT buffer: body data is delivered to the route handler chunk-by-chunk as
+         * TCP delivers it.  This is the only reliable way to present a stalling
+         * body to readStreamWithDeadlines on a real TCP connection.
+         *
+         * WHAT IS SENT
+         * ─────────────
+         * A multipart/form-data request with a valid boundary is opened.  We write
+         * only the opening boundary line and part headers, then go silent without
+         * sending the file data or the closing boundary.  The helper server's read
+         * loop blocks in reader.read() waiting for the next chunk; after
+         * UPLOAD_READ_TIMEOUT_MS the per-chunk timer fires and returns 408.
+         *
+         * The response arrives via the http.request response-headers callback —
+         * independently of the stalling request body — so the Promise resolves
+         * as soon as the server sends 408.
+         */
+        const cookie = await makeSessionCookie();
+        const boundary = "----SlowTestBoundaryXYZ";
+        // Partial multipart body: opening boundary + part headers, no file data.
+        // The client goes silent here — the server never sees the file bytes or
+        // the closing boundary, causing the read loop to block.
+        const partialBody = Buffer.from(
+          `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="file"; filename="test.jpg"\r\n` +
+          `Content-Type: image/jpeg\r\n` +
+          `\r\n`,
+          "utf8",
+        );
+
+        const start = Date.now();
+        const { statusCode, body } = await sendStallingUploadToHelper({
+          cookie,
+          responseTimeoutMs: RESPONSE_WINDOW_MS,
+          contentType: `multipart/form-data; boundary=${boundary}`,
+          initialBytes: partialBody,
         });
         const elapsed = Date.now() - start;
 
