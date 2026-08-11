@@ -508,6 +508,10 @@ describeIntegration(
       const CHUNK_COUNT = CHUNKS_TO_LIMIT + 1; // 25,601 — one extra chunk pushes total to MAX + 1 KiB
       const chunk = new Uint8Array(CHUNK_SIZE);
       let sent = 0;
+      // Guard: once reader.cancel() fires, prevent the in-flight setImmediate
+      // from calling controller.enqueue() on an already-cancelled controller,
+      // which would throw ERR_INVALID_STATE and fail the suite.
+      let cancelled = false;
       const body = new ReadableStream<Uint8Array>({
         pull(controller) {
           if (sent >= CHUNK_COUNT) {
@@ -518,13 +522,16 @@ describeIntegration(
           // delivery and ensuring the route handles interleaved await points.
           return new Promise<void>((resolve) => {
             setImmediate(() => {
-              if (sent < CHUNK_COUNT) {
+              if (!cancelled && sent < CHUNK_COUNT) {
                 controller.enqueue(chunk);
                 sent++;
               }
               resolve();
             });
           });
+        },
+        cancel() {
+          cancelled = true;
         },
       });
       const req = makeRequest({ contentType: "image/jpeg", body });
@@ -601,6 +608,10 @@ describeIntegration(
       let cancelCalled = false; // flips to true when the stream's cancel() hook fires
       let sent = 0;
       const chunk = new Uint8Array(CHUNK_SIZE);
+      // Guard: once reader.cancel() fires, prevent the in-flight setImmediate
+      // from calling controller.enqueue() on an already-cancelled controller,
+      // which would throw ERR_INVALID_STATE and fail the suite.
+      let cancelled = false;
 
       const body = new ReadableStream<Uint8Array>({
         pull(controller) {
@@ -611,7 +622,7 @@ describeIntegration(
           // Yield to the event loop between each chunk (async-drip pattern).
           return new Promise<void>((resolve) => {
             setImmediate(() => {
-              if (sent < TOTAL_CHUNKS) {
+              if (!cancelled && sent < TOTAL_CHUNKS) {
                 chunksRead++;
                 controller.enqueue(chunk);
                 sent++;
@@ -626,6 +637,7 @@ describeIntegration(
         // and leaving the stream open.
         cancel() {
           cancelCalled = true;
+          cancelled = true;
         },
       });
 
@@ -850,6 +862,64 @@ describeIntegration(
       // Confirm reader.cancel() was actually invoked — not merely a loop break.
       expect(cancelCalled).toBe(true);
     }, 1_000 /* must complete within 1 s — hangs would be caught immediately */);
+    it("stall mid-stream (under limit): client sends 4 KiB then stalls forever without closing → 408 within deadline, no hang", async () => {
+      mockSession.value = { userId: `user-${uid()}` };
+
+      // Use a short read-timeout so the test completes quickly.
+      // getReadTimeoutMs() in the route reads process.env.UPLOAD_READ_TIMEOUT_MS
+      // on each call, so stubbing it here is sufficient.
+      vi.stubEnv("UPLOAD_READ_TIMEOUT_MS", "2000");
+
+      // Build a stream that emits 4 × 1-KiB chunks (4 KiB — well under 25 MiB)
+      // then stalls permanently: neither sending more data nor closing the stream.
+      // The stream therefore never triggers the byte-limit guard.  Only a
+      // server-side read deadline can unblock the route.
+      const INITIAL_CHUNKS = 4;
+      const CHUNK_SIZE = 1024; // 1 KiB
+      const chunk = new Uint8Array(CHUNK_SIZE);
+      let sent = 0;
+      let cancelCalled = false;
+      let pendingResolve: (() => void) | null = null;
+
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent < INITIAL_CHUNKS) {
+            controller.enqueue(chunk);
+            sent++;
+            return; // synchronous — no delay between the initial chunks
+          }
+          // All initial chunks have been sent.  The producer intentionally
+          // stalls here: returning a Promise that never resolves on its own.
+          // The route's read timeout will fire and call reader.cancel(), which
+          // invokes the cancel() hook below and unblocks this promise.
+          return new Promise<void>((resolve) => {
+            pendingResolve = resolve;
+          });
+        },
+        cancel() {
+          cancelCalled = true;
+          // Unblock the stalled pull() promise so the ReadableStream internals
+          // can settle cleanly and Vitest reports no open handles.
+          if (pendingResolve) pendingResolve();
+        },
+      });
+
+      const req = makeRequest({ contentType: "image/jpeg", body });
+
+      const res = await uploadPOST(req);
+
+      // Restore the env var so subsequent tests use the default timeout.
+      vi.unstubAllEnvs();
+
+      // The route must abort the stalled upload, not hang indefinitely.
+      expect(res.status).toBe(408);
+      expect(mockPutObject).not.toHaveBeenCalled();
+
+      // Confirm the route actually called reader.cancel() rather than just
+      // timing out internally while leaving the stream open.
+      expect(cancelCalled).toBe(true);
+    }, 6_000 /* 2 s timeout + generous headroom; hangs caught immediately */);
+
     it("concurrent uploads: near-limit → 200 and over-limit → 413 independently", async () => {
       // This test confirms that the per-request byte counter (totalBytes) is
       // local to each invocation and does not bleed between concurrent calls.
