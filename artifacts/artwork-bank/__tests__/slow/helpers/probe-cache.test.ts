@@ -1327,4 +1327,44 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       expect(output.result).toBe(".next-probe-ci");
     },
   );
+
+  it(
+    "falls back to 24 hours and does not crash when MAX_SENTINEL_AGE_HOURS is set to a bare carriage return in the subprocess environment",
+    () => {
+      // Windows-style line endings (CRLF) or certain heredoc CI configs can
+      // silently produce a bare carriage return ("\r") as the value of an
+      // environment variable.  A carriage-return-only value passes the
+      // `env !== ""` guard in the IIFE but then fails `Number.isFinite(parsed)`
+      // (Number("\r") is NaN, the same as Number("\n"), Number("\t"), or
+      // Number("  ")), so the IIFE must fall back to 24 hours.  This test
+      // documents that the guard covers carriage returns specifically, not
+      // just spaces, tabs, newlines, or empty strings.
+      //
+      // The test exercises this path through the real process boundary so
+      // Vitest module caching cannot interfere.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: { ...process.env, MAX_SENTINEL_AGE_HOURS: "\r" },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash when the env var is a bare carriage return.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must reject the carriage-return-only value (NaN after Number("\r"))
+      // and fall back to the 24-hour default.
+      expect(output.constant).toBe(24);
+
+      // The sentinel is 2 hours old — well within the 24-hour default threshold.
+      // consumeProbeCache must accept it and return the build directory name,
+      // confirming the process did not crash and the 24-hour fallback is active.
+      expect(output.result).toBe(".next-probe-ci");
+    },
+  );
 });
