@@ -3405,6 +3405,113 @@ describe("subprocess environment integration (age-guard CI override)", () => {
   );
 
   it(
+    "a sentinel aged exactly 36 000 ms is accepted at the 0.01 h threshold with zero tolerance (strict greater-than boundary at the sub-minute scale)",
+    async () => {
+      // 0.01 h = 36 000 ms exactly.  The age guard uses strictly-greater-than
+      // (ageMs > maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS), so a sentinel whose
+      // age equals maxAgeMs exactly must be accepted — not rejected.
+      //
+      // To pin the effective cutoff to exactly 36 000 ms we set
+      // MTIME_TRUNCATION_TOLERANCE_MS=0.  With the default 1 000 ms tolerance
+      // the cutoff would be 37 000 ms, making this test insensitive to a > → >=
+      // regression: a sentinel at 36 000 ms would still pass.  Zero tolerance
+      // eliminates that gap and makes the boundary deterministic.
+      //
+      // The existing 35-second and 60-second subprocess cases bracket either side
+      // of this boundary, but neither pins the exact-equality point at the
+      // sub-minute scale the way the hour-scale "accepts-exact-threshold" test
+      // does.  This test fills that gap: if a future refactor changes > to >=
+      // at the sub-minute scale, this test catches it immediately by seeing null
+      // instead of the build directory name.
+      //
+      // We freeze Date.now() via vi.useFakeTimers() and stub statSync to return
+      // a mtime exactly 36 000 ms before fixedNow, making ageMs === maxAgeMs
+      // with no filesystem truncation or clock drift.  Without a frozen clock or
+      // a stub, any elapsed milliseconds between the utimesSync call and the
+      // internal Date.now() would make the sentinel appear fractionally older
+      // than the threshold and cause a flaky failure.
+      const originalAge = process.env["MAX_SENTINEL_AGE_HOURS"];
+      const originalTol = process.env["MTIME_TRUNCATION_TOLERANCE_MS"];
+      process.env["MAX_SENTINEL_AGE_HOURS"] = "0.01";
+      process.env["MTIME_TRUNCATION_TOLERANCE_MS"] = "0";
+      vi.resetModules();
+
+      try {
+        const {
+          consumeProbeCache: consume,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+          MTIME_TRUNCATION_TOLERANCE_MS: tolerance,
+          MAX_SENTINEL_AGE_HOURS: maxHours,
+        } = await import("./probe-cache");
+
+        // Confirm the module loaded the pinned env vars.
+        expect(maxHours).toBe(0.01);
+        expect(tolerance).toBe(0);
+
+        const buildDir = ".next-probe-ci";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // Freeze the clock at a fixed point so the Date.now() inside
+        // consumeProbeCache is identical to the one used for the stub.
+        const fixedNow = Date.now();
+        vi.useFakeTimers();
+        vi.setSystemTime(fixedNow);
+
+        // Stub statSync on the sentinel to return a mtime exactly 36 000 ms
+        // before fixedNow, bypassing real filesystem mtime resolution.
+        // With the clock frozen, ageMs = fixedNow - (fixedNow - 36 000) = 36 000 ms.
+        // The guard fires when ageMs > maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS,
+        // i.e. 36 000 > 36 000 + 0 — which is false → sentinel must be accepted.
+        vi.mocked(fs.statSync).mockImplementationOnce((p) => {
+          if (p === sentinel) {
+            return { mtime: new Date(fixedNow - 36_000) } as fs.Stats;
+          }
+          throw new Error(`Unexpected statSync call for ${String(p)}`);
+        });
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // Sentinel age == maxAgeMs (36 000 ms), tolerance == 0:
+          // 36 000 > 36 000 + 0 → false → must be accepted, not rejected.
+          expect(result).toBe(buildDir);
+
+          // The sentinel must be consumed (deleted) after a successful read.
+          expect(fs.existsSync(sentinel)).toBe(false);
+
+          // No staleness warning must be emitted for an at-threshold sentinel.
+          expect(warnSpy).not.toHaveBeenCalled();
+
+          // The normal warm-start log must appear.
+          expect(logSpy).toHaveBeenCalledOnce();
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+          vi.useRealTimers();
+          vi.mocked(fs.statSync).mockRestore();
+        }
+      } finally {
+        if (originalAge === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalAge;
+        }
+        if (originalTol === undefined) {
+          delete process.env["MTIME_TRUNCATION_TOLERANCE_MS"];
+        } else {
+          process.env["MTIME_TRUNCATION_TOLERANCE_MS"] = originalTol;
+        }
+        // Restore the module registry so subsequent tests use the original module.
+        vi.resetModules();
+      }
+    },
+  );
+
+  it(
     "the same 36 500 ms sentinel is rejected when MTIME_TRUNCATION_TOLERANCE_MS=0 removes the buffer — proving the tolerance is doing real work",
     async () => {
       // Identical setup to the acceptance test above, but with
