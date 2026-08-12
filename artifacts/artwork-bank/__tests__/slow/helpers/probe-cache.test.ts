@@ -879,4 +879,42 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       expect(output.result).toBe(".next-probe-ci");
     },
   );
+
+  it.each([
+    ["0", "zero is not a positive number"],
+    ["-1", "negative numbers are not valid"],
+    ["abc", "non-numeric strings are not valid"],
+  ])(
+    "falls back to 24 hours and does not crash when MAX_SENTINEL_AGE_HOURS=%s (%s) is set in the subprocess environment",
+    (invalidValue) => {
+      // A CI file that accidentally sets MAX_SENTINEL_AGE_HOURS to an invalid
+      // value must not crash the probe step.  The IIFE in probe-cache.ts must
+      // silently ignore the bad value and fall back to the 24-hour default.
+      //
+      // We verify this through the process boundary — Vitest module caching
+      // cannot interfere because the child process has its own module registry.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: { ...process.env, MAX_SENTINEL_AGE_HOURS: invalidValue },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash regardless of the invalid env var.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must reject the invalid value and fall back to 24.
+      expect(output.constant).toBe(24);
+
+      // The sentinel is 2 hours old — well within the 24-hour default.
+      // consumeProbeCache must accept it and return the build directory name,
+      // proving the process did not crash and the fallback threshold is active.
+      expect(output.result).toBe(".next-probe-ci");
+    },
+  );
 });
