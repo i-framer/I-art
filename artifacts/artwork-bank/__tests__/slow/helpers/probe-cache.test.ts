@@ -2852,6 +2852,16 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       // value means a weakened default makes this test fail immediately.
       const maxAgeMs = 86_400_000; // 24 h in ms — must match the intended default
 
+      // Pin the mtime-truncation tolerance to a hardcoded 1 000 ms rather than
+      // reading MTIME_TRUNCATION_TOLERANCE_MS from the production module.  If
+      // the constant were silently reduced (e.g. 1 000 → 500), deriving from it
+      // would cause the acceptance assertion below to re-evaluate against the
+      // new, smaller ceiling — potentially masking the regression.  The explicit
+      // equality check below ensures a mutation is caught at the source before
+      // anything else in this test runs.
+      const PINNED_TOLERANCE_MS = 1_000;
+      expect(MTIME_TRUNCATION_TOLERANCE_MS).toBe(PINNED_TOLERANCE_MS);
+
       // Pin Date.now() to a value whose millisecond component is exactly 500.
       const fakeNow = Math.floor(Date.now() / 1000) * 1000 + 500;
       const dateSpy = vi.spyOn(Date, "now").mockReturnValue(fakeNow);
