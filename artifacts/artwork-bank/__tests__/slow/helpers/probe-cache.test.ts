@@ -1367,4 +1367,45 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       expect(output.result).toBe(".next-probe-ci");
     },
   );
+
+  it(
+    "falls back to 24 hours and does not crash when MAX_SENTINEL_AGE_HOURS is set to a bare form feed in the subprocess environment",
+    () => {
+      // Some legacy CI tooling (e.g. older build systems that post-process YAML
+      // with form-feed page separators) can silently produce a bare form feed
+      // ("\f") as the value of an environment variable.  A form-feed-only value
+      // passes the `env !== ""` guard in the IIFE but then fails
+      // `Number.isFinite(parsed)` (Number("\f") is NaN, the same as
+      // Number("\r"), Number("\n"), Number("\t"), or Number("  ")), so the IIFE
+      // must fall back to 24 hours.  This test documents that the guard covers
+      // form feeds specifically, not just spaces, tabs, newlines, carriage
+      // returns, or empty strings.
+      //
+      // The test exercises this path through the real process boundary so
+      // Vitest module caching cannot interfere.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: { ...process.env, MAX_SENTINEL_AGE_HOURS: "\f" },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash when the env var is a bare form feed.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must reject the form-feed-only value (NaN after Number("\f"))
+      // and fall back to the 24-hour default.
+      expect(output.constant).toBe(24);
+
+      // The sentinel is 2 hours old — well within the 24-hour default threshold.
+      // consumeProbeCache must accept it and return the build directory name,
+      // confirming the process did not crash and the 24-hour fallback is active.
+      expect(output.result).toBe(".next-probe-ci");
+    },
+  );
 });
