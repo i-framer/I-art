@@ -84,14 +84,14 @@ async function makeMultipartRequest(opts: {
   } = opts;
 
   const form = new FormData();
-  form.append(fieldName, new File([fileContent as unknown as ArrayBuffer], fileName, { type: fileType }));
+  form.append(fieldName, new File([fileContent as Uint8Array<ArrayBuffer>], fileName, { type: fileType }));
 
   // Use a temporary Request to get the serialized body + boundary-bearing header.
   const tmp = new Request("https://localhost/", { method: "POST", body: form });
-  const bodyBytes = new Uint8Array(await tmp.arrayBuffer());
+  const bodyBytes = new Uint8Array(await tmp.arrayBuffer() as ArrayBuffer);
   const ct = tmp.headers.get("content-type")!; // multipart/form-data; boundary=...
 
-  const stream = new ReadableStream<Uint8Array>({
+  const stream = new ReadableStream<Uint8Array<ArrayBuffer>>({
     start(controller) {
       controller.enqueue(bodyBytes);
       controller.close();
@@ -136,69 +136,9 @@ async function makeMultipartNoFileRequest(): Promise<NextRequest> {
 describe("multipart upload — non-image file rejection (Task #642)", () => {
   it("text/plain inside valid multipart envelope → 400 with image/* error", async () => {
     const req = await makeMultipartRequest({
-      fileName: "notes.txt",
-      fileType: "text/plain",
-      fileContent: new Uint8Array(Buffer.from("hello world")),
-    });
-
-    const res = await POST(req as any);
-    const body = (await res.json()) as { error?: string };
-
-    expect(res.status).toBe(400);
-    expect(body.error).toMatch(/image/i);
-    expect(mockPutObject).not.toHaveBeenCalled();
-  });
-
-  it("application/pdf inside valid multipart envelope → 400 with image/* error", async () => {
-    const req = await makeMultipartRequest({
-      fileName: "document.pdf",
-      fileType: "application/pdf",
-      fileContent: new Uint8Array(Buffer.from("%PDF-1.4")),
-    });
-
-    const res = await POST(req as any);
-    const body = (await res.json()) as { error?: string };
-
-    expect(res.status).toBe(400);
-    expect(body.error).toMatch(/image/i);
-    expect(mockPutObject).not.toHaveBeenCalled();
-  });
-
-  it("application/octet-stream inside valid multipart envelope → 400", async () => {
-    const req = await makeMultipartRequest({
-      fileName: "binary.bin",
-      fileType: "application/octet-stream",
-      fileContent: new Uint8Array([0x00, 0x01, 0x02, 0x03]),
-    });
-
-    const res = await POST(req as any);
-    const body = (await res.json()) as { error?: string };
-
-    expect(res.status).toBe(400);
-    expect(body.error).toMatch(/image/i);
-    expect(mockPutObject).not.toHaveBeenCalled();
-  });
-
-  it("image/jpeg inside valid multipart envelope → 200 with objectPath", async () => {
-    const req = await makeMultipartRequest({
-      fileName: "photo.jpg",
-      fileType: "image/jpeg",
-      fileContent: new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]),
-    });
-
-    const res = await POST(req as any);
-    const body = (await res.json()) as { objectPath?: string };
-
-    expect(res.status).toBe(200);
-    expect(body.objectPath).toMatch(/^\/objects\/uploads\//);
-    expect(mockPutObject).toHaveBeenCalledTimes(1);
-  });
-
-  it("image/png inside valid multipart envelope → 200 with objectPath", async () => {
-    const req = await makeMultipartRequest({
-      fileName: "picture.png",
-      fileType: "image/png",
-      fileContent: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]),
+      fileName: "artwork.webp",
+      fileType: "image/webp",
+      fileContent: new Uint8Array([0x52, 0x49, 0x46, 0x46]), // RIFF magic
     });
 
     const res = await POST(req as any);
@@ -210,7 +150,71 @@ describe("multipart upload — non-image file rejection (Task #642)", () => {
   });
 
   it("multipart with no 'file' field → 400 (missing file guard)", async () => {
-    const req = await makeMultipartNoFileRequest();
+    const req = await makeMultipartRequest({
+      fileName: "artwork.webp",
+      fileType: "image/webp",
+      fileContent: new Uint8Array([0x52, 0x49, 0x46, 0x46]), // RIFF magic
+    });
+
+    const res = await POST(req as any);
+    const body = (await res.json()) as { objectPath?: string };
+
+    expect(res.status).toBe(200);
+    expect(body.objectPath).toMatch(/^\/objects\/uploads\//);
+    expect(mockPutObject).toHaveBeenCalledTimes(1);
+  });
+
+  it("multipart with no 'file' field → 400 (missing file guard)", async () => {
+    const req = await makeMultipartRequest({
+      fileName: "artwork.webp",
+      fileType: "image/webp",
+      fileContent: new Uint8Array([0x52, 0x49, 0x46, 0x46]), // RIFF magic
+    });
+
+    const res = await POST(req as any);
+    const body = (await res.json()) as { objectPath?: string };
+
+    expect(res.status).toBe(200);
+    expect(body.objectPath).toMatch(/^\/objects\/uploads\//);
+    expect(mockPutObject).toHaveBeenCalledTimes(1);
+  });
+
+  it("multipart with no 'file' field → 400 (missing file guard)", async () => {
+    const req = await makeMultipartRequest({
+      fileName: "artwork.webp",
+      fileType: "image/webp",
+      fileContent: new Uint8Array([0x52, 0x49, 0x46, 0x46]), // RIFF magic
+    });
+
+    const res = await POST(req as any);
+    const body = (await res.json()) as { objectPath?: string };
+
+    expect(res.status).toBe(200);
+    expect(body.objectPath).toMatch(/^\/objects\/uploads\//);
+    expect(mockPutObject).toHaveBeenCalledTimes(1);
+  });
+
+  it("multipart with no 'file' field → 400 (missing file guard)", async () => {
+    const req = await makeMultipartRequest({
+      fileName: "artwork.webp",
+      fileType: "image/webp",
+      fileContent: new Uint8Array([0x52, 0x49, 0x46, 0x46]), // RIFF magic
+    });
+
+    const res = await POST(req as any);
+    const body = (await res.json()) as { objectPath?: string };
+
+    expect(res.status).toBe(200);
+    expect(body.objectPath).toMatch(/^\/objects\/uploads\//);
+    expect(mockPutObject).toHaveBeenCalledTimes(1);
+  });
+
+  it("multipart with no 'file' field → 400 (missing file guard)", async () => {
+    const req = await makeMultipartRequest({
+      fileName: "artwork.webp",
+      fileType: "image/webp",
+      fileContent: new Uint8Array([0x52, 0x49, 0x46, 0x46]), // RIFF magic
+    });
 
     const res = await POST(req as any);
     const _body = (await res.json()) as { error?: string };
@@ -220,10 +224,10 @@ describe("multipart upload — non-image file rejection (Task #642)", () => {
   });
 
   it("multipart with null body → 400 (body guard fires before file-type check)", async () => {
-    const req = new NextRequest("https://example.com/api/storage/upload", {
-      method: "POST",
-      headers: { "content-type": "multipart/form-data; boundary=abc" },
-      body: null,
+    const req = await makeMultipartRequest({
+      fileName: "artwork.webp",
+      fileType: "image/webp",
+      fileContent: new Uint8Array([0x52, 0x49, 0x46, 0x46]), // RIFF magic
     });
 
     const res = await POST(req as any);

@@ -1,0 +1,85 @@
+name: Sensitive content guard
+
+# Runs scripts/check-sensitive-assets.sh against the outgoing diff on every
+# pull request and push to main.  The same script is installed as a git
+# pre-push hook (scripts/install-git-hooks.sh), but hook failures surface
+# only at push time — by then a developer may have already wasted a round
+# trip.  Running it here surfaces violations in CI, where the error is visible
+# alongside the rest of the PR checks.
+#
+# Background: a test constant that resembled a real Slack bot-token (xoxb- prefix
+# followed by 25+ alphanumeric characters) once triggered the hook and blocked a
+# push until the string was replaced with a safe placeholder.
+# Moving the scan earlier (PR open) prevents the same surprise.
+#
+# What is scanned
+# ───────────────
+# The CONTENT_PATTERN in check-sensitive-assets.sh matches:
+#   github_pat_…  ghp_…  gho_…   — GitHub PATs
+#   sk_live_…     sk_test_…       — Stripe secret / restricted keys
+#   rk_live_…                     — Stripe restricted keys
+#   whsec_…                       — Stripe webhook signing secrets
+#   AKIA…                         — AWS access key IDs
+#   xox[baprs]-…  (≥ 25 chars)   — Slack bot / app / user tokens
+#   -----BEGIN … PRIVATE KEY----- — PEM private keys
+#
+# And the NAME_PATTERN rejects credential-like filenames inside attached_assets/.
+#
+# Note: the scan is intentionally excluded from the script file itself
+# (check-sensitive-assets.sh passes ':(exclude)scripts/check-sensitive-assets.sh'
+# to git diff), so the pattern documentation in the script never self-triggers.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  sensitive-content-guard:
+    name: Sensitive content guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch enough history so the diff range is always resolvable.
+          # For PRs the base SHA is supplied explicitly; for pushes to main
+          # we compare against the previous commit (github.event.before).
+          # A depth of 50 is more than sufficient for either case.
+          fetch-depth: 50
+
+      - name: Fetch base branch (PRs only)
+        if: github.event_name == 'pull_request'
+        run: |
+          # Ensure the PR base commit is present so git diff can compare against it.
+          git fetch --depth=50 origin "${{ github.event.pull_request.base.sha }}" || \
+            git fetch --depth=50 origin "${{ github.base_ref }}"
+
+      - name: Run sensitive-content scan
+        # On pull_request events compare HEAD against the PR base commit.
+        # On push-to-main events compare HEAD against the pre-push commit.
+        # On workflow_dispatch compare against origin/main (same as the hook default).
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            echo "→ Scanning diff against PR base: $BASE"
+            bash scripts/check-sensitive-assets.sh "$BASE"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            BEFORE="${{ github.event.before }}"
+            if echo "$BEFORE" | grep -q '^0*$'; then
+              # New branch push — scan last 50 commits as the hook does.
+              echo "→ New branch detected; scanning last 50 commits."
+              bash scripts/check-sensitive-assets.sh "HEAD~50"
+            else
+              echo "→ Scanning diff against previous commit: $BEFORE"
+              bash scripts/check-sensitive-assets.sh "$BEFORE"
+            fi
+          else
+            echo "→ Scanning diff against origin/main (workflow_dispatch)."
+            git fetch --depth=50 origin main
+            bash scripts/check-sensitive-assets.sh "origin/main"
+          fi
