@@ -36,6 +36,7 @@ import {
   consumeProbeCache,
   PROBE_CACHE_SENTINEL,
   DEV_BUILD_DIR,
+  MAX_SENTINEL_AGE_HOURS,
 } from "./probe-cache";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -476,6 +477,98 @@ describe("consumeProbeCache", () => {
 
       expect(result).toBe(buildDir);
       expect(fs.existsSync(sentinelPath())).toBe(false);
+    },
+  );
+
+  it(
+    "warns and returns null when the sentinel mtime predates the current job by more than MAX_SENTINEL_AGE_HOURS",
+    () => {
+      // This scenario models a sentinel left over from a prior CI run whose
+      // workspace directory was inadvertently cached.  Even though the build
+      // directory exists and the sentinel content is valid, the sentinel is too
+      // old and must be treated as stale.
+      const buildDir = ".next-probe-stale-by-age";
+      fs.mkdirSync(path.join(tmpDir, buildDir));
+      writeSentinel(buildDir);
+
+      // Backdate the sentinel's mtime so it appears to be older than
+      // MAX_SENTINEL_AGE_HOURS.  Add a one-second buffer so the test is not
+      // flaky near the boundary.
+      const staleDate = new Date(
+        Date.now() - (MAX_SENTINEL_AGE_HOURS + 1) * 60 * 60 * 1000,
+      );
+      fs.utimesSync(sentinelPath(), staleDate, staleDate);
+
+      // Verify the mtime was actually set (sanity check).
+      const actualMtime = fs.statSync(sentinelPath()).mtime;
+      expect(actualMtime.getTime()).toBeLessThan(
+        Date.now() - MAX_SENTINEL_AGE_HOURS * 60 * 60 * 1000,
+      );
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const result = consumeProbeCache(tmpDir);
+
+        // A sentinel that is too old must be discarded — warm start must NOT occur.
+        expect(result).toBeNull();
+
+        // The stale sentinel must be removed so subsequent runs are not tricked
+        // into thinking there is a valid cache available.
+        expect(fs.existsSync(sentinelPath())).toBe(false);
+
+        // A clear warning must appear in CI logs so operators know why the warm
+        // start was skipped.
+        expect(warnSpy).toHaveBeenCalledOnce();
+        const [warnMessage] = warnSpy.mock.calls[0] as [string];
+
+        // The message must mention the configured age limit so operators can
+        // trace the decision back to the MAX_SENTINEL_AGE_HOURS setting.
+        expect(warnMessage).toContain(String(MAX_SENTINEL_AGE_HOURS));
+
+        // The message must include the sentinel's mtime ISO string so operators
+        // can correlate the discarded sentinel with a specific prior CI run.
+        expect(warnMessage).toContain(staleDate.toISOString());
+      } finally {
+        warnSpy.mockRestore();
+      }
+    },
+  );
+
+  it(
+    "still reuses a sentinel whose mtime is just inside the MAX_SENTINEL_AGE_HOURS threshold",
+    () => {
+      // A sentinel that is just under the age limit must NOT be discarded — the
+      // guard should only reject sentinels that are clearly from a prior CI job.
+      const buildDir = ".next-probe-within-age";
+      fs.mkdirSync(path.join(tmpDir, buildDir));
+      writeSentinel(buildDir);
+
+      // Set mtime to (MAX_SENTINEL_AGE_HOURS - 1) hours ago — safely inside the window.
+      const recentDate = new Date(
+        Date.now() - (MAX_SENTINEL_AGE_HOURS - 1) * 60 * 60 * 1000,
+      );
+      fs.utimesSync(sentinelPath(), recentDate, recentDate);
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const result = consumeProbeCache(tmpDir);
+
+        // Within-threshold sentinel must be consumed normally.
+        expect(result).toBe(buildDir);
+
+        // Sentinel must be deleted (consumed once).
+        expect(fs.existsSync(sentinelPath())).toBe(false);
+
+        // No age-related warning must be emitted.
+        expect(warnSpy).not.toHaveBeenCalled();
+
+        // The normal warm-start log line must be emitted.
+        expect(logSpy).toHaveBeenCalledOnce();
+      } finally {
+        warnSpy.mockRestore();
+        logSpy.mockRestore();
+      }
     },
   );
 });

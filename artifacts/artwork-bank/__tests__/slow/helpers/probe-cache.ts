@@ -33,6 +33,24 @@ export const DEV_BUILD_DIR = ".next-slow-test";
 export const PROBE_CACHE_SENTINEL = ".next-probe-cache-ready";
 
 /**
+ * Maximum age of a probe-cache sentinel before it is treated as stale and
+ * discarded.  A sentinel older than this threshold was almost certainly left
+ * over from a prior CI run whose workspace directory was inadvertently cached;
+ * reusing it risks a corrupt or mismatched .next-probe build output.
+ *
+ * Override via the MAX_SENTINEL_AGE_HOURS environment variable for testing or
+ * when CI jobs legitimately run more than 24 hours apart.
+ */
+export const MAX_SENTINEL_AGE_HOURS: number = (() => {
+  const env = process.env["MAX_SENTINEL_AGE_HOURS"];
+  if (env !== undefined && env !== "") {
+    const parsed = Number(env);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 24;
+})();
+
+/**
  * Try to consume the probe's retained build cache.
  *
  * Returns the name of the build directory to use.  Side-effects:
@@ -54,6 +72,40 @@ export function consumeProbeCache(artworkBankDir: string): string | null {
     buildDir = fs.readFileSync(sentinelPath, "utf8").trim();
   } catch {
     // Sentinel absent or unreadable — no warm cache available.
+    return null;
+  }
+
+  // Guard against stale sentinels left over from a prior CI run whose
+  // workspace directory was inadvertently cached.  A sentinel whose mtime
+  // predates the current job by more than MAX_SENTINEL_AGE_HOURS is treated
+  // as stale: reusing it risks a corrupt or mismatched .next-probe build.
+  let sentinelAgeTooOld = false;
+  let sentinelMtimeForAge = "";
+  try {
+    const stat = fs.statSync(sentinelPath);
+    sentinelMtimeForAge = stat.mtime.toISOString();
+    const ageMs = Date.now() - stat.mtime.getTime();
+    const maxAgeMs = MAX_SENTINEL_AGE_HOURS * 60 * 60 * 1000;
+    if (ageMs > maxAgeMs) {
+      sentinelAgeTooOld = true;
+    }
+  } catch {
+    // If we can't stat the sentinel, we can't verify its age — treat it as
+    // safe to continue (the subsequent directory-existence check still guards us).
+  }
+
+  if (sentinelAgeTooOld) {
+    console.warn(
+      `[slow-test] WARNING: probe cache sentinel is too old ` +
+        `(created at ${sentinelMtimeForAge}, max age ${MAX_SENTINEL_AGE_HOURS}h). ` +
+        `This sentinel was almost certainly left over from a prior CI run whose ` +
+        `workspace directory was cached. Discarding stale sentinel and falling back to a cold start.`,
+    );
+    try {
+      fs.rmSync(sentinelPath, { force: true });
+    } catch {
+      /* best-effort */
+    }
     return null;
   }
 
