@@ -1408,4 +1408,45 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       expect(output.result).toBe(".next-probe-ci");
     },
   );
+
+  it(
+    "falls back to 24 hours and does not crash when MAX_SENTINEL_AGE_HOURS is set to a bare vertical tab in the subprocess environment",
+    () => {
+      // Some legacy CI tooling can silently produce a bare vertical tab ("\v")
+      // as the value of an environment variable.  A vertical-tab-only value
+      // passes the `env !== ""` guard in the IIFE but then fails
+      // `Number.isFinite(parsed)` (Number("\v") is NaN, the same as
+      // Number("\f"), Number("\r"), Number("\n"), Number("\t"), or
+      // Number("  ")), so the IIFE must fall back to 24 hours.  This test
+      // documents that the guard covers vertical tabs specifically, not
+      // just spaces, tabs, newlines, carriage returns, form feeds, or empty
+      // strings.
+      //
+      // The test exercises this path through the real process boundary so
+      // Vitest module caching cannot interfere.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: { ...process.env, MAX_SENTINEL_AGE_HOURS: "\v" },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash when the env var is a bare vertical tab.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must reject the vertical-tab-only value (NaN after Number("\v"))
+      // and fall back to the 24-hour default.
+      expect(output.constant).toBe(24);
+
+      // The sentinel is 2 hours old — well within the 24-hour default threshold.
+      // consumeProbeCache must accept it and return the build directory name,
+      // confirming the process did not crash and the 24-hour fallback is active.
+      expect(output.result).toBe(".next-probe-ci");
+    },
+  );
 });
