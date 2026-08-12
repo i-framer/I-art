@@ -644,6 +644,136 @@ describe("consumeProbeCache", () => {
       }
     },
   );
+
+  it(
+    "discards a sentinel whose age exceeds the MAX_SENTINEL_AGE_HOURS env-var override",
+    async () => {
+      // The MAX_SENTINEL_AGE_HOURS constant is evaluated at module-load time via
+      // an IIFE.  To test the env-var path we must set the variable BEFORE the
+      // module is imported, which requires resetting the module registry and
+      // re-importing dynamically.
+      const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      process.env["MAX_SENTINEL_AGE_HOURS"] = "1";
+      vi.resetModules();
+
+      try {
+        // Dynamic import picks up the new env var and re-evaluates the IIFE.
+        const {
+          consumeProbeCache: consume,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        const buildDir = ".next-probe-env-override";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // Backdate to 2 hours ago: older than the 1-hour override but well
+        // within the 24-hour default.  Only the overridden threshold matters here.
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        fs.utimesSync(sentinel, twoHoursAgo, twoHoursAgo);
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // Sentinel is 2h old — exceeds the 1-hour override → must be discarded.
+          expect(result).toBeNull();
+
+          // The stale sentinel must be cleaned up so subsequent runs are not fooled.
+          expect(fs.existsSync(sentinel)).toBe(false);
+
+          // A clear warning must appear in CI logs.
+          expect(warnSpy).toHaveBeenCalledOnce();
+          const [warnMessage] = warnSpy.mock.calls[0] as [string];
+
+          // The message must mention the overridden threshold (1h) so operators
+          // can trace the decision back to the env-var setting.
+          expect(warnMessage).toContain("1");
+
+          // The message must include the sentinel's backdated mtime so operators
+          // can correlate the discarded sentinel with a specific prior CI run.
+          expect(warnMessage).toContain(twoHoursAgo.toISOString());
+        } finally {
+          warnSpy.mockRestore();
+        }
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
+        }
+        // Restore the module registry so subsequent tests use the original module.
+        vi.resetModules();
+      }
+    },
+  );
+
+  it.each([
+    ["0", "zero is not a positive number"],
+    ["-1", "negative numbers are not valid"],
+    ["abc", "non-numeric strings are not valid"],
+  ])(
+    "falls back to the 24-hour default when MAX_SENTINEL_AGE_HOURS is set to an invalid value (%s — %s)",
+    async (invalidValue) => {
+      // Invalid values must be silently ignored; the IIFE falls back to 24.
+      // We verify this by showing that a sentinel backdated to 2 hours ago
+      // (which would be stale under a 1-hour threshold) is treated as fresh.
+      const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      process.env["MAX_SENTINEL_AGE_HOURS"] = invalidValue;
+      vi.resetModules();
+
+      try {
+        const {
+          consumeProbeCache: consume,
+          MAX_SENTINEL_AGE_HOURS: resolvedHours,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        // The invalid env var must be rejected — the constant must equal 24.
+        expect(resolvedHours).toBe(24);
+
+        const buildDir = `.next-probe-invalid-env-${invalidValue.replace(/[^a-z0-9]/g, "_")}`;
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // 2 hours old — stale under a 1-hour threshold, but fresh under 24 hours.
+        // If the invalid value were somehow used as the threshold the sentinel
+        // would be kept anyway (0 or negative comparison is guarded by the parse
+        // check); the real signal here is that resolvedHours === 24 and the
+        // 2-hour sentinel is accepted normally.
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        fs.utimesSync(sentinel, twoHoursAgo, twoHoursAgo);
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // 2-hour-old sentinel is well within the 24-hour default threshold.
+          // It must be accepted and the build directory returned.
+          expect(result).toBe(buildDir);
+
+          // No age-staleness warning must be emitted.
+          expect(warnSpy).not.toHaveBeenCalled();
+
+          // The normal warm-start log must appear.
+          expect(logSpy).toHaveBeenCalledOnce();
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
+        }
+        vi.resetModules();
+      }
+    },
+  );
 });
 
 // ── Constant contract ─────────────────────────────────────────────────────────
