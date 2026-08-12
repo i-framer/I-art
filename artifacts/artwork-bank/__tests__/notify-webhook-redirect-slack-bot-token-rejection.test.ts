@@ -49,7 +49,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
  * the function directly to test it in isolation without spawning a subprocess.
  */
 const CHANNEL = "C_TEST_CHANNEL";
-const TOKEN = "xoxb-test-bot-token-00000000000000000000000";
+// A clearly fake token that does NOT match Slack's real `xoxb-...` format
+// (the sensitive-asset scanner blocks tokens ≥ 25 chars after the xoxb- prefix).
+const TOKEN = "fake-bot-token-for-unit-tests";
 const TEXT = "🚨 Stripe webhook redirect detected";
 
 // ── Import the function under test ────────────────────────────────────────────
