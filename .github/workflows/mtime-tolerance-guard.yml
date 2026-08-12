@@ -178,3 +178,140 @@ jobs:
             echo "      $FILE"
             exit 1
           fi
+
+      # ── Check 4: MAX_SENTINEL_AGE_HOURS constant is still declared ────────
+      - name: Assert MAX_SENTINEL_AGE_HOURS constant is still declared
+        run: |
+          FILE="artifacts/artwork-bank/__tests__/slow/helpers/probe-cache.ts"
+
+          if ! grep -q "MAX_SENTINEL_AGE_HOURS" "$FILE"; then
+            echo "❌  MAX_SENTINEL_AGE_HOURS is no longer declared in $FILE."
+            echo "    The constant may have been renamed or the file moved."
+            echo "    Update this guard (and the path above) to match."
+            exit 1
+          fi
+          echo "✅  MAX_SENTINEL_AGE_HOURS declaration found in $FILE."
+
+      # ── Check 5: MAX_SENTINEL_AGE_HOURS default is exactly 24 ────────────
+      #
+      # The constant is defined as an IIFE that falls through to a bare
+      # `return 24;` when the environment variable is absent:
+      #
+      #   export const MAX_SENTINEL_AGE_HOURS: number = (() => {
+      #     const env = process.env["MAX_SENTINEL_AGE_HOURS"];
+      #     if (env !== undefined && env !== "") {
+      #       const parsed = Number(env);
+      #       if (Number.isFinite(parsed) && parsed > 0) return parsed;
+      #     }
+      #     return 24;   ← this is what we assert
+      #   })();
+      #
+      # awk reads between the const declaration and the closing })(); line,
+      # collecting every `return <digits>;` it sees.  The last one encountered
+      # is the fallback default.  grep -oP extracts the bare number.
+      - name: Assert MAX_SENTINEL_AGE_HOURS default is exactly 24
+        run: |
+          FILE="artifacts/artwork-bank/__tests__/slow/helpers/probe-cache.ts"
+
+          DEFAULT_VALUE=$(awk '
+            /MAX_SENTINEL_AGE_HOURS[^=]*=.*\(\(\)/ { in_block=1 }
+            in_block && /return [0-9]+;/ { last_return=$0 }
+            in_block && /^\}\)\(\);/ { in_block=0 }
+            END { print last_return }
+          ' "$FILE" | grep -oP '\b[0-9]+\b')
+
+          echo "Extracted default return value: '${DEFAULT_VALUE}'"
+
+          if [ -z "$DEFAULT_VALUE" ]; then
+            echo "❌  Could not extract a numeric default from the MAX_SENTINEL_AGE_HOURS IIFE."
+            echo "    Possible causes:"
+            echo "      • The IIFE pattern changed (no longer ends with 'return <number>;')."
+            echo "      • The closing '})();' line was reformatted."
+            echo "    Update this guard to match the new constant shape."
+            exit 1
+          fi
+
+          if [ "$DEFAULT_VALUE" -ne 24 ]; then
+            echo "❌  MAX_SENTINEL_AGE_HOURS default is ${DEFAULT_VALUE} — expected 24."
+            echo ""
+            echo "    Why 24 matters:"
+            echo "      Sentinels older than 24 hours were almost certainly left over"
+            echo "      from a prior CI run whose workspace directory was inadvertently"
+            echo "      cached.  Reusing such a sentinel risks a corrupt or mismatched"
+            echo "      .next-probe build output."
+            echo ""
+            echo "    Restore the default to 24 in:"
+            echo "      $FILE"
+            exit 1
+          fi
+
+          echo "✅  MAX_SENTINEL_AGE_HOURS default is correctly set to 24."
+
+      # ── Check 6: zero age is rejected — IIFE guard is `parsed > 0` ───────
+      #
+      # The MAX_SENTINEL_AGE_HOURS IIFE deliberately uses `parsed > 0`
+      # (not `parsed >= 0`) so that setting the env var to "0" is treated as
+      # invalid and the IIFE falls through to the 24-hour default.  Zero hours
+      # is not a meaningful sentinel age — it would discard every sentinel
+      # immediately.
+      #
+      # This is the intentional asymmetry with MTIME_TRUNCATION_TOLERANCE_MS,
+      # which uses `parsed >= 0` because zero IS valid there (zero-tolerance mode).
+      #
+      # If the guard were accidentally changed to `parsed >= 0`, setting
+      # MAX_SENTINEL_AGE_HOURS=0 in the environment would silently produce a
+      # zero-hour age, discarding every cache hit and causing confusing CI failures.
+      - name: Assert MAX_SENTINEL_AGE_HOURS IIFE uses parsed > 0 (zero is not a valid age)
+        run: |
+          FILE="artifacts/artwork-bank/__tests__/slow/helpers/probe-cache.ts"
+
+          # Extract the MAX_SENTINEL_AGE_HOURS IIFE block.
+          IIFE_BLOCK=$(awk '
+            /MAX_SENTINEL_AGE_HOURS[^=]*=.*\(\(\)/ { in_block=1 }
+            in_block { print }
+            in_block && /^\}\)\(\);/ { in_block=0 }
+          ' "$FILE")
+
+          if [ -z "$IIFE_BLOCK" ]; then
+            echo "❌  Could not locate the MAX_SENTINEL_AGE_HOURS IIFE block in $FILE."
+            echo "    The constant may have been renamed or reformatted."
+            echo "    Update this guard (and the path above) to match."
+            exit 1
+          fi
+
+          # The guard must be strictly `parsed > 0`, not `parsed >= 0`.
+          if echo "$IIFE_BLOCK" | grep -qE 'parsed\s*>=\s*0'; then
+            echo "❌  The MAX_SENTINEL_AGE_HOURS IIFE contains 'parsed >= 0'."
+            echo ""
+            echo "    Guard line found in the IIFE:"
+            echo "$IIFE_BLOCK" | grep -E 'Number\.isFinite' || echo "    (no Number.isFinite line found)"
+            echo ""
+            echo "    Why this matters:"
+            echo "      Zero hours is not a valid sentinel age — a zero-hour sentinel"
+            echo "      would be discarded immediately on every check.  The guard must"
+            echo "      use 'parsed > 0' so that MAX_SENTINEL_AGE_HOURS=0 falls through"
+            echo "      to the 24-hour default rather than silently accepting an"
+            echo "      unusable value."
+            echo ""
+            echo "    This constant is intentionally asymmetric with"
+            echo "    MTIME_TRUNCATION_TOLERANCE_MS, which accepts 0 as a valid"
+            echo "    zero-tolerance override.  Keep them different."
+            echo ""
+            echo "    Fix: restore 'parsed > 0' (not '>= 0') in the IIFE guard in:"
+            echo "      $FILE"
+            exit 1
+          fi
+
+          if echo "$IIFE_BLOCK" | grep -qE 'parsed\s*>\s*0'; then
+            echo "✅  MAX_SENTINEL_AGE_HOURS IIFE guard is 'parsed > 0' — zero is correctly rejected as an invalid age."
+          else
+            echo "❌  The MAX_SENTINEL_AGE_HOURS IIFE does not contain a recognisable 'parsed > 0' guard."
+            echo ""
+            echo "    Guard line found in the IIFE:"
+            echo "$IIFE_BLOCK" | grep -E 'Number\.isFinite' || echo "    (no Number.isFinite line found)"
+            echo ""
+            echo "    Update this guard if the IIFE structure has changed, or restore"
+            echo "    the expected guard condition in:"
+            echo "      $FILE"
+            exit 1
+          fi
