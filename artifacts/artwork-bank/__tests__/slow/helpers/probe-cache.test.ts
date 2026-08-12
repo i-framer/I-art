@@ -2921,4 +2921,119 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       }
     },
   );
+
+  it(
+    "meta-test: rejects the mtime-truncation sentinel when MTIME_TRUNCATION_TOLERANCE_MS is reduced strictly below the 500 ms filesystem overshoot",
+    async () => {
+      // ── Purpose ─────────────────────────────────────────────────────────────
+      // The acceptance test above verifies that a sentinel with a 500 ms
+      // apparent overshoot is accepted when the tolerance is 1 000 ms.  That
+      // test is a necessary but insufficient guard: it does not prove that the
+      // tolerance is actually doing the gating work.  If someone raised the
+      // tolerance to, say, 10 000 ms, the 500 ms overshoot would still be
+      // accepted and the acceptance test would still pass — even though the
+      // guard is now far more permissive than intended.
+      //
+      // This meta-test closes that gap by temporarily reducing the tolerance to
+      // 400 ms (strictly below the 500 ms overshoot) and asserting that
+      // consumeProbeCache REJECTS the same sentinel.  The guard fires only if
+      // the tolerance is the sole gating factor for this overshoot, so any
+      // future increase that makes the guard ignore the tolerance will cause
+      // this meta-test to fail with a non-null result.
+      //
+      // ── Approach ────────────────────────────────────────────────────────────
+      // MTIME_TRUNCATION_TOLERANCE_MS is evaluated once at module load time via
+      // an IIFE.  Setting the MTIME_TRUNCATION_TOLERANCE_MS environment variable
+      // before calling vi.resetModules() + dynamic import forces the IIFE to
+      // re-evaluate with the reduced value, giving consumeProbeCache a tolerance
+      // of 400 ms for the duration of this test.
+      //
+      // ── Math ────────────────────────────────────────────────────────────────
+      // Identical to the acceptance test above:
+      //   fakeNow % 1 000 = 500
+      //   trueAge         = maxAgeMs − 300   (300 ms inside the raw limit)
+      //   truncation error = 800 ms          → computedAge = maxAgeMs + 500
+      //
+      // With tolerance = 400 ms:
+      //   maxAgeMs + 500 > maxAgeMs + 400  → guard fires → REJECTED ✓
+      //
+      // With tolerance = 1 000 ms (production default):
+      //   maxAgeMs + 500 ≤ maxAgeMs + 1 000 → guard silent → ACCEPTED
+
+      const savedEnv = process.env["MTIME_TRUNCATION_TOLERANCE_MS"];
+      // 400 ms is strictly below the 500 ms computed overshoot.
+      process.env["MTIME_TRUNCATION_TOLERANCE_MS"] = "400";
+
+      try {
+        vi.resetModules();
+        const {
+          consumeProbeCache: consumeProbeCacheReduced,
+          MTIME_TRUNCATION_TOLERANCE_MS: reducedTolerance,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        // Sanity-check: the freshly-imported module must have picked up the
+        // reduced tolerance from the env var.  If this fails, the IIFE is not
+        // reading the env var and the meta-test is not exercising the guard.
+        expect(reducedTolerance).toBe(400);
+
+        // ── Same mtime setup as the acceptance test ──────────────────────────
+        const maxAgeMs = 86_400_000; // 24 h — pinned, not derived
+
+        const fakeNow = Math.floor(Date.now() / 1000) * 1000 + 500;
+        const dateSpy = vi.spyOn(Date, "now").mockReturnValue(fakeNow);
+
+        const trueAge = maxAgeMs - 300;
+        const trueMtime = fakeNow - trueAge;
+        const truncatedMtime = Math.floor(trueMtime / 1000) * 1000;
+
+        // Same 800 ms truncation error as the acceptance test → 500 ms net overshoot.
+        expect(trueMtime - truncatedMtime).toBe(800);
+
+        const sentinelFullPath = path.join(tmpDir, SENTINEL);
+        const fakeStats = { mtime: new Date(truncatedMtime) } as ReturnType<
+          typeof fs.statSync
+        >;
+        vi.mocked(fs.statSync).mockImplementation((p) => {
+          if (p === sentinelFullPath) return fakeStats;
+          throw new Error(`Unexpected statSync call for ${String(p)}`);
+        });
+
+        const buildDir = ".next-probe-mtime-meta";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        fs.writeFileSync(sentinelFullPath, buildDir, "utf8");
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const result = consumeProbeCacheReduced(tmpDir);
+
+          // With a 400 ms tolerance the 500 ms overshoot exceeds the guard
+          // threshold (maxAgeMs + 400) → sentinel must be rejected.
+          expect(result).toBeNull();
+
+          // The staleness warning must fire — absence here would mean the
+          // guard silently swallowed the overshoot.
+          expect(warnSpy).toHaveBeenCalledOnce();
+
+          // No warm-start log should appear when the sentinel is discarded.
+          expect(logSpy).not.toHaveBeenCalled();
+        } finally {
+          dateSpy.mockRestore();
+          vi.mocked(fs.statSync).mockRestore();
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+      } finally {
+        if (savedEnv !== undefined) {
+          process.env["MTIME_TRUNCATION_TOLERANCE_MS"] = savedEnv;
+        } else {
+          delete process.env["MTIME_TRUNCATION_TOLERANCE_MS"];
+        }
+        // Reset modules again so subsequent tests pick up the fully-mocked fs
+        // and the original module registry state (tolerance = 1 000 ms).
+        vi.resetModules();
+      }
+    },
+  );
 });

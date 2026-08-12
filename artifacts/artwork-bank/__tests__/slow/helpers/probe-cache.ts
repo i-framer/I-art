@@ -59,8 +59,19 @@ export const MAX_SENTINEL_AGE_HOURS: number = (() => {
  * age.  Adding 1 000 ms to the rejection threshold ensures a genuinely fresh
  * sentinel is never falsely discarded because the filesystem rounded its
  * mtime down into the stale zone.
+ *
+ * Override via the MTIME_TRUNCATION_TOLERANCE_MS environment variable for
+ * testing scenarios that need to verify the guard rejects sentinels when the
+ * tolerance is reduced below the filesystem-induced overshoot.
  */
-export const MTIME_TRUNCATION_TOLERANCE_MS = 1000;
+export const MTIME_TRUNCATION_TOLERANCE_MS: number = (() => {
+  const env = process.env["MTIME_TRUNCATION_TOLERANCE_MS"];
+  if (env !== undefined && env !== "") {
+    const parsed = Number(env);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return 1000;
+})();
 
 /**
  * Try to consume the probe's retained build cache.
