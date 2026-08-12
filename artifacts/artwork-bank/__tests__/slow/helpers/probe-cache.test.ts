@@ -84,6 +84,34 @@ describe("MTIME_TRUNCATION_TOLERANCE_MS", () => {
       expect(MTIME_TRUNCATION_TOLERANCE_MS).toBe(1000);
     },
   );
+
+  it(
+    "evaluates to 1 000 ms from its source definition (module-reset isolation)",
+    async () => {
+      // MTIME_TRUNCATION_TOLERANCE_MS is a plain constant assigned at module
+      // load time.  The assertion above reads it from the already-cached
+      // import, so it would pass even if the source were changed to, say,
+      // 500 — because the cached export still holds the value that was loaded
+      // when the test file was first imported.
+      //
+      // This test forces a fresh module evaluation by calling vi.resetModules()
+      // before the dynamic import, mirroring the MAX_SENTINEL_AGE_HOURS
+      // pattern.  That ensures the assertion reads the literal assigned in
+      // probe-cache.ts rather than a stale cached copy, so any change to the
+      // default is caught in isolation and the rationale is made explicit.
+      try {
+        vi.resetModules();
+        const {
+          MTIME_TRUNCATION_TOLERANCE_MS: freshValue,
+        } = await import("./probe-cache");
+        expect(freshValue).toBe(1000);
+      } finally {
+        // Reset modules again so subsequent imports pick up the fully-mocked
+        // fs and the original module registry state.
+        vi.resetModules();
+      }
+    },
+  );
 });
 
 describe("MAX_SENTINEL_AGE_HOURS", () => {
