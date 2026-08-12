@@ -2692,6 +2692,10 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       offsetFromMaxAge: number;
       expectedAccepted: boolean;
       label: string;
+      /** When set, overrides MAX_SENTINEL_AGE_HOURS * 60 * 60 * 1 000 so that
+       *  a change to the constant (e.g. 24 → 12) makes this specific case fail
+       *  rather than silently recalculating around the new value. */
+      hardcodedMaxAgeMs?: number;
     }> = [
       {
         offsetFromMaxAge: -1,
@@ -2699,9 +2703,17 @@ describe("subprocess environment integration (age-guard CI override)", () => {
         label: "ageMs = maxAgeMs − 1: strictly inside the raw limit → ACCEPTED",
       },
       {
+        // Hardcoded to 86 400 000 ms (24 × 3 600 000, the documented default)
+        // so that a reduction to MAX_SENTINEL_AGE_HOURS (e.g. 24 → 12) makes
+        // this case fail: the injected age (86 399 999 ms) would exceed the
+        // new maxAgeMs (43 200 000 ms) + tolerance ceiling, causing the guard
+        // to discard what we expect to be accepted.  If this were derived from
+        // the constant it would recalculate to the new value and the regression
+        // would ship undetected.
+        hardcodedMaxAgeMs: 86_400_000,
         offsetFromMaxAge: 0,
         expectedAccepted: true,
-        label: "ageMs = maxAgeMs: exactly at the raw limit → ACCEPTED",
+        label: "ageMs = maxAgeMs (pinned 86 400 000 ms): exactly at the raw limit → ACCEPTED",
       },
       {
         // Hardcoded to 500 ms (half of the documented 1 000 ms tolerance) so
@@ -2736,58 +2748,65 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       },
     ];
 
-    it.each(cases)("$label", ({ offsetFromMaxAge, expectedAccepted }) => {
-      const maxAgeMs = MAX_SENTINEL_AGE_HOURS * 60 * 60 * 1000;
-      const ageMs = maxAgeMs + offsetFromMaxAge;
+    it.each(cases)(
+      "$label",
+      ({ offsetFromMaxAge, expectedAccepted, hardcodedMaxAgeMs }) => {
+        // Use the hardcoded value when provided so a change to
+        // MAX_SENTINEL_AGE_HOURS makes that specific case fail rather than
+        // silently recalculating around the new constant.
+        const maxAgeMs =
+          hardcodedMaxAgeMs ?? MAX_SENTINEL_AGE_HOURS * 60 * 60 * 1000;
+        const ageMs = maxAgeMs + offsetFromMaxAge;
 
-      // Pin Date.now() to a stable value (millisecond component = 500) so
-      // computed ages are fully deterministic regardless of when the test runs.
-      const fakeNow = Math.floor(Date.now() / 1000) * 1000 + 500;
-      const dateSpy = vi.spyOn(Date, "now").mockReturnValue(fakeNow);
+        // Pin Date.now() to a stable value (millisecond component = 500) so
+        // computed ages are fully deterministic regardless of when the test runs.
+        const fakeNow = Math.floor(Date.now() / 1000) * 1000 + 500;
+        const dateSpy = vi.spyOn(Date, "now").mockReturnValue(fakeNow);
 
-      // Derive the mtime that would produce exactly ageMs when subtracted from
-      // fakeNow, then stub statSync to return it for the sentinel path.
-      const fakeMtime = fakeNow - ageMs;
-      const sentinelFullPath = path.join(tmpDir, PROBE_CACHE_SENTINEL);
-      const fakeStats = {
-        mtime: new Date(fakeMtime),
-      } as ReturnType<typeof fs.statSync>;
-      vi.mocked(fs.statSync).mockImplementation((p) => {
-        if (p === sentinelFullPath) return fakeStats;
-        throw new Error(`Unexpected statSync call for ${String(p)}`);
-      });
+        // Derive the mtime that would produce exactly ageMs when subtracted from
+        // fakeNow, then stub statSync to return it for the sentinel path.
+        const fakeMtime = fakeNow - ageMs;
+        const sentinelFullPath = path.join(tmpDir, PROBE_CACHE_SENTINEL);
+        const fakeStats = {
+          mtime: new Date(fakeMtime),
+        } as ReturnType<typeof fs.statSync>;
+        vi.mocked(fs.statSync).mockImplementation((p) => {
+          if (p === sentinelFullPath) return fakeStats;
+          throw new Error(`Unexpected statSync call for ${String(p)}`);
+        });
 
-      const buildDir = ".next-probe-age-param";
-      fs.mkdirSync(path.join(tmpDir, buildDir));
-      writeSentinel(buildDir);
+        const buildDir = ".next-probe-age-param";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        writeSentinel(buildDir);
 
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      try {
-        let result: string | null = undefined!;
-        expect(() => {
-          result = consumeProbeCache(tmpDir);
-        }).not.toThrow();
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          let result: string | null = undefined!;
+          expect(() => {
+            result = consumeProbeCache(tmpDir);
+          }).not.toThrow();
 
-        if (expectedAccepted) {
-          // Sentinel is within (or at) the tolerance ceiling — must be accepted.
-          // A weakened >= guard would fail this assertion for the ceiling case.
-          expect(result).toBe(buildDir);
-          expect(warnSpy).not.toHaveBeenCalled();
-          expect(logSpy).toHaveBeenCalledOnce();
-        } else {
-          // Sentinel exceeds the tolerance ceiling — must be discarded.
-          expect(result).toBeNull();
-          expect(warnSpy).toHaveBeenCalledOnce();
-          expect(logSpy).not.toHaveBeenCalled();
+          if (expectedAccepted) {
+            // Sentinel is within (or at) the tolerance ceiling — must be accepted.
+            // A weakened >= guard would fail this assertion for the ceiling case.
+            expect(result).toBe(buildDir);
+            expect(warnSpy).not.toHaveBeenCalled();
+            expect(logSpy).toHaveBeenCalledOnce();
+          } else {
+            // Sentinel exceeds the tolerance ceiling — must be discarded.
+            expect(result).toBeNull();
+            expect(warnSpy).toHaveBeenCalledOnce();
+            expect(logSpy).not.toHaveBeenCalled();
+          }
+        } finally {
+          dateSpy.mockRestore();
+          vi.mocked(fs.statSync).mockRestore();
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
         }
-      } finally {
-        dateSpy.mockRestore();
-        vi.mocked(fs.statSync).mockRestore();
-        warnSpy.mockRestore();
-        logSpy.mockRestore();
-      }
-    });
+      },
+    );
   });
 
   it(
