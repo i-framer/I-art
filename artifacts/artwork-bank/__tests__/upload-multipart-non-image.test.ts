@@ -84,7 +84,7 @@ async function makeMultipartRequest(opts: {
   } = opts;
 
   const form = new FormData();
-  form.append(fieldName, new File([fileContent], fileName, { type: fileType }));
+  form.append(fieldName, new File([fileContent as unknown as ArrayBuffer], fileName, { type: fileType }));
 
   // Use a temporary Request to get the serialized body + boundary-bearing header.
   const tmp = new Request("https://localhost/", { method: "POST", body: form });
@@ -102,7 +102,6 @@ async function makeMultipartRequest(opts: {
     method: "POST",
     headers: { "content-type": ct },
     body: stream,
-    // @ts-expect-error — duplex required for streaming bodies in Node.js
     duplex: "half",
   });
 }
@@ -128,7 +127,6 @@ async function makeMultipartNoFileRequest(): Promise<NextRequest> {
     method: "POST",
     headers: { "content-type": ct },
     body: stream,
-    // @ts-expect-error
     duplex: "half",
   });
 }
@@ -215,7 +213,7 @@ describe("multipart upload — non-image file rejection (Task #642)", () => {
     const req = await makeMultipartNoFileRequest();
 
     const res = await POST(req as any);
-    const body = (await res.json()) as { error?: string };
+    const _body = (await res.json()) as { error?: string };
 
     expect(res.status).toBe(400);
     expect(mockPutObject).not.toHaveBeenCalled();

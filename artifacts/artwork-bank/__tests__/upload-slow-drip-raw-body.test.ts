@@ -136,7 +136,6 @@ function buildRawRequest(stream: ReadableStream<Uint8Array>): NextRequest {
     method: "POST",
     headers: { "content-type": "image/jpeg" },
     body: stream,
-    // @ts-expect-error — duplex required for streaming bodies in Node.js
     duplex: "half",
   });
 }

@@ -165,10 +165,6 @@ describe("healthcheck ping — special characters in HEALTHCHECK_URL (Task #580)
       const lines = args.split("\n").filter((l) => l.length > 0);
       const urlLine = lines.find((l) => l.includes("hc-ping.io"));
       expect(urlLine).toBe(url);
-    } catch (e) {
-      // If the file wasn't created the curl shim never ran — this means curl
-      // was not invoked at all, which should not happen with a non-empty URL.
-      throw e;
     } finally {
       try { rmSync(argsFile, { force: true }); } catch { /* ignore */ }
     }
