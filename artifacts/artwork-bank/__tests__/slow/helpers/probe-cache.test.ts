@@ -1023,20 +1023,24 @@ import(moduleUrl)
   );
 
   it(
-    "discards a sentinel that is one millisecond past the MAX_SENTINEL_AGE_HOURS threshold (minimal-violation boundary)",
+    "discards a sentinel that is more than one second past the MAX_SENTINEL_AGE_HOURS threshold (exceeds truncation tolerance)",
     async () => {
-      // The age-guard comparison is strictly greater-than (ageMs > maxAgeMs).
-      // This test pins the minimal-violation boundary: a sentinel whose age
-      // exceeds the threshold by exactly 1 ms must be rejected.  Without this
-      // case, a rounding or off-by-one regression could let a barely-stale
-      // sentinel slip through undetected.
+      // The age guard uses strictly-greater-than with a MTIME_TRUNCATION_TOLERANCE_MS
+      // (1 000 ms) buffer to absorb filesystem mtime rounding (see probe-cache.ts).
+      // This test pins the minimal-violation boundary beyond that buffer: a sentinel
+      // whose computed age exceeds (maxAgeMs + 1 000 ms) by at least 1 ms must be
+      // rejected.  Without this case, a regression that widens the tolerance
+      // too far could let genuinely stale sentinels slip through undetected.
+      //
+      // We use a violation of 1 001 ms (1 ms past the tolerance ceiling) so the
+      // test is clearly above MTIME_TRUNCATION_TOLERANCE_MS = 1 000 ms.
       //
       // The MAX_SENTINEL_AGE_HOURS constant is evaluated at module-load time via
       // an IIFE, so we must set the env var before importing the module and use
       // vi.resetModules() to force a fresh evaluation.
       //
-      // We freeze Date.now() so that the 1 ms offset is deterministic: without
-      // a frozen clock, real elapsed time between utimesSync and consumeProbeCache's
+      // We freeze Date.now() so that the offset is deterministic: without a
+      // frozen clock, real elapsed time between utimesSync and consumeProbeCache's
       // internal Date.now() would make the sentinel appear even older, which
       // would still pass — but the test would be measuring the wrong thing.
       const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
@@ -1050,7 +1054,7 @@ import(moduleUrl)
           PROBE_CACHE_SENTINEL: SENTINEL,
         } = await import("./probe-cache");
 
-        const buildDir = ".next-probe-one-ms-past-threshold";
+        const buildDir = ".next-probe-past-tolerance-threshold";
         fs.mkdirSync(path.join(tmpDir, buildDir));
         const sentinel = path.join(tmpDir, SENTINEL);
         fs.writeFileSync(sentinel, buildDir, "utf8");
@@ -1061,18 +1065,19 @@ import(moduleUrl)
         vi.useFakeTimers();
         vi.setSystemTime(fixedNow);
 
-        // Backdate to exactly 2.5 hours + 1 ms before fixedNow.
-        // With the clock frozen, ageMs = 2.5h + 1ms > maxAgeMs = 2.5h → rejected.
-        const oneMsPastThreshold = new Date(
-          fixedNow - (2.5 * 60 * 60 * 1000 + 1),
+        // Backdate to exactly 2.5 hours + 1 001 ms before fixedNow.
+        // ageMs = 2.5h + 1001ms; tolerance = 1 000ms; 2.5h + 1001ms > 2.5h + 1000ms → rejected.
+        const MTIME_TRUNCATION_TOLERANCE_MS = 1000;
+        const pastTolerance = new Date(
+          fixedNow - (2.5 * 60 * 60 * 1000 + MTIME_TRUNCATION_TOLERANCE_MS + 1),
         );
-        fs.utimesSync(sentinel, oneMsPastThreshold, oneMsPastThreshold);
+        fs.utimesSync(sentinel, pastTolerance, pastTolerance);
 
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         try {
           const result = consume(tmpDir);
 
-          // Sentinel age is 1 ms past the threshold → strictly greater-than → must be rejected.
+          // Age exceeds maxAge + tolerance → must be rejected.
           expect(result).toBeNull();
 
           // The stale sentinel must be removed so subsequent runs are not tricked.
@@ -1087,7 +1092,7 @@ import(moduleUrl)
 
           // The warning must include the sentinel's backdated mtime so operators
           // can correlate the discarded sentinel with a specific prior CI run.
-          expect(warnMessage).toContain(oneMsPastThreshold.toISOString());
+          expect(warnMessage).toContain(pastTolerance.toISOString());
         } finally {
           warnSpy.mockRestore();
           vi.useRealTimers();
@@ -2343,6 +2348,103 @@ describe("subprocess environment integration (age-guard CI override)", () => {
           process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
         }
         vi.resetModules();
+      }
+    },
+  );
+
+  it(
+    "accepts a sentinel whose true age is just inside the limit even when filesystem mtime truncation makes it appear just over the limit",
+    () => {
+      // ── Scenario ────────────────────────────────────────────────────────────
+      // Many filesystems (ext3, HFS+, FAT, some network filesystems) store
+      // mtime at 1-second precision.  After a utimesSync round-trip the stored
+      // mtime is the floor of the true write time to the nearest second, so the
+      // sentinel can appear up to 999 ms older than its true age.
+      //
+      // Concretely, if the sentinel is written 300 ms before the max-age
+      // deadline, but the filesystem floors its mtime by 800 ms (because the
+      // write landed 800 ms into the current second), the guard computes an age
+      // of (maxAge − 300 + 800) = maxAge + 500 ms — pushing it 500 ms past the
+      // raw limit even though the sentinel is genuinely fresh.
+      //
+      // The production guard accounts for this by adding MTIME_TRUNCATION_TOLERANCE_MS
+      // (1 000 ms) to the rejection threshold so a sentinel up to 1 s over the
+      // raw limit is still accepted.  This test pins Date.now() and
+      // fs.statSync() to precise values so the scenario is deterministic and
+      // any future removal of the tolerance is caught immediately.
+      //
+      // ── Math ────────────────────────────────────────────────────────────────
+      // maxAgeMs      = 24 × 3 600 000 = 86 400 000 ms  (divisible by 1 000)
+      // fakeNow       = X such that X % 1 000 = 500
+      // trueAge       = maxAgeMs − 300                   (300 ms inside limit)
+      // trueMtime     = fakeNow − trueAge
+      //   trueMtime % 1 000 = (500 − (−300 mod 1000)) mod 1000
+      //                     = (500 − 700 + 1000) mod 1000 = 800
+      // truncatedMtime = trueMtime − 800                 (filesystem floors it)
+      // computedAge   = fakeNow − truncatedMtime
+      //               = trueAge + 800 = maxAgeMs + 500   (500 ms over raw limit)
+      //
+      // Without the tolerance:  maxAgeMs + 500 > maxAgeMs → REJECTED (false positive)
+      // With the tolerance:     maxAgeMs + 500 ≤ maxAgeMs + 1 000 → ACCEPTED ✓
+
+      const maxAgeMs = MAX_SENTINEL_AGE_HOURS * 60 * 60 * 1000;
+
+      // Pin Date.now() to a value whose millisecond component is exactly 500.
+      const fakeNow = Math.floor(Date.now() / 1000) * 1000 + 500;
+      const dateSpy = vi.spyOn(Date, "now").mockReturnValue(fakeNow);
+
+      // Compute the truncated mtime the filesystem would store.
+      const trueAge = maxAgeMs - 300; // 300 ms inside the raw limit
+      const trueMtime = fakeNow - trueAge;
+      const truncatedMtime = Math.floor(trueMtime / 1000) * 1000; // ms = 0
+
+      // Sanity-check: truncation_error must be 800 ms so that computedAge
+      // lands exactly at maxAgeMs + 500 (i.e. 500 ms over the raw limit).
+      expect(trueMtime - truncatedMtime).toBe(800);
+
+      // Stub statSync to return the filesystem-truncated mtime for the sentinel
+      // path so the test is fully deterministic regardless of host filesystem
+      // precision.
+      const sentinelFullPath = path.join(tmpDir, PROBE_CACHE_SENTINEL);
+      const fakeStats = { mtime: new Date(truncatedMtime) } as ReturnType<
+        typeof fs.statSync
+      >;
+      vi.mocked(fs.statSync).mockImplementation((p) => {
+        if (p === sentinelFullPath) return fakeStats;
+        throw new Error(`Unexpected statSync call for ${String(p)}`);
+      });
+
+      const buildDir = ".next-probe-mtime-boundary";
+      fs.mkdirSync(path.join(tmpDir, buildDir));
+      writeSentinel(buildDir);
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        let result: string | null = undefined!;
+        expect(() => {
+          result = consumeProbeCache(tmpDir);
+        }).not.toThrow();
+
+        // The sentinel is 300 ms inside the real age limit; consumeProbeCache
+        // must accept it.  The 800 ms truncation error (500 ms net overshoot)
+        // must be absorbed by MTIME_TRUNCATION_TOLERANCE_MS (1 000 ms) in the
+        // production guard so the cache is not falsely discarded.
+        expect(result).toBe(buildDir);
+
+        // No staleness warning — the 1-second tolerance absorbs the overshoot.
+        expect(warnSpy).not.toHaveBeenCalled();
+
+        // The normal warm-start log must appear so operators can confirm the
+        // cache was reused rather than a cold start triggered.
+        expect(logSpy).toHaveBeenCalledOnce();
+        const [logMessage] = logSpy.mock.calls[0] as [string];
+        expect(logMessage).toContain(buildDir);
+      } finally {
+        dateSpy.mockRestore();
+        vi.mocked(fs.statSync).mockRestore();
+        warnSpy.mockRestore();
+        logSpy.mockRestore();
       }
     },
   );

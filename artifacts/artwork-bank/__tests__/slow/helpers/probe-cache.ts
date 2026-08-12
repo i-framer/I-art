@@ -79,6 +79,15 @@ export function consumeProbeCache(artworkBankDir: string): string | null {
   // workspace directory was inadvertently cached.  A sentinel whose mtime
   // predates the current job by more than MAX_SENTINEL_AGE_HOURS is treated
   // as stale: reusing it risks a corrupt or mismatched .next-probe build.
+  //
+  // Many filesystems (ext3, HFS+, FAT, some network filesystems) store mtime
+  // at 1-second precision.  After a utimesSync round-trip the stored mtime is
+  // the floor of the true write time to the nearest second, so a sentinel can
+  // appear up to 999 ms older than its true age.  MTIME_TRUNCATION_TOLERANCE_MS
+  // adds a 1-second buffer to the rejection threshold so a genuinely fresh
+  // sentinel is never falsely discarded because the filesystem rounded its
+  // mtime down into the stale zone.
+  const MTIME_TRUNCATION_TOLERANCE_MS = 1000;
   let sentinelAgeTooOld = false;
   let sentinelMtimeForAge = "";
   try {
@@ -86,7 +95,7 @@ export function consumeProbeCache(artworkBankDir: string): string | null {
     sentinelMtimeForAge = stat.mtime.toISOString();
     const ageMs = Date.now() - stat.mtime.getTime();
     const maxAgeMs = MAX_SENTINEL_AGE_HOURS * 60 * 60 * 1000;
-    if (ageMs > maxAgeMs) {
+    if (ageMs > maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS) {
       sentinelAgeTooOld = true;
     }
   } catch {
