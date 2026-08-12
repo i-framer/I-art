@@ -1109,6 +1109,131 @@ import(moduleUrl)
     },
   );
 
+  it(
+    "accepts a sentinel whose mtime is exactly at (MAX_SENTINEL_AGE_HOURS - 500 ms) truncated to a whole-second boundary (worst-case mtime rounding puts ageMs above maxAgeMs but within the tolerance)",
+    async () => {
+      // Risk being tested: a sentinel whose true age is slightly under the
+      // MAX_SENTINEL_AGE_HOURS threshold could be pushed over that threshold by
+      // up to 999 ms of filesystem mtime truncation and be incorrectly rejected.
+      //
+      // How filesystem mtime truncation works:
+      //   The kernel stores the write time as the floor of the true timestamp to
+      //   the nearest second.  consumeProbeCache reads that stored value, so the
+      //   computed ageMs = Date.now() - floor(trueMtime) can be up to 999 ms
+      //   *larger* than the sentinel's true age.
+      //
+      // Worst-case construction:
+      //   fixedNow is chosen so that fixedNow % 1000 === 499.
+      //   trueMtimeMs = fixedNow - (maxAgeMs - 500)
+      //   The millisecond component of trueMtimeMs
+      //     = (fixedNow - (maxAgeMs - 500)) % 1000
+      //     = (499 - (-500)) % 1000          (maxAgeMs is a multiple of 1000)
+      //     = 999 % 1000 = 999
+      //   floor(trueMtimeMs) = trueMtimeMs - 999   (sheds 999 ms)
+      //   ageMs = fixedNow - floor(trueMtimeMs)
+      //         = (maxAgeMs - 500) + 999
+      //         = maxAgeMs + 499
+      //
+      //   Guard: ageMs > maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS (1 000 ms)?
+      //          maxAgeMs + 499 > maxAgeMs + 1 000 → false → sentinel ACCEPTED.
+      //
+      // Why this outcome is correct:
+      //   The 1 000 ms tolerance absorbs worst-case 999 ms mtime rounding.
+      //   A sentinel that is genuinely 500 ms inside the threshold can appear at
+      //   most maxAgeMs + 499 ms old after rounding.  That is still 501 ms below
+      //   the tolerance ceiling, so accepting it is correct behaviour.
+      //
+      // Why this test is stronger than simply using a negative offset:
+      //   The computed ageMs (maxAgeMs + 499) is *above* maxAgeMs — i.e. the
+      //   tolerance IS doing real work here.  If MTIME_TRUNCATION_TOLERANCE_MS
+      //   were removed (set to 0), this sentinel would be rejected, and the test
+      //   would catch the regression.
+      //
+      // The MAX_SENTINEL_AGE_HOURS constant is evaluated at module-load time via
+      // an IIFE, so we must set the env var before importing the module and use
+      // vi.resetModules() to force a fresh evaluation.
+      const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      process.env["MAX_SENTINEL_AGE_HOURS"] = "2.5";
+      vi.resetModules();
+
+      try {
+        // Dynamic import picks up the new env var and re-evaluates the IIFE.
+        const {
+          consumeProbeCache: consume,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        const buildDir = ".next-probe-boundary-truncated";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // maxAgeMs = 2.5 * 3600 * 1000 = 9 000 000 ms (a multiple of 1 000).
+        const maxAgeMs = 2.5 * 60 * 60 * 1000;
+
+        // Choose fixedNow such that fixedNow % 1000 === 499.
+        // This puts the absolute mtime timestamp at a millisecond component of 999
+        // (since maxAgeMs is a multiple of 1000, the -500 shift adds 500 ms then
+        // the 499 ms from fixedNow makes it 999 ms sub-second).
+        // The filesystem floor then sheds those 999 ms, maximising ageMs.
+        const rawNow = Date.now();
+        const fixedNow = rawNow - (rawNow % 1000) + 499;
+        // Verify the invariant: fixedNow % 1000 must be 499.
+        expect(fixedNow % 1000).toBe(499);
+
+        vi.useFakeTimers();
+        vi.setSystemTime(fixedNow);
+
+        // Construct the mtime as the floor-to-second of the true timestamp.
+        //   trueMtimeMs = fixedNow - (maxAgeMs - 500) = fixedNow - maxAgeMs + 500
+        //   sub-ms component = (499 + 500) % 1000 = 999
+        //   floor = trueMtimeMs - 999
+        //   ageMs = fixedNow - floor(trueMtimeMs) = maxAgeMs - 500 + 999 = maxAgeMs + 499
+        const trueMtimeMs = fixedNow - (maxAgeMs - 500);
+        const flooredMtimeMs = Math.floor(trueMtimeMs / 1000) * 1000;
+        const mtimeDate = new Date(flooredMtimeMs);
+        fs.utimesSync(sentinel, mtimeDate, mtimeDate);
+
+        // Confirm the computed ageMs is above maxAgeMs but within the tolerance.
+        const observedAgeMs = fixedNow - flooredMtimeMs;
+        expect(observedAgeMs).toBe(maxAgeMs + 499);
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // ageMs = maxAgeMs + 499 is NOT greater than maxAgeMs + 1 000
+          // (the MTIME_TRUNCATION_TOLERANCE_MS ceiling), so the sentinel must
+          // be accepted — the tolerance is absorbing the worst-case rounding.
+          expect(result).toBe(buildDir);
+
+          // The sentinel must be consumed (deleted) after a successful read.
+          expect(fs.existsSync(sentinel)).toBe(false);
+
+          // No staleness warning must be emitted — the sentinel is within the
+          // tolerance window and must be treated as fresh.
+          expect(warnSpy).not.toHaveBeenCalled();
+
+          // The normal warm-start log must appear once.
+          expect(logSpy).toHaveBeenCalledOnce();
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+          vi.useRealTimers();
+        }
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
+        }
+        // Restore the module registry so subsequent tests use the original module.
+        vi.resetModules();
+      }
+    },
+  );
+
   it.each([
     ["0", "zero is not a positive number"],
     ["-1", "negative numbers are not valid"],
