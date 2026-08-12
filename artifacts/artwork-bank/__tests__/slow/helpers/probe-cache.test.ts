@@ -1745,4 +1745,76 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       }
     },
   );
+
+  it(
+    "falls back to 24 hours and does not crash when MAX_SENTINEL_AGE_HOURS is set to 'abc' (non-numeric string)",
+    async () => {
+      // The string "abc" converts to NaN via Number("abc").  NaN fails both
+      // guards in the IIFE: Number.isFinite(NaN) is false and NaN > 0 is also
+      // false.  The IIFE must fall back to 24 hours.  This test documents the
+      // arbitrary-garbage-string path distinctly from the "NaN" literal string
+      // case: any non-numeric string that converts to NaN — not just the named
+      // special value "NaN" — is also rejected by the finite-number guard.
+      //
+      // For consistency with the null-byte, Infinity, -Infinity, and NaN tests,
+      // and because the IIFE is evaluated at module-load time, we use the
+      // vi.resetModules() + dynamic-import path so the IIFE runs against the
+      // modified env without spawning a child process.
+      const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      process.env["MAX_SENTINEL_AGE_HOURS"] = "abc";
+      vi.resetModules();
+
+      try {
+        const {
+          consumeProbeCache: consume,
+          MAX_SENTINEL_AGE_HOURS: resolvedHours,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        // The IIFE must reject the "abc" value (Number("abc") is NaN, which
+        // fails both Number.isFinite and parsed > 0) and fall back to the
+        // 24-hour default.
+        expect(resolvedHours).toBe(24);
+
+        const buildDir = ".next-probe-abc";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // Backdate to 2 hours ago — stale under a 1-hour threshold but fresh
+        // under the 24-hour default.  Accepting this sentinel confirms the
+        // fallback threshold is active, not the NaN produced by Number("abc")
+        // (which, if used as a threshold, would make every age comparison return
+        // false and reject all sentinels).
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        fs.utimesSync(sentinel, twoHoursAgo, twoHoursAgo);
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // The 2-hour-old sentinel is within the 24-hour default threshold.
+          // consumeProbeCache must accept it and return the build directory name.
+          expect(result).toBe(buildDir);
+
+          // No age-staleness warning must be emitted.
+          expect(warnSpy).not.toHaveBeenCalled();
+
+          // The normal warm-start log must appear.
+          expect(logSpy).toHaveBeenCalledOnce();
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
+        }
+        vi.resetModules();
+      }
+    },
+  );
 });
