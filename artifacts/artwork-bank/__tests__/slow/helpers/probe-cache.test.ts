@@ -382,12 +382,10 @@ describe("consumeProbeCache", () => {
           secondResult = consumeProbeCache(tmpDir);
         }).not.toThrow();
 
-        // The second call must either return the build directory (sentinel still
-        // present and build dir exists → warm start again) or null (if somehow
-        // cleaned up).  It must never throw.
-        expect(
-          secondResult === buildDir || secondResult === null,
-        ).toBe(true);
+        // The sentinel was NOT deleted by the first call (rmSync threw), and the
+        // build directory still exists, so the second call must enter the
+        // warm-start branch and return the build directory name — not null.
+        expect(secondResult).toBe(buildDir);
 
         // After the second call the sentinel must be gone — the second rmSync
         // succeeded, so it must be consumed now.
