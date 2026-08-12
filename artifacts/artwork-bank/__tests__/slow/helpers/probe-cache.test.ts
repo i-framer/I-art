@@ -86,6 +86,40 @@ describe("MTIME_TRUNCATION_TOLERANCE_MS", () => {
   );
 });
 
+describe("MAX_SENTINEL_AGE_HOURS", () => {
+  it(
+    "defaults to 24 when the MAX_SENTINEL_AGE_HOURS env var is not set",
+    async () => {
+      // MAX_SENTINEL_AGE_HOURS is evaluated once at module load time via an
+      // IIFE.  If someone changes the fallback from 24 to a smaller value (e.g.
+      // 1), tests that set the env var explicitly would still pass — this test
+      // catches that regression by reloading the module in an environment where
+      // the env var is absent and asserting the IIFE's fallback branch.
+      //
+      // vi.resetModules() clears Vitest's module registry so the next dynamic
+      // import re-executes the module top-level code (including the IIFE) from
+      // scratch rather than returning the cached export.
+      const savedEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      delete process.env["MAX_SENTINEL_AGE_HOURS"];
+      try {
+        vi.resetModules();
+        const { MAX_SENTINEL_AGE_HOURS: freshDefault } = await import(
+          "./probe-cache"
+        );
+        expect(freshDefault).toBe(24);
+      } finally {
+        // Restore the env var so subsequent tests are not affected.
+        if (savedEnv !== undefined) {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = savedEnv;
+        }
+        // Reset modules again so subsequent imports pick up the fully-mocked
+        // fs and the original module registry state.
+        vi.resetModules();
+      }
+    },
+  );
+});
+
 describe("consumeProbeCache", () => {
   it(
     "returns null and has no side-effects when the sentinel file is absent",
