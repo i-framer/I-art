@@ -3207,6 +3207,101 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       }
     },
   );
+
+  it(
+    "a 10-second-old sentinel is accepted when MAX_SENTINEL_AGE_HOURS=0.01 is set in the subprocess environment",
+    () => {
+      // 0.01 h = 36 seconds = 36 000 ms.  A sentinel that is only 10 seconds old
+      // is well within the 36-second window and must be accepted.
+      //
+      // This test guards against accidental integer truncation or millisecond
+      // arithmetic rounding that would convert 0.01 h to 0 ms, causing
+      // consumeProbeCache to reject every sentinel regardless of age.  If 0 ms
+      // were used as the threshold, the guard fires for every sentinel (even one
+      // that is 0 ms old) and this test would catch it: a 10-second-old sentinel
+      // would be returned as null instead of the build directory name.
+      //
+      // The sentinel is backdated by SENTINEL_BACKDATE_MS=10000 (10 seconds)
+      // via the helper script.  MAX_SENTINEL_AGE_HOURS=0.01 → 36 000 ms limit.
+      // 10 000 ms < 36 000 ms → sentinel is fresh → consumeProbeCache must
+      // return the build directory name, not null.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MAX_SENTINEL_AGE_HOURS: "0.01",
+          SENTINEL_BACKDATE_MS: "10000",
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must have read the env var and produced 0.01 (not the 24-hour
+      // default), confirming that very small positive finite values are accepted
+      // by the IIFE's guards (Number.isFinite(0.01) is true; 0.01 > 0 is true).
+      expect(output.constant).toBe(0.01);
+
+      // The sentinel is only 10 seconds old — well within the 36-second
+      // (0.01 h) threshold.  consumeProbeCache must accept it.
+      expect(output.result).toBe(".next-probe-ci");
+    },
+  );
+
+  it(
+    "a 60-second-old sentinel is rejected when MAX_SENTINEL_AGE_HOURS=0.01 is set in the subprocess environment",
+    () => {
+      // 0.01 h = 36 seconds = 36 000 ms.  A sentinel that is 60 seconds old
+      // exceeds the 36-second window and must be rejected.
+      //
+      // Paired with the preceding acceptance case, this confirms that the
+      // 0.01 h threshold is the gating factor — not a floor-to-zero rounding
+      // bug, not the 24-hour default, and not some other constant.  If 0 ms
+      // were accidentally used (from integer truncation of 36 000 ms), every
+      // sentinel would be rejected, and both the 10-second and 60-second cases
+      // would return null — masking the bug.  By asserting that the 10-second
+      // case passes and the 60-second case fails, the two together pin the exact
+      // 36-second boundary and rule out both silent-accept and silent-reject
+      // regressions.
+      //
+      // The sentinel is backdated by SENTINEL_BACKDATE_MS=60000 (60 seconds)
+      // via the helper script.  MAX_SENTINEL_AGE_HOURS=0.01 → 36 000 ms limit.
+      // 60 000 ms > 36 000 ms → sentinel is stale → consumeProbeCache must
+      // return null, not the build directory name.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MAX_SENTINEL_AGE_HOURS: "0.01",
+          SENTINEL_BACKDATE_MS: "60000",
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must have read the env var and produced 0.01.
+      expect(output.constant).toBe(0.01);
+
+      // The sentinel is 60 seconds old — exceeds the 36-second (0.01 h) threshold.
+      // consumeProbeCache must discard it and return null.
+      expect(output.result).toBeNull();
+    },
+  );
 });
 
 // These tests spawn a fresh `tsx` child process with MTIME_TRUNCATION_TOLERANCE_MS
