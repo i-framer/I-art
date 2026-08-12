@@ -1022,6 +1022,88 @@ import(moduleUrl)
     },
   );
 
+  it(
+    "discards a sentinel that is one millisecond past the MAX_SENTINEL_AGE_HOURS threshold (minimal-violation boundary)",
+    async () => {
+      // The age-guard comparison is strictly greater-than (ageMs > maxAgeMs).
+      // This test pins the minimal-violation boundary: a sentinel whose age
+      // exceeds the threshold by exactly 1 ms must be rejected.  Without this
+      // case, a rounding or off-by-one regression could let a barely-stale
+      // sentinel slip through undetected.
+      //
+      // The MAX_SENTINEL_AGE_HOURS constant is evaluated at module-load time via
+      // an IIFE, so we must set the env var before importing the module and use
+      // vi.resetModules() to force a fresh evaluation.
+      //
+      // We freeze Date.now() so that the 1 ms offset is deterministic: without
+      // a frozen clock, real elapsed time between utimesSync and consumeProbeCache's
+      // internal Date.now() would make the sentinel appear even older, which
+      // would still pass — but the test would be measuring the wrong thing.
+      const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      process.env["MAX_SENTINEL_AGE_HOURS"] = "2.5";
+      vi.resetModules();
+
+      try {
+        // Dynamic import picks up the new env var and re-evaluates the IIFE.
+        const {
+          consumeProbeCache: consume,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        const buildDir = ".next-probe-one-ms-past-threshold";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // Freeze the clock so the Date.now() inside consumeProbeCache is
+        // identical to the one used to compute the sentinel mtime.
+        const fixedNow = Date.now();
+        vi.useFakeTimers();
+        vi.setSystemTime(fixedNow);
+
+        // Backdate to exactly 2.5 hours + 1 ms before fixedNow.
+        // With the clock frozen, ageMs = 2.5h + 1ms > maxAgeMs = 2.5h → rejected.
+        const oneMsPastThreshold = new Date(
+          fixedNow - (2.5 * 60 * 60 * 1000 + 1),
+        );
+        fs.utimesSync(sentinel, oneMsPastThreshold, oneMsPastThreshold);
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // Sentinel age is 1 ms past the threshold → strictly greater-than → must be rejected.
+          expect(result).toBeNull();
+
+          // The stale sentinel must be removed so subsequent runs are not tricked.
+          expect(fs.existsSync(sentinel)).toBe(false);
+
+          // A staleness warning must be emitted so operators can trace the decision.
+          expect(warnSpy).toHaveBeenCalledOnce();
+          const [warnMessage] = warnSpy.mock.calls[0] as [string];
+
+          // The warning must mention the configured threshold (2.5h).
+          expect(warnMessage).toContain("2.5");
+
+          // The warning must include the sentinel's backdated mtime so operators
+          // can correlate the discarded sentinel with a specific prior CI run.
+          expect(warnMessage).toContain(oneMsPastThreshold.toISOString());
+        } finally {
+          warnSpy.mockRestore();
+          vi.useRealTimers();
+        }
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
+        }
+        // Restore the module registry so subsequent tests use the original module.
+        vi.resetModules();
+      }
+    },
+  );
+
   it.each([
     ["0", "zero is not a positive number"],
     ["-1", "negative numbers are not valid"],
