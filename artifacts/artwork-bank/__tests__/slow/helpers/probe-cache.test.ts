@@ -3137,3 +3137,301 @@ describe("subprocess environment integration (age-guard CI override)", () => {
     },
   );
 });
+
+// These tests spawn a fresh `tsx` child process with MTIME_TRUNCATION_TOLERANCE_MS
+// injected via its environment — exactly how a GitHub Actions `env:` block or
+// a `.env.test` file supplies it in CI.  Module-level caching in Vitest cannot
+// interfere because the child process has its own module registry.
+//
+// All tests also inject MAX_SENTINEL_AGE_HOURS=1 so the age threshold is a
+// predictable 3 600 000 ms.  The helper script backs the sentinel to
+// (maxAgeMs + 600 ms) ago:
+//
+//   tolerance < 600 ms  → ageMs > maxAgeMs + tolerance → guard fires → REJECTED
+//   tolerance ≥ 600 ms  → ageMs ≤ maxAgeMs + tolerance → guard silent → ACCEPTED
+//     (timing noise in the spawned process is well below the 400 ms safety margin
+//     between the 600 ms overshoot and the 1 000 ms default tolerance)
+
+describe("subprocess environment integration (tolerance-guard CI override)", () => {
+  // Locate the tsx binary relative to this file:
+  //   __tests__/slow/helpers/ → ../../../node_modules/.bin/tsx
+  const tsxBin = path.resolve(
+    __dirname,
+    "../../../node_modules/.bin/tsx",
+  );
+  const helperScript = path.resolve(
+    __dirname,
+    "./probe-cache-mtime-env-check.ts",
+  );
+
+  it(
+    "a sentinel 600 ms past the age limit is rejected when MTIME_TRUNCATION_TOLERANCE_MS=400 is set in the subprocess environment",
+    () => {
+      // Spawn a fresh process with tolerance=400 ms.  The helper backdates the
+      // sentinel to (maxAgeMs + 600 ms) ago; 600 > 400 so the guard must fire.
+      // This verifies the env var reaches the IIFE in the subprocess, not a
+      // hardcoded fallback.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MAX_SENTINEL_AGE_HOURS: "1",
+          MTIME_TRUNCATION_TOLERANCE_MS: "400",
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must have read the env var and produced 400, not the default.
+      expect(output.constant).toBe(400);
+
+      // The sentinel is 600 ms past the 1-hour limit.  With a 400 ms tolerance
+      // the guard fires: 600 > 400.  consumeProbeCache must discard it.
+      expect(output.result).toBeNull();
+    },
+  );
+
+  it(
+    "a sentinel 600 ms past the age limit is accepted when MTIME_TRUNCATION_TOLERANCE_MS=2000 is set in the subprocess environment",
+    () => {
+      // With a 2 000 ms tolerance the same 600 ms overshoot must pass the guard:
+      // 600 ≤ 2 000.  This confirms the env var — not the hardcoded 1 000 ms
+      // default — is driving the acceptance decision, ruling out the possibility
+      // that the rejection test above passed only because the default was active.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MAX_SENTINEL_AGE_HOURS: "1",
+          MTIME_TRUNCATION_TOLERANCE_MS: "2000",
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must have read the env var and produced 2 000.
+      expect(output.constant).toBe(2000);
+
+      // The sentinel is 600 ms past the 1-hour limit.  With a 2 000 ms tolerance
+      // the guard is silent: 600 ≤ 2 000.  consumeProbeCache must accept it.
+      expect(output.result).toBe(".next-probe-mtime-ci");
+    },
+  );
+
+  it.each([
+    ["-1", "negative numbers are not valid"],
+    ["abc", "non-numeric strings are not valid"],
+  ])(
+    "falls back to 1 000 ms and does not crash when MTIME_TRUNCATION_TOLERANCE_MS=%s (%s) is set in the subprocess environment",
+    (invalidValue) => {
+      // A CI file that accidentally sets MTIME_TRUNCATION_TOLERANCE_MS to an
+      // invalid value must not crash the probe step.  The IIFE in probe-cache.ts
+      // must silently ignore the bad value and fall back to the 1 000 ms default.
+      //
+      // We verify this through the process boundary — Vitest module caching
+      // cannot interfere because the child process has its own module registry.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MAX_SENTINEL_AGE_HOURS: "1",
+          MTIME_TRUNCATION_TOLERANCE_MS: invalidValue,
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash regardless of the invalid env var.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must reject the invalid value and fall back to 1 000 ms.
+      expect(output.constant).toBe(1000);
+
+      // The sentinel is 600 ms past the 1-hour limit.  With the 1 000 ms default
+      // tolerance the guard is silent: 600 ≤ 1 000.  consumeProbeCache must
+      // accept it, proving the process did not crash and the fallback is active.
+      expect(output.result).toBe(".next-probe-mtime-ci");
+    },
+  );
+
+  it(
+    "a sentinel 600 ms past the age limit is accepted when MTIME_TRUNCATION_TOLERANCE_MS is absent from the subprocess environment (1 000 ms default)",
+    () => {
+      // This is the most common CI misconfiguration: the env var is simply not
+      // set in the job's environment.  The IIFE must fall back to 1 000 ms.
+      // Removing the key from the child process env ensures the subprocess sees
+      // a completely absent variable, ruling out an inherited value from the
+      // Vitest runner that would mask the missing-variable code path.
+      const childEnv = { ...process.env };
+      delete childEnv["MTIME_TRUNCATION_TOLERANCE_MS"];
+
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: { ...childEnv, MAX_SENTINEL_AGE_HOURS: "1" },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // With the variable absent the IIFE must produce the 1 000 ms default.
+      expect(output.constant).toBe(1000);
+
+      // The sentinel is 600 ms past the 1-hour limit.  With the 1 000 ms default
+      // tolerance the guard is silent: 600 ≤ 1 000.  consumeProbeCache must
+      // accept it and return the build directory name.
+      expect(output.result).toBe(".next-probe-mtime-ci");
+    },
+  );
+
+  it(
+    "falls back to 1 000 ms and does not crash when MTIME_TRUNCATION_TOLERANCE_MS is set to an empty string in the subprocess environment",
+    () => {
+      // A CI YAML file that sets `MTIME_TRUNCATION_TOLERANCE_MS:` with no value
+      // passes an empty string to the child process environment.  The IIFE in
+      // probe-cache.ts guards `env !== ""` before parsing, so an empty string
+      // must be treated the same as an absent variable: fall back to 1 000 ms.
+      //
+      // This test exercises that path through the real process boundary —
+      // Vitest module caching cannot interfere because the child process has
+      // its own module registry.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MAX_SENTINEL_AGE_HOURS: "1",
+          MTIME_TRUNCATION_TOLERANCE_MS: "",
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash when the env var is an empty string.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must treat "" the same as undefined and fall back to 1 000 ms.
+      expect(output.constant).toBe(1000);
+
+      // The sentinel is 600 ms past the 1-hour limit.  With the 1 000 ms default
+      // tolerance the guard is silent: 600 ≤ 1 000.  consumeProbeCache must
+      // accept it, confirming the process did not crash and the fallback is active.
+      expect(output.result).toBe(".next-probe-mtime-ci");
+    },
+  );
+
+  it(
+    "resolves to 0 ms (not the 1 000 ms default) when MTIME_TRUNCATION_TOLERANCE_MS is set to whitespace only in the subprocess environment",
+    () => {
+      // A CI YAML block that sets `MTIME_TRUNCATION_TOLERANCE_MS: "  "` (spaces
+      // only) passes a non-empty string to the IIFE.  Unlike the analogous
+      // MAX_SENTINEL_AGE_HOURS case — where the `parsed > 0` guard rejects 0
+      // and falls back to 24 h — the MTIME_TRUNCATION_TOLERANCE_MS IIFE uses
+      // `parsed >= 0`, so Number("  ") = 0 passes both Number.isFinite and
+      // >= 0.  The IIFE therefore accepts 0 ms as the resolved tolerance.
+      //
+      // With tolerance = 0 ms the sentinel (600 ms past the age limit) is
+      // rejected: 600 > 0 + 0 → guard fires → result null.
+      //
+      // This test documents the key difference between the two IIFEs: the
+      // MTIME_TRUNCATION_TOLERANCE_MS IIFE deliberately accepts 0 to enable
+      // test scenarios that need zero tolerance.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MAX_SENTINEL_AGE_HOURS: "1",
+          MTIME_TRUNCATION_TOLERANCE_MS: "  ",
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash when the env var is whitespace only.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // Number("  ") = 0, which passes Number.isFinite and >= 0.
+      // The IIFE must accept it and produce 0 ms, not the 1 000 ms default.
+      expect(output.constant).toBe(0);
+
+      // The sentinel is 600 ms past the 1-hour limit.  With tolerance = 0 ms
+      // the guard fires: 600 > 0.  consumeProbeCache must discard the sentinel.
+      expect(output.result).toBeNull();
+    },
+  );
+
+  it(
+    "resolves to 0 ms (not the 1 000 ms default) when MTIME_TRUNCATION_TOLERANCE_MS is set to a tab character only in the subprocess environment",
+    () => {
+      // A tab-only value ("\t") follows the same path as whitespace-only ("  "):
+      // Number("\t") = 0, which is finite and >= 0, so the IIFE accepts it and
+      // returns 0 ms — NOT the 1 000 ms fallback.  This is the same behaviour
+      // as "  " and documents that all JS-whitespace characters produce 0 via
+      // Number() and are thus accepted as a zero-tolerance override.
+      //
+      // This differs from MAX_SENTINEL_AGE_HOURS where `> 0` ensures that 0
+      // falls back to 24 h, making whitespace-only values fall back as well.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MAX_SENTINEL_AGE_HOURS: "1",
+          MTIME_TRUNCATION_TOLERANCE_MS: "\t",
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash when the env var is a tab character only.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // Number("\t") = 0 → passes Number.isFinite and >= 0.
+      // The IIFE must accept it and produce 0 ms, not the 1 000 ms default.
+      expect(output.constant).toBe(0);
+
+      // The sentinel is 600 ms past the 1-hour limit.  With tolerance = 0 ms
+      // the guard fires: 600 > 0.  consumeProbeCache must discard the sentinel.
+      expect(output.result).toBeNull();
+    },
+  );
+});
