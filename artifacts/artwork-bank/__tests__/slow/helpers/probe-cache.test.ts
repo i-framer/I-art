@@ -11,6 +11,22 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+// ESM module namespace objects are not configurable, so vi.spyOn(fs, "statSync")
+// fails at runtime.  Wrapping the entire "node:fs" namespace with vi.mock() at
+// the module level converts statSync into a vi.fn() that can be overridden per
+// test while passing through to the real implementation by default.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    // Wrap statSync so individual tests can stub it without affecting others.
+    statSync: vi.fn(
+      (...args: Parameters<typeof actual.statSync>) =>
+        actual.statSync(...(args as [fs.PathLike, fs.StatSyncOptions])),
+    ),
+  };
+});
+
 import {
   consumeProbeCache,
   PROBE_CACHE_SENTINEL,
@@ -156,6 +172,57 @@ describe("consumeProbeCache", () => {
         expect(warnMessage).toContain(expectedMtime);
       } finally {
         warnSpy.mockRestore();
+      }
+    },
+  );
+
+  it(
+    "still warns with the build directory name and returns null when fs.statSync throws on the sentinel",
+    () => {
+      // Write a sentinel pointing to a directory that does NOT exist so the
+      // stale-sentinel branch is triggered.
+      const buildDir = ".next-probe-stat-throws";
+      writeSentinel(buildDir);
+
+      expect(fs.existsSync(sentinelPath())).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, buildDir))).toBe(false);
+
+      // Override the module-level vi.fn() wrapper (installed via vi.mock above)
+      // to throw for the sentinel path.  This simulates a race where the
+      // sentinel disappears between the existsSync check and the statSync call.
+      const sentinelFullPath = path.join(tmpDir, PROBE_CACHE_SENTINEL);
+      vi.mocked(fs.statSync).mockImplementationOnce((p) => {
+        if (p === sentinelFullPath) {
+          throw new Error("ENOENT: simulated race — file vanished");
+        }
+        // Should not be reached in this test (only statSync on the sentinel is
+        // called in the stale-sentinel branch), but guard anyway.
+        throw new Error(`Unexpected statSync call for ${String(p)}`);
+      });
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        // Must not throw even though fs.statSync throws inside the try/catch.
+        let result: string | null = undefined!;
+        expect(() => {
+          result = consumeProbeCache(tmpDir);
+        }).not.toThrow();
+
+        // The stale-sentinel path returns null.
+        expect(result).toBeNull();
+
+        // console.warn must still be called — the fallback must not silently
+        // swallow the mismatch.
+        expect(warnSpy).toHaveBeenCalledOnce();
+        const [warnMessage] = warnSpy.mock.calls[0] as [string];
+
+        // The message must name the build directory so operators can identify
+        // which sentinel was stale, even when the mtime could not be read.
+        expect(warnMessage).toContain(buildDir);
+      } finally {
+        warnSpy.mockRestore();
+        // Restore the statSync spy to pass-through for subsequent tests.
+        vi.mocked(fs.statSync).mockRestore();
       }
     },
   );
