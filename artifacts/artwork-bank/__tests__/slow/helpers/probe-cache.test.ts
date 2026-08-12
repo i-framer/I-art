@@ -1726,6 +1726,77 @@ describe("subprocess environment integration (age-guard CI override)", () => {
     },
   );
 
+  it(
+    "a 2-hour-old sentinel is rejected when MAX_SENTINEL_AGE_HOURS=0.5 is set in the subprocess environment",
+    () => {
+      // Fractional values like 0.5 (30 minutes) must be accepted by the IIFE
+      // (Number.isFinite(0.5) is true and 0.5 > 0 is true) and must drive the
+      // age guard correctly.  A 2-hour-old sentinel exceeds the 0.5-hour
+      // threshold, so consumeProbeCache must discard it and return null.
+      //
+      // This confirms that no floor/truncation converts 0.5 h to 0 ms before
+      // the comparison — if it did, the sentinel would be incorrectly accepted.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: { ...process.env, MAX_SENTINEL_AGE_HOURS: "0.5" },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must have read the env var and produced 0.5, not the 24-hour default.
+      expect(output.constant).toBe(0.5);
+
+      // The sentinel is 2 hours old — exceeds the 0.5-hour (30-minute) threshold.
+      // consumeProbeCache must discard it and return null.
+      expect(output.result).toBeNull();
+    },
+  );
+
+  it(
+    "a 2-hour-old sentinel is accepted when MAX_SENTINEL_AGE_HOURS=3.5 is set in the subprocess environment",
+    () => {
+      // A fractional threshold of 3.5 hours must also be accepted by the IIFE
+      // (Number.isFinite(3.5) is true and 3.5 > 0 is true) and must drive the
+      // age guard correctly.  A 2-hour-old sentinel is within the 3.5-hour
+      // threshold, so consumeProbeCache must accept it and return the build
+      // directory name.
+      //
+      // Pairing this case with the 0.5-hour case above confirms that float
+      // thresholds work symmetrically: one below 2 h (rejects), one above 2 h
+      // (accepts).  Together they rule out any floor/truncation or integer-only
+      // parsing in the IIFE or the age comparison.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: { ...process.env, MAX_SENTINEL_AGE_HOURS: "3.5" },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must have read the env var and produced 3.5.
+      expect(output.constant).toBe(3.5);
+
+      // The sentinel is 2 hours old — within the 3.5-hour threshold.
+      // consumeProbeCache must accept it and return the build directory name.
+      expect(output.result).toBe(".next-probe-ci");
+    },
+  );
+
   it.each([
     ["0", "zero is not a positive number"],
     ["-1", "negative numbers are not valid"],
