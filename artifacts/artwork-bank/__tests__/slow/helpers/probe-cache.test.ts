@@ -4000,6 +4000,55 @@ describe("subprocess environment integration (age-guard CI override)", () => {
     },
   );
 
+  it.each([
+    {
+      label: "mtime rounded down (storedAge 36 200 ms — filesystem truncated sub-second precision)",
+      storedAgeMs: 36_200,
+      mtimeOffset: 36_200,
+    },
+    {
+      label: "mtime rounded forward (storedAge 35 800 ms — filesystem advanced sub-second precision)",
+      storedAgeMs: 35_800,
+      mtimeOffset: 35_800,
+    },
+  ])(
+    "at-boundary skip fires for both rounding directions — $label",
+    ({ storedAgeMs: expectedStoredAgeMs, mtimeOffset }) => {
+      // Parameterised meta-test that exercises both filesystem rounding
+      // directions in a single it.each table.
+      //
+      // Row 1 — mtime rounded down (storedAge 36 200 ms):
+      //   The filesystem truncates sub-second precision, storing a mtime
+      //   200 ms earlier than requested.  storedAge = 36 200 ms.
+      //
+      // Row 2 — mtime rounded forward (storedAge 35 800 ms):
+      //   The filesystem rounds the mtime forward, storing a mtime 200 ms
+      //   later than requested.  storedAge = 35 800 ms.
+      //
+      // In both cases storedAgeMs !== 36 000, so the skip guard inside
+      // atBoundaryDecision must fire: skipFn called once, consumeFn never.
+
+      const nowMs = Math.floor(Date.now() / 1000) * 1000;
+
+      vi.mocked(fs.statSync).mockReturnValueOnce({
+        mtime: new Date(nowMs - mtimeOffset),
+      } as unknown as fs.Stats);
+
+      const storedMtime = fs.statSync(sentinelPath()).mtime;
+      const storedAgeMs = nowMs - storedMtime.getTime();
+
+      const skipFn = vi.fn(() => {});
+      const consumeFn = vi.fn((_dir: string): string | null => null);
+
+      const result = atBoundaryDecision(storedAgeMs, skipFn, consumeFn, tmpDir);
+
+      expect(storedAgeMs).toBe(expectedStoredAgeMs);
+      expect(skipFn).toHaveBeenCalledOnce();
+      expect(consumeFn).not.toHaveBeenCalled();
+      expect(result).toBe("skipped");
+    },
+  );
+
   it(
     "at-boundary skip path fires when filesystem rounds mtime down — atBoundaryDecision calls skipFn and never calls consumeFn",
     () => {
