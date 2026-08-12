@@ -11,6 +11,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
+import { Worker } from "node:worker_threads";
+import { fileURLToPath } from "node:url";
 
 // ESM module namespace objects are not configurable, so vi.spyOn(fs, "statSync")
 // fails at runtime.  Wrapping the entire "node:fs" namespace with vi.mock() at
@@ -520,6 +522,231 @@ describe("consumeProbeCache", () => {
         vi.mocked(fs.rmSync).mockRestore();
       }
     },
+  );
+
+  it(
+    "survives two worker threads calling consumeProbeCache concurrently on the same sentinel",
+    async () => {
+      // Set up: a valid build directory and sentinel so both workers enter
+      // the warm-start branch.
+      const buildDir = ".next-probe-concurrent";
+      fs.mkdirSync(path.join(tmpDir, buildDir));
+      writeSentinel(buildDir);
+
+      expect(fs.existsSync(sentinelPath())).toBe(true);
+
+      // Resolve the absolute path to probe-cache.ts.  Workers run in
+      // separate V8 isolates and do NOT inherit Vitest's vi.mock() transforms;
+      // they use the real fs module — exactly what we need for a real
+      // filesystem concurrency test.
+      const probeCacheModulePath = fileURLToPath(
+        new URL("./probe-cache.ts", import.meta.url),
+      );
+
+      // SharedArrayBuffer layout (5 × Int32 = 20 bytes):
+      //   [0]  arrival counter  — each worker atomically increments it when it
+      //        reaches the sentinel-delete step (inside the patched rmSync)
+      //   [1]  gate             — starts at 0 (hold); main thread sets it to 1
+      //        (go) once both workers have arrived, releasing them simultaneously
+      //   [2]  deleteOkCount    — incremented by a worker when origRmSync returns
+      //        without throwing (expected: 2, because force:true makes the second
+      //        delete a safe no-op)
+      //   [3]  deleteErrCount   — incremented by a worker when origRmSync throws
+      //        (expected: 0; becomes 1 if force:true is ever removed, catching
+      //        the regression even though consumeProbeCache swallows the error)
+      //   [4]  noForceCount     — incremented when rmSync is called WITHOUT
+      //        { force: true }  (expected: 0; detects the options being dropped)
+      //
+      // The deleteErrCount and noForceCount slots are the critical regression
+      // guards: consumeProbeCache wraps rmSync in a catch-all and still returns
+      // the build directory after a deletion failure, so the only way to detect
+      // a missing force flag is to observe the origRmSync call directly.
+      const sharedBuffer = new SharedArrayBuffer(20);
+      const sabArr = new Int32Array(sharedBuffer);
+
+      // Inline worker script (evaluated as CommonJS).
+      //
+      // Strategy:
+      //   1. Monkey-patch fs.rmSync BEFORE importing probe-cache.ts so the
+      //      module picks up the instrumented version.  For Node.js built-in
+      //      modules the require() object and the ESM namespace share the
+      //      same live bindings, so the patch propagates to the imported
+      //      module automatically.
+      //   2. The patched rmSync atomically increments the arrival counter,
+      //      then blocks on Atomics.wait until the main thread opens the gate.
+      //      This guarantees both workers have completed every step up to and
+      //      including the sentinel read/stat before either one deletes it.
+      //   3. After the gate opens, both workers call the real rmSync and record
+      //      the outcome in shared memory.  One deletes the file; the other
+      //      finds it absent.  Because the production code passes { force: true },
+      //      the second call is a safe no-op (deleteOkCount becomes 2, not 1+1).
+      //      Removing force:true would flip one success into an error, setting
+      //      deleteErrCount to 1 — which the assertion below catches even though
+      //      consumeProbeCache itself swallows the throw.
+      const workerScript = `
+const { workerData, parentPort } = require('worker_threads');
+const { pathToFileURL } = require('url');
+
+const sharedArr = new Int32Array(workerData.sharedBuffer);
+// [0]=arrival [1]=gate [2]=deleteOkCount [3]=deleteErrCount [4]=noForceCount
+
+const realFs = require('fs');
+const origRmSync = realFs.rmSync.bind(realFs);
+
+realFs.rmSync = function barrierRmSync(p, opts) {
+  // Record if { force: true } is absent — catches the guard being dropped.
+  if (!opts || opts.force !== true) {
+    Atomics.add(sharedArr, 4, 1);
+  }
+  // Signal arrival at the deletion barrier.
+  Atomics.add(sharedArr, 0, 1);
+  Atomics.notify(sharedArr, 0, 1);
+  // Block until the main thread opens the gate (sharedArr[1] becomes 1).
+  // Timeout after 10 s to avoid hanging the suite if the other worker crashes.
+  Atomics.wait(sharedArr, 1, 0, 10000);
+  // Both workers are now past their read paths — call the real delete and
+  // record whether it succeeded or threw.
+  try {
+    var ret = origRmSync(p, opts);
+    Atomics.add(sharedArr, 2, 1); // success
+    return ret;
+  } catch (err) {
+    Atomics.add(sharedArr, 3, 1); // error — signals a missing force:true
+    throw err;                    // re-throw so consumeProbeCache can catch it
+  }
+};
+
+const moduleUrl = pathToFileURL(workerData.modulePath).href;
+import(moduleUrl)
+  .then(function(mod) {
+    var result = mod.consumeProbeCache(workerData.tmpDir);
+    parentPort.postMessage({ ok: true, result: result });
+  })
+  .catch(function(err) {
+    parentPort.postMessage({ ok: false, error: String(err) });
+  });
+`;
+
+      type WorkerReply =
+        | { ok: true; result: string | null }
+        | { ok: false; error: string };
+
+      function spawnWorker(): Promise<WorkerReply> {
+        return new Promise((resolve) => {
+          const worker = new Worker(workerScript, {
+            eval: true,
+            workerData: { tmpDir, modulePath: probeCacheModulePath, sharedBuffer },
+            // tsx/esm registers a Node.js ESM loader hook so the dynamic
+            // import() of the .ts file inside the worker is resolved without
+            // a separate compile step.
+            execArgv: ["--import", "tsx/esm"],
+          });
+          worker.once("message", (msg: WorkerReply) => resolve(msg));
+          worker.once("error", (err) =>
+            resolve({ ok: false, error: String(err) }),
+          );
+        });
+      }
+
+      // Start both workers.  Each will block inside barrierRmSync until the
+      // main thread below opens the gate.
+      const p1 = spawnWorker();
+      const p2 = spawnWorker();
+
+      // ── Wait for both workers to reach the deletion barrier ───────────────
+      // Poll sabArr[0] until both workers have incremented it.  Use a
+      // 15-second timeout so a startup failure doesn't hang the suite.
+      await new Promise<void>((resolve, reject) => {
+        let elapsed = 0;
+        const poll = () => {
+          if (Atomics.load(sabArr, 0) >= 2) {
+            resolve();
+            return;
+          }
+          if (elapsed >= 15_000) {
+            reject(
+              new Error(
+                `Timed out after ${elapsed} ms waiting for both workers to reach ` +
+                  `the sentinel-deletion barrier (arrival count: ${Atomics.load(sabArr, 0)})`,
+              ),
+            );
+            return;
+          }
+          elapsed += 20;
+          setTimeout(poll, 20);
+        };
+        poll();
+      });
+
+      // At this point both workers have:
+      //   • read the sentinel content (buildDir name)
+      //   • stat'd the sentinel (age / mtime)
+      //   • confirmed the build directory exists
+      //   • entered barrierRmSync and are sleeping on Atomics.wait
+      // Neither has deleted the sentinel yet.
+
+      // ── Open the gate — release both workers simultaneously ───────────────
+      Atomics.store(sabArr, 1, 1);
+      Atomics.notify(sabArr, 1, 2); // wake up to 2 waiters
+
+      const [r1, r2] = await Promise.all([p1, p2]);
+
+      // ── Neither worker must have posted an error envelope ────────────────
+      expect(r1.ok, `Worker 1 error: ${(r1 as { error?: string }).error}`).toBe(
+        true,
+      );
+      expect(r2.ok, `Worker 2 error: ${(r2 as { error?: string }).error}`).toBe(
+        true,
+      );
+
+      // ── Both workers must have returned the build directory name ──────────
+      // The gate was opened only after both workers confirmed the sentinel
+      // was present and the build directory existed, so both must complete
+      // the warm-start path and return buildDir — not null.
+      const result1 = (r1 as { ok: true; result: string | null }).result;
+      const result2 = (r2 as { ok: true; result: string | null }).result;
+      expect(result1).toBe(buildDir);
+      expect(result2).toBe(buildDir);
+
+      // ── origRmSync must never have thrown ────────────────────────────────
+      // Both workers called rmSync after the gate opened.  The first delete
+      // succeeds; the second finds the file already gone.  Because the
+      // production code passes { force: true }, the second call is a safe
+      // no-op — origRmSync returns without error.
+      //
+      // This is the key regression guard: consumeProbeCache wraps rmSync in
+      // a catch-all and still returns buildDir on error, so removing
+      // { force: true } from the production call would be invisible to all
+      // other assertions.  Only deleteErrCount exposes that regression.
+      const deleteOkCount = Atomics.load(sabArr, 2);
+      const deleteErrCount = Atomics.load(sabArr, 3);
+      const noForceCount = Atomics.load(sabArr, 4);
+
+      expect(
+        noForceCount,
+        "rmSync was called without { force: true } — the guard has been dropped",
+      ).toBe(0);
+
+      expect(
+        deleteErrCount,
+        "origRmSync threw on at least one worker — { force: true } is not absorbing the concurrent ENOENT",
+      ).toBe(0);
+
+      // Both workers must have reached and completed rmSync (2 calls total).
+      expect(deleteOkCount + deleteErrCount).toBe(2);
+
+      // ── Filesystem must be in a consistent state ───────────────────────────
+      // The sentinel must be absent: one worker deleted it and the other
+      // worker's rmSync (force: true) was a safe no-op on the already-
+      // absent file — not a crash or an ENOENT throw.
+      expect(fs.existsSync(sentinelPath())).toBe(false);
+
+      // The build directory itself must still exist — consumeProbeCache only
+      // deletes the sentinel, never the build output.
+      expect(fs.existsSync(path.join(tmpDir, buildDir))).toBe(true);
+    },
+    // Worker thread startup and barrier coordination can take several seconds.
+    30_000,
   );
 
   it(
