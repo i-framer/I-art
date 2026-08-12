@@ -4054,6 +4054,60 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       expect(result).toBe("skipped");
     },
   );
+
+  it(
+    "at-boundary skip path fires when filesystem rounds mtime forward — atBoundaryDecision calls skipFn and never calls consumeFn",
+    () => {
+      // Meta-test for the symmetric rounding direction.
+      //
+      // Goal: confirm that when the filesystem rounds the mtime forward in time
+      // (stores a mtime slightly later than requested), the stored sentinel
+      // appears younger than the boundary — storedAge = 35 800 ms instead of
+      // 36 000 ms.  atBoundaryDecision must detect storedAgeMs !== 36 000 and
+      // call skipFn without ever reaching consumeFn.
+      //
+      // Rounding note
+      // ─────────────
+      // A filesystem that rounds mtime forward stores a mtime that is later than
+      // the one requested (mtime rounded up / towards now).  This makes the
+      // stored age smaller than intended:
+      //   requested mtime:  nowMs − 36 000 ms
+      //   stored mtime:     nowMs − 35 800 ms  (200 ms later)
+      //   storedAge:        nowMs − (nowMs − 35 800) = 35 800 ms
+      //
+      // Because storedAgeMs (35 800) !== 36 000, the skip guard in
+      // atBoundaryDecision must fire and skipFn must be called.
+
+      const nowMs = Math.floor(Date.now() / 1000) * 1000;
+
+      // Stub fs.statSync to return a mtime that gives storedAge = 35 800 ms.
+      // fs.statSync is already a vi.fn() via the module-level vi.mock().
+      vi.mocked(fs.statSync).mockReturnValueOnce({
+        mtime: new Date(nowMs - 35_800),
+      } as unknown as fs.Stats);
+
+      const storedMtime = fs.statSync(sentinelPath()).mtime;
+      const storedAgeMs = nowMs - storedMtime.getTime();
+
+      // Spy callbacks passed to atBoundaryDecision in place of ctx.skip() and
+      // the real consumeProbeCache.
+      const skipFn = vi.fn(() => {});
+      const consumeFn = vi.fn((_dir: string): string | null => null);
+
+      const result = atBoundaryDecision(storedAgeMs, skipFn, consumeFn, tmpDir);
+
+      // storedAgeMs (35 800) !== 36 000 → the skip guard must have fired.
+      expect(storedAgeMs).toBe(35_800);
+      expect(skipFn).toHaveBeenCalledOnce();
+
+      // consumeFn must never be called — the test body returned early at the
+      // skip guard without reaching the consumeProbeCache assertion.
+      expect(consumeFn).not.toHaveBeenCalled();
+
+      // atBoundaryDecision returns "skipped" when skipFn does not throw.
+      expect(result).toBe("skipped");
+    },
+  );
 });
 
 // These tests spawn a fresh `tsx` child process with MTIME_TRUNCATION_TOLERANCE_MS
