@@ -228,6 +228,57 @@ describe("consumeProbeCache", () => {
   );
 
   it(
+    "still logs the build directory name and returns it when fs.statSync throws on the sentinel in the warm-start branch",
+    () => {
+      // Set up a warm-start scenario: sentinel present AND build directory exists.
+      const buildDir = ".next-probe-stat-throws-warm";
+      fs.mkdirSync(path.join(tmpDir, buildDir));
+      writeSentinel(buildDir);
+
+      expect(fs.existsSync(sentinelPath())).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, buildDir))).toBe(true);
+
+      // Stub statSync to throw for the sentinel path, simulating a race where
+      // the sentinel disappears between existsSync and statSync in the warm-start
+      // branch (lines 98-102 of probe-cache.ts).
+      const sentinelFullPath = path.join(tmpDir, PROBE_CACHE_SENTINEL);
+      vi.mocked(fs.statSync).mockImplementationOnce((p) => {
+        if (p === sentinelFullPath) {
+          throw new Error("ENOENT: simulated race — sentinel vanished before stat");
+        }
+        // Should not be reached in this test.
+        throw new Error(`Unexpected statSync call for ${String(p)}`);
+      });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        // Must not throw even though fs.statSync throws inside the try/catch.
+        let result: string | null = undefined!;
+        expect(() => {
+          result = consumeProbeCache(tmpDir);
+        }).not.toThrow();
+
+        // The warm-start branch must still return the build directory name —
+        // a missing mtime must not abort the return.
+        expect(result).toBe(buildDir);
+
+        // console.log must still be called — the fallback must not silently
+        // swallow the warm-start signal.
+        expect(logSpy).toHaveBeenCalledOnce();
+        const [logMessage] = logSpy.mock.calls[0] as [string];
+
+        // The message must name the build directory so operators can trace
+        // which probe cache was reused, even when the mtime could not be read.
+        expect(logMessage).toContain(buildDir);
+      } finally {
+        logSpy.mockRestore();
+        // Restore the statSync spy to pass-through for subsequent tests.
+        vi.mocked(fs.statSync).mockRestore();
+      }
+    },
+  );
+
+  it(
     "is idempotent: a second call after a successful cache hit returns null (sentinel already consumed)",
     () => {
       const buildDir = ".next-probe";
