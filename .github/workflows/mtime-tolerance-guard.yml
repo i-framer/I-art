@@ -111,3 +111,70 @@ jobs:
           fi
 
           echo "✅  MTIME_TRUNCATION_TOLERANCE_MS default is correctly set to 1000 ms."
+
+      # ── Check 3: zero-tolerance override guard is `parsed >= 0` ─────────
+      #
+      # The MTIME_TRUNCATION_TOLERANCE_MS IIFE deliberately uses `parsed >= 0`
+      # (not `parsed > 0`) so that setting the env var to "0" selects zero-
+      # tolerance mode rather than falling through to the 1 000 ms default.
+      # Meta-tests rely on this: they set MTIME_TRUNCATION_TOLERANCE_MS=0 to
+      # verify the stale-sentinel guard fires for any overshoot, however small.
+      #
+      # If the guard were accidentally changed to `parsed > 0`, the literal
+      # string "0" would be rejected and the IIFE would silently return 1 000 ms,
+      # causing meta-tests to run with the wrong tolerance.
+      #
+      # This step asserts the source-level guard condition — the quickest
+      # possible signal before any test runner starts.  The runtime behaviour
+      # (that the constant actually evaluates to 0 when the env var is "0" and
+      # that consumeProbeCache rejects the sentinel) is verified by the targeted
+      # subprocess integration test:
+      #
+      #   artifacts/artwork-bank/__tests__/slow/helpers/probe-cache.test.ts
+      #   describe("subprocess environment integration (tolerance-guard CI override)")
+      #   → "resolves to 0 ms … when MTIME_TRUNCATION_TOLERANCE_MS is set to
+      #      the literal string '0' in the subprocess environment"
+      #
+      # That test spawns probe-cache-mtime-env-check.ts via tsx, which imports
+      # the real module — no duplicated IIFE logic.
+      - name: Assert MTIME_TRUNCATION_TOLERANCE_MS IIFE uses parsed >= 0 (zero-tolerance guard)
+        run: |
+          FILE="artifacts/artwork-bank/__tests__/slow/helpers/probe-cache.ts"
+
+          # Extract the MTIME_TRUNCATION_TOLERANCE_MS IIFE block.
+          IIFE_BLOCK=$(awk '
+            /MTIME_TRUNCATION_TOLERANCE_MS[^=]*=.*\(\(\)/ { in_block=1 }
+            in_block { print }
+            in_block && /^\}\)\(\);/ { in_block=0 }
+          ' "$FILE")
+
+          if [ -z "$IIFE_BLOCK" ]; then
+            echo "❌  Could not locate the MTIME_TRUNCATION_TOLERANCE_MS IIFE block in $FILE."
+            echo "    The constant may have been renamed or reformatted."
+            echo "    Update this guard (and the path above) to match."
+            exit 1
+          fi
+
+          if echo "$IIFE_BLOCK" | grep -qE 'parsed\s*>=\s*0'; then
+            echo "✅  MTIME IIFE guard is 'parsed >= 0' — literal '0' is accepted as a valid zero-tolerance override."
+          else
+            echo "❌  The MTIME_TRUNCATION_TOLERANCE_MS IIFE does not contain 'parsed >= 0'."
+            echo ""
+            echo "    Guard line found in the IIFE:"
+            echo "$IIFE_BLOCK" | grep -E 'Number\.isFinite' || echo "    (no Number.isFinite line found)"
+            echo ""
+            echo "    Why this matters:"
+            echo "      MTIME_TRUNCATION_TOLERANCE_MS=0 is the zero-tolerance mode used"
+            echo "      by meta-tests.  If the guard reads 'parsed > 0', the literal"
+            echo "      string '0' is rejected and the IIFE silently falls through to"
+            echo "      the 1 000 ms default — meta-tests then run with the wrong"
+            echo "      tolerance, hiding genuine regressions."
+            echo ""
+            echo "    Runtime confirmation: probe-cache.test.ts"
+            echo "      describe('subprocess environment integration (tolerance-guard CI override)')"
+            echo "      → 'resolves to 0 ms … when … set to the literal string \"0\"'"
+            echo ""
+            echo "    Fix: restore 'parsed >= 0' in the IIFE guard in:"
+            echo "      $FILE"
+            exit 1
+          fi

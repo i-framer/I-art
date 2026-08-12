@@ -3351,6 +3351,52 @@ describe("subprocess environment integration (tolerance-guard CI override)", () 
   );
 
   it(
+    "resolves to 0 ms (not the 1 000 ms default) when MTIME_TRUNCATION_TOLERANCE_MS is set to the literal string '0' in the subprocess environment",
+    () => {
+      // This is the primary zero-tolerance mode used by meta-tests.  Setting
+      // MTIME_TRUNCATION_TOLERANCE_MS="0" must cause the constant to evaluate
+      // to 0 — not fall through to the 1 000 ms default.
+      //
+      // If the `parsed >= 0` guard in the IIFE were accidentally changed to
+      // `parsed > 0`, Number("0") = 0 would fail the guard and the IIFE would
+      // return 1 000 ms instead.  Meta-tests that rely on zero-tolerance mode
+      // would silently use the wrong tolerance, hiding genuine regressions.
+      //
+      // This test closes that gap: it spawns a fresh subprocess (guaranteeing
+      // the module-level IIFE re-evaluates against the subprocess environment,
+      // not a cached Vitest module) and asserts both the resolved constant and
+      // the resulting cache-acceptance decision.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MAX_SENTINEL_AGE_HOURS: "1",
+          MTIME_TRUNCATION_TOLERANCE_MS: "0",
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash when the env var is "0".
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must accept "0" (parsed >= 0 passes) and return 0 ms,
+      // NOT the 1 000 ms default.  If this assertion fails, the guard was
+      // changed from `parsed >= 0` to `parsed > 0`.
+      expect(output.constant).toBe(0);
+
+      // The sentinel is 600 ms past the 1-hour limit.  With tolerance = 0 ms
+      // the guard fires: 600 > 0.  consumeProbeCache must discard the sentinel.
+      expect(output.result).toBeNull();
+    },
+  );
+
+  it(
     "resolves to 0 ms (not the 1 000 ms default) when MTIME_TRUNCATION_TOLERANCE_MS is set to whitespace only in the subprocess environment",
     () => {
       // A CI YAML block that sets `MTIME_TRUNCATION_TOLERANCE_MS: "  "` (spaces
