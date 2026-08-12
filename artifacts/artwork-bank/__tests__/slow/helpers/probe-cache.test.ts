@@ -937,6 +937,91 @@ import(moduleUrl)
     },
   );
 
+  it(
+    "accepts a sentinel whose age is exactly equal to the MAX_SENTINEL_AGE_HOURS threshold (strict greater-than guard)",
+    async () => {
+      // The age-guard comparison in probe-cache.ts is strictly greater-than
+      // (ageMs > maxAgeMs), so a sentinel whose age equals the threshold exactly
+      // must be treated as fresh and accepted — not discarded.
+      //
+      // This test pins that boundary to prevent a future guard that accidentally
+      // uses >= from silently changing behaviour: if >= were ever used, this test
+      // would catch it immediately by seeing null instead of the build directory.
+      //
+      // The MAX_SENTINEL_AGE_HOURS constant is evaluated at module-load time via
+      // an IIFE.  To test the env-var path we must set the variable BEFORE the
+      // module is imported, which requires resetting the module registry and
+      // re-importing dynamically.
+      //
+      // To make the boundary deterministic we freeze Date.now() using Vitest's
+      // fake-timer API before calling consume().  This ensures that the
+      // `Date.now()` inside consumeProbeCache returns exactly the same value as
+      // the one used to compute the sentinel mtime, so ageMs === maxAgeMs with
+      // no clock drift.  Without this, any elapsed milliseconds between the
+      // utimesSync call and the internal Date.now() would make the sentinel
+      // appear fractionally older than the threshold and cause a flaky failure.
+      const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      process.env["MAX_SENTINEL_AGE_HOURS"] = "2.5";
+      vi.resetModules();
+
+      try {
+        // Dynamic import picks up the new env var and re-evaluates the IIFE.
+        const {
+          consumeProbeCache: consume,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        const buildDir = ".next-probe-exact-threshold";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // Freeze the clock at a fixed point so the Date.now() inside
+        // consumeProbeCache is identical to the one used for utimesSync.
+        const fixedNow = Date.now();
+        vi.useFakeTimers();
+        vi.setSystemTime(fixedNow);
+
+        // Backdate to exactly 2.5 hours before fixedNow.
+        // With the clock frozen, ageMs = fixedNow - (fixedNow - 2.5h) = 2.5h exactly.
+        // The guard fires when ageMs > maxAgeMs, i.e. 2.5h > 2.5h — which is false.
+        // Therefore the sentinel must be accepted.
+        const exactlyAtThreshold = new Date(fixedNow - 2.5 * 60 * 60 * 1000);
+        fs.utimesSync(sentinel, exactlyAtThreshold, exactlyAtThreshold);
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // Sentinel age == threshold → NOT greater-than → must be accepted.
+          expect(result).toBe(buildDir);
+
+          // The sentinel must be consumed (deleted) after a successful read.
+          expect(fs.existsSync(sentinel)).toBe(false);
+
+          // No staleness warning must be emitted for an at-threshold sentinel.
+          expect(warnSpy).not.toHaveBeenCalled();
+
+          // The normal warm-start log must appear.
+          expect(logSpy).toHaveBeenCalledOnce();
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+          vi.useRealTimers();
+        }
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
+        }
+        // Restore the module registry so subsequent tests use the original module.
+        vi.resetModules();
+      }
+    },
+  );
+
   it.each([
     ["0", "zero is not a positive number"],
     ["-1", "negative numbers are not valid"],
