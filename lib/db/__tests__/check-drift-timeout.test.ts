@@ -55,12 +55,12 @@ const DIRECT_OVERHEAD_MS = 500;
 /**
  * Extra budget on top of the connect timeout for the *subprocess* test.
  * Covers tsx + Node.js module-load startup time — typically 300–500 ms in
- * this workspace; 6 000 ms gives breathing room on a loaded CI runner where
- * the full validation suite runs in parallel (observed >3 000 ms overhead
- * under that load). Still far below the unconfigured-timeout hang this test
- * exists to catch.
+ * this workspace; 10 000 ms gives breathing room on a heavily loaded CI
+ * runner where the full validation suite runs in parallel (observed up to
+ * ~7 000 ms overhead under peak load). Still far below the unconfigured-
+ * timeout hang this test exists to catch (which would be 30+ seconds).
  */
-const SUBPROCESS_OVERHEAD_MS = 6_000;
+const SUBPROCESS_OVERHEAD_MS = 10_000;
 
 const DIRECT_CEILING_MS = CONNECT_TIMEOUT_MS + DIRECT_OVERHEAD_MS; // 5 500 ms
 const SUBPROCESS_CEILING_MS = CONNECT_TIMEOUT_MS + SUBPROCESS_OVERHEAD_MS; // 8 000 ms

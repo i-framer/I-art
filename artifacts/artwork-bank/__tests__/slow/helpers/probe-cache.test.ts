@@ -66,6 +66,39 @@ function writeSentinel(buildDir: string): void {
   fs.writeFileSync(sentinelPath(), buildDir, "utf8");
 }
 
+/**
+ * Shared decision core for the at-boundary real-filesystem acceptance test.
+ *
+ * Both the real at-boundary test and its meta-test call this function with
+ * different callback implementations.  Keeping the skip guard and the consume
+ * call together here means that removing the guard from this function causes
+ * the meta-test to fail: consumeFn would be called when it should not be.
+ *
+ * @param storedAgeMs - Age of the sentinel read back from the real filesystem
+ *                      (nowMs − storedMtime.getTime()).
+ * @param skipFn      - Called when storedAgeMs !== 36_000.  In the real test
+ *                      this is `() => ctx.skip()`, which throws a Vitest
+ *                      SkipError; in the meta-test it is a vi.fn() spy.
+ * @param consumeFn   - Called only when storedAgeMs is exactly 36_000.  In
+ *                      the real test this is the imported consumeProbeCache;
+ *                      in the meta-test it is a vi.fn() spy.
+ * @param dir         - Base directory forwarded to consumeFn.
+ * @returns "skipped" when skipFn returns without throwing; the consumeFn
+ *          return value when the boundary condition is met exactly.
+ */
+function atBoundaryDecision(
+  storedAgeMs: number,
+  skipFn: () => void,
+  consumeFn: (dir: string) => string | null,
+  dir: string,
+): "skipped" | string | null {
+  if (storedAgeMs !== 36_000) {
+    skipFn(); // throws SkipError in real test; no-op spy in meta-test
+    return "skipped"; // only reached when skipFn does not throw
+  }
+  return consumeFn(dir);
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("MTIME_TRUNCATION_TOLERANCE_MS", () => {
@@ -3912,33 +3945,33 @@ describe("subprocess environment integration (age-guard CI override)", () => {
         //     acceptance case the test is designed to verify.
         //   storedAgeMs < 36 000: filesystem rounded the mtime forward (unusual),
         //     making the sentinel appear younger.  Also not the exact boundary.
-        // ctx.skip() marks the test as skipped rather than passing, preventing
-        // silent false-positive coverage when the host filesystem cannot produce
-        // the worst-case rounding scenario.
-        if (storedAgeMs !== 36_000) {
-          ctx.skip();
-          return;
-        }
+        // The skip guard and the consume call are kept together in
+        // atBoundaryDecision so the meta-test below can call the same function
+        // with vi.fn() spies and confirm the skip path prevents consume.
 
-        // Assert the exact age that will be supplied to the guard.  This makes
-        // the coverage claim explicit before consumeProbeCache() is called:
-        //   36 000 > 36 000 + 0  →  false  →  sentinel must be accepted.
-        expect(storedAgeMs).toBe(36_000);
-
-        // Freeze Date.now() to nowMs for the duration of consumeProbeCache().
-        // With the clock frozen the age the guard computes is exactly storedAgeMs
-        // (= 36 000 ms), eliminating any wall-clock drift between this line and
-        // the internal Date.now() call inside consumeProbeCache().
+        // Freeze Date.now() to nowMs and set up console spies before delegating
+        // to atBoundaryDecision.  The helper either throws (ctx.skip() → Vitest
+        // SkipError) or calls consume(tmpDir) and returns the result.
         const realDateNow = Date.now;
         Date.now = () => nowMs;
 
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
         try {
-          const result = consume(tmpDir);
+          // atBoundaryDecision: if storedAgeMs !== 36_000, ctx.skip() throws a
+          // SkipError that propagates out and marks the test skipped.
+          // If storedAgeMs === 36_000, consume(tmpDir) is called and returned.
+          const result = atBoundaryDecision(
+            storedAgeMs,
+            () => ctx.skip(),
+            consume,
+            tmpDir,
+          );
 
+          // Only reached when storedAgeMs === 36_000 and the sentinel is accepted.
           // storedAgeMs = 36 000 ms, tolerance = 0 ms:
           // guard (36 000 > 36 000 + 0) → false → sentinel must be accepted.
+          expect(storedAgeMs).toBe(36_000);
           expect(result).toBe(".next-probe-ci");
 
           // No staleness warning must be emitted for an at-boundary sentinel.
@@ -3964,6 +3997,61 @@ describe("subprocess environment integration (age-guard CI override)", () => {
         }
         vi.resetModules();
       }
+    },
+  );
+
+  it(
+    "at-boundary skip path fires when filesystem rounds mtime down — atBoundaryDecision calls skipFn and never calls consumeFn",
+    () => {
+      // Meta-test for the at-boundary acceptance test above.
+      //
+      // Goal: confirm that when the real filesystem stores a mtime whose
+      // storedAge is NOT exactly 36 000 ms (e.g. the filesystem truncated
+      // sub-second precision, storing a mtime 200 ms earlier than requested
+      // so storedAge = 36 200 ms), atBoundaryDecision calls skipFn and returns
+      // early without ever reaching consumeFn.
+      //
+      // Because both the real test and this meta-test call atBoundaryDecision,
+      // removing the skip guard from that helper would cause this meta-test to
+      // fail: consumeFn would be called unexpectedly and skipFn would not.
+      //
+      // Rounding note
+      // ─────────────
+      // A filesystem that truncates sub-second mtime components stores a mtime
+      // that is earlier than the one requested (mtime rounded down / backwards).
+      // This makes the stored age larger than intended:
+      //   requested mtime:  nowMs − 36 000 ms
+      //   stored mtime:     nowMs − 36 200 ms  (200 ms earlier)
+      //   storedAge:        nowMs − (nowMs − 36 200) = 36 200 ms
+
+      const nowMs = Math.floor(Date.now() / 1000) * 1000;
+
+      // Stub fs.statSync to return a mtime that gives storedAge = 36 200 ms.
+      // fs.statSync is already a vi.fn() via the module-level vi.mock().
+      vi.mocked(fs.statSync).mockReturnValueOnce({
+        mtime: new Date(nowMs - 36_200),
+      } as unknown as fs.Stats);
+
+      const storedMtime = fs.statSync(sentinelPath()).mtime;
+      const storedAgeMs = nowMs - storedMtime.getTime();
+
+      // Spy callbacks passed to atBoundaryDecision in place of ctx.skip() and
+      // the real consumeProbeCache.
+      const skipFn = vi.fn(() => {});
+      const consumeFn = vi.fn((_dir: string): string | null => null);
+
+      const result = atBoundaryDecision(storedAgeMs, skipFn, consumeFn, tmpDir);
+
+      // storedAgeMs (36 200) !== 36 000 → the skip guard must have fired.
+      expect(storedAgeMs).toBe(36_200);
+      expect(skipFn).toHaveBeenCalledOnce();
+
+      // consumeFn must never be called — the test body returned early at the
+      // skip guard without reaching the consumeProbeCache assertion.
+      expect(consumeFn).not.toHaveBeenCalled();
+
+      // atBoundaryDecision returns "skipped" when skipFn does not throw.
+      expect(result).toBe("skipped");
     },
   );
 });
