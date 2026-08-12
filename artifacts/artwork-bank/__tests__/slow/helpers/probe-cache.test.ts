@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 
 // ESM module namespace objects are not configurable, so vi.spyOn(fs, "statSync")
 // fails at runtime.  Wrapping the entire "node:fs" namespace with vi.mock() at
@@ -793,4 +794,89 @@ describe("exported constants", () => {
     expect(DEV_BUILD_DIR).not.toBe(".next-probe");
     expect(DEV_BUILD_DIR).toBe(".next-slow-test");
   });
+});
+
+// ── Subprocess environment integration (age-guard CI override) ────────────────
+//
+// The tests above exercise the module inside the Vitest process.  Even the
+// vi.resetModules() + dynamic-import tests still run in the same OS process,
+// so a CI misconfiguration that sets the variable after the process starts
+// would be invisible.
+//
+// These tests spawn a fresh `tsx` child process with MAX_SENTINEL_AGE_HOURS
+// injected via its environment — exactly how a GitHub Actions `env:` block or
+// a `.env.test` file supplies it in CI.  Module-level caching in Vitest cannot
+// interfere because the child process has its own module registry.
+
+describe("subprocess environment integration (age-guard CI override)", () => {
+  // Locate the tsx binary relative to this file:
+  //   __tests__/slow/helpers/ → ../../../node_modules/.bin/tsx
+  const tsxBin = path.resolve(
+    __dirname,
+    "../../../node_modules/.bin/tsx",
+  );
+  const helperScript = path.resolve(
+    __dirname,
+    "./probe-cache-env-check.ts",
+  );
+
+  it(
+    "a 2-hour-old sentinel is rejected when MAX_SENTINEL_AGE_HOURS=1 is set in the subprocess environment",
+    () => {
+      // Spawn a fresh process with the override set.  The subprocess writes a
+      // JSON line to stdout; we parse and assert both the resolved constant and
+      // the consumeProbeCache return value.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: { ...process.env, MAX_SENTINEL_AGE_HOURS: "1" },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must have read the env var and produced 1, not the 24-hour default.
+      expect(output.constant).toBe(1);
+
+      // The sentinel is 2 hours old — exceeds the 1-hour threshold.
+      // consumeProbeCache must discard it and return null.
+      expect(output.result).toBeNull();
+    },
+  );
+
+  it(
+    "a 2-hour-old sentinel is accepted when MAX_SENTINEL_AGE_HOURS=3 is set in the subprocess environment",
+    () => {
+      // With a 3-hour threshold the same 2-hour-old sentinel must pass.
+      // This confirms the env var, not the hardcoded 24-hour default, is driving
+      // the decision — ruling out the possibility that the test above passed only
+      // because 2 > 24 is never true.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: { ...process.env, MAX_SENTINEL_AGE_HOURS: "3" },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must have read the env var and produced 3.
+      expect(output.constant).toBe(3);
+
+      // The sentinel is 2 hours old — within the 3-hour threshold.
+      // consumeProbeCache must accept it and return the build directory name.
+      expect(output.result).toBe(".next-probe-ci");
+    },
+  );
 });
