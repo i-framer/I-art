@@ -1,0 +1,113 @@
+name: Mtime-tolerance guard
+
+# Asserts that the MTIME_TRUNCATION_TOLERANCE_MS default in
+# artifacts/artwork-bank/__tests__/slow/helpers/probe-cache.ts is exactly
+# 1 000 ms.
+#
+# Background
+# ──────────
+# MTIME_TRUNCATION_TOLERANCE_MS adds a 1-second buffer to the stale-sentinel
+# rejection threshold so that a genuinely fresh sentinel is never discarded
+# just because the filesystem truncated its mtime to 1-second precision
+# (ext3, HFS+, FAT, some network filesystems).  The safe minimum is 1 000 ms.
+#
+# If the constant is silently lowered below 800 ms the probe-cache acceptance
+# test catches the regression — but only after a full slow-test run (~50 s per
+# test file).  This grep-based check catches the mutation in seconds, before
+# any test runner starts, so a weakened tolerance is blocked at the PR level.
+#
+# No build step, no test runner, no secrets — just awk + grep on the source file.
+
+on:
+  push:
+    paths:
+      - "artifacts/artwork-bank/__tests__/slow/helpers/probe-cache.ts"
+      - ".github/workflows/mtime-tolerance-guard.yml"
+  pull_request:
+    paths:
+      - "artifacts/artwork-bank/__tests__/slow/helpers/probe-cache.ts"
+      - ".github/workflows/mtime-tolerance-guard.yml"
+
+jobs:
+  mtime-tolerance-guard:
+    name: Mtime-tolerance guard (static check)
+    runs-on: ubuntu-latest
+    # No pnpm, no Node — this is a pure grep / awk check.
+    # Budget is generous; in practice the job finishes in < 10 s.
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Check 1: constant declaration still present ───────────────────────
+      - name: Assert MTIME_TRUNCATION_TOLERANCE_MS constant is still declared
+        run: |
+          FILE="artifacts/artwork-bank/__tests__/slow/helpers/probe-cache.ts"
+
+          if ! grep -q "MTIME_TRUNCATION_TOLERANCE_MS" "$FILE"; then
+            echo "❌  MTIME_TRUNCATION_TOLERANCE_MS is no longer declared in $FILE."
+            echo "    The constant may have been renamed or the file moved."
+            echo "    Update this guard (and the path above) to match."
+            exit 1
+          fi
+          echo "✅  MTIME_TRUNCATION_TOLERANCE_MS declaration found in $FILE."
+
+      # ── Check 2: default value is exactly 1 000 ms ───────────────────────
+      #
+      # The constant is defined as an IIFE that falls through to a bare
+      # `return 1000;` when the environment variable is absent:
+      #
+      #   export const MTIME_TRUNCATION_TOLERANCE_MS: number = (() => {
+      #     const env = process.env["MTIME_TRUNCATION_TOLERANCE_MS"];
+      #     if (env !== undefined && env !== "") {
+      #       const parsed = Number(env);
+      #       if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+      #     }
+      #     return 1000;   ← this is what we assert
+      #   })();
+      #
+      # awk reads between the const declaration and the closing })(); line,
+      # collecting every `return <digits>;` it sees.  The last one encountered
+      # is the fallback default.  grep -oP extracts the bare number.
+      - name: Assert MTIME_TRUNCATION_TOLERANCE_MS default is exactly 1000 ms
+        run: |
+          FILE="artifacts/artwork-bank/__tests__/slow/helpers/probe-cache.ts"
+
+          DEFAULT_VALUE=$(awk '
+            /MTIME_TRUNCATION_TOLERANCE_MS[^=]*=.*\(\(\)/ { in_block=1 }
+            in_block && /return [0-9]+;/ { last_return=$0 }
+            in_block && /^\}\)\(\);/ { in_block=0 }
+            END { print last_return }
+          ' "$FILE" | grep -oP '\b[0-9]+\b')
+
+          echo "Extracted default return value: '${DEFAULT_VALUE}'"
+
+          if [ -z "$DEFAULT_VALUE" ]; then
+            echo "❌  Could not extract a numeric default from the MTIME_TRUNCATION_TOLERANCE_MS IIFE."
+            echo "    Possible causes:"
+            echo "      • The IIFE pattern changed (no longer ends with 'return <number>;')."
+            echo "      • The closing '})();' line was reformatted."
+            echo "    Update this guard to match the new constant shape."
+            exit 1
+          fi
+
+          if [ "$DEFAULT_VALUE" -ne 1000 ]; then
+            echo "❌  MTIME_TRUNCATION_TOLERANCE_MS default is ${DEFAULT_VALUE} ms — expected 1000 ms."
+            echo ""
+            echo "    Why 1000 ms matters:"
+            echo "      Filesystems that store mtime at 1-second precision (ext3, HFS+,"
+            echo "      FAT, some network filesystems) can make a freshly-written sentinel"
+            echo "      appear up to 999 ms older than its true age.  Without a 1 000 ms"
+            echo "      buffer the stale-sentinel guard may discard a valid cache and force"
+            echo "      an unnecessary cold start."
+            echo ""
+            echo "    A value below 1000 ms is caught by the acceptance tests — but only"
+            echo "    after a full slow-test run (~50 s per file).  This check catches the"
+            echo "    regression instantly, before any test runner starts."
+            echo ""
+            echo "    Restore the default to 1000 in:"
+            echo "      $FILE"
+            exit 1
+          fi
+
+          echo "✅  MTIME_TRUNCATION_TOLERANCE_MS default is correctly set to 1000 ms."
