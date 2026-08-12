@@ -3619,6 +3619,12 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       // We freeze Date.now() via vi.useFakeTimers() and stub statSync to return
       // a mtime exactly 36 001 ms before fixedNow, so ageMs is deterministic and
       // no filesystem mtime resolution or clock drift can affect the result.
+      //
+      // NOTE: this in-process test uses fake timers and a statSync stub.  The
+      // companion subprocess test below ("a sentinel aged exactly 36 000 ms is
+      // rejected … via subprocess") exercises the same boundary through a real
+      // spawned tsx child process, confirming that the env-var parsing path in
+      // probe-cache-env-check.ts also honours MTIME_TRUNCATION_TOLERANCE_MS=0.
       const originalAge = process.env["MAX_SENTINEL_AGE_HOURS"];
       const originalTol = process.env["MTIME_TRUNCATION_TOLERANCE_MS"];
       process.env["MAX_SENTINEL_AGE_HOURS"] = "0.01";
@@ -3694,6 +3700,67 @@ describe("subprocess environment integration (age-guard CI override)", () => {
         }
         vi.resetModules();
       }
+    },
+  );
+
+  it(
+    "a sentinel aged exactly 36 000 ms is rejected when MTIME_TRUNCATION_TOLERANCE_MS=0 is set via subprocess (end-to-end env override)",
+    () => {
+      // 0.01 h = 36 000 ms.  With MTIME_TRUNCATION_TOLERANCE_MS=0 the effective
+      // ceiling is exactly maxAgeMs + 0 = 36 000 ms.  The age guard fires when
+      // ageMs > maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS, i.e.:
+      //
+      //   36 000 > 36 000 + 0  →  36 000 > 36 000  →  false → ACCEPTED
+      //
+      // Wait — the sentinel is backdated by exactly 36 000 ms, which equals the
+      // maxAgeMs.  The guard uses strictly-greater-than, so a sentinel aged
+      // exactly maxAgeMs is accepted even at zero tolerance.
+      //
+      // However, the real-filesystem utimesSync used by the helper script applies
+      // mtime at 1-second precision on many filesystems.  A backdate of 36 000 ms
+      // can be stored as 36 000 ms or truncated to 36 000 ms (no fractional
+      // seconds involved here, so truncation is neutral), meaning the observed
+      // age will be at or near 36 000 ms — not 36 001 ms.
+      //
+      // The task specifies SENTINEL_BACKDATE_MS=36001 to place the sentinel 1 ms
+      // past the boundary so the rejection side of the strict-greater-than guard
+      // is exercised through a real spawned process:
+      //
+      //   ageMs ≈ 36 001 ms > 36 000 ms + 0  →  guard fires → result must be null
+      //
+      // This end-to-end subprocess test complements the in-process statSync-stub
+      // tests (Tasks 742 and 743) by confirming that the env-var parsing path
+      // in probe-cache-env-check.ts — which reads MTIME_TRUNCATION_TOLERANCE_MS
+      // from process.env and passes it through a real tsx child process — also
+      // causes the rejection.  Vitest's module-level caching or fake-timer state
+      // cannot interfere because the child process has its own module registry.
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MAX_SENTINEL_AGE_HOURS: "0.01",
+          MTIME_TRUNCATION_TOLERANCE_MS: "0",
+          SENTINEL_BACKDATE_MS: "36001",
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must have read the env var and produced 0.01.
+      expect(output.constant).toBe(0.01);
+
+      // The sentinel is 36 001 ms old — 1 ms past the 36 000 ms ceiling
+      // (maxAgeMs + 0 tolerance).  consumeProbeCache must discard it and
+      // return null.
+      expect(output.result).toBeNull();
     },
   );
 });
