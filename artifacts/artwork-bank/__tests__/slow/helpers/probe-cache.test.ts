@@ -336,6 +336,70 @@ describe("consumeProbeCache", () => {
   );
 
   it(
+    "second call still behaves gracefully when the first call's rmSync failed to clean up the sentinel",
+    () => {
+      // Set up a warm-start scenario: sentinel present AND build directory exists.
+      const buildDir = ".next-probe-rmsync-throws-second-call";
+      fs.mkdirSync(path.join(tmpDir, buildDir));
+      writeSentinel(buildDir);
+
+      expect(fs.existsSync(sentinelPath())).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, buildDir))).toBe(true);
+
+      // Stub rmSync to throw exactly once for the sentinel path.  After this
+      // one throw the real rmSync is restored, so the second call can actually
+      // delete the sentinel.
+      const sentinelFullPath = path.join(tmpDir, PROBE_CACHE_SENTINEL);
+      vi.mocked(fs.rmSync).mockImplementationOnce((p, ...rest) => {
+        if (p === sentinelFullPath) {
+          throw new Error("ENOENT: simulated race — sentinel vanished before rmSync");
+        }
+        // Pass through any other paths (e.g. the afterEach cleanup).
+        fs.rmSync(p as fs.PathLike, ...(rest as [fs.RmOptions]));
+      });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        // ── First call ────────────────────────────────────────────────────────
+        // rmSync will throw but the error is swallowed in the best-effort block,
+        // so consumeProbeCache must still return the build directory name.
+        let firstResult: string | null = undefined!;
+        expect(() => {
+          firstResult = consumeProbeCache(tmpDir);
+        }).not.toThrow();
+
+        expect(firstResult).toBe(buildDir);
+
+        // The sentinel was NOT deleted (rmSync threw), so it should still exist.
+        expect(fs.existsSync(sentinelPath())).toBe(true);
+
+        // ── Second call ───────────────────────────────────────────────────────
+        // rmSync is now restored.  The sentinel still exists and the build
+        // directory still exists, so the warm-start branch runs again.
+        // This time rmSync succeeds and the sentinel is consumed.
+        let secondResult: string | null = undefined!;
+        expect(() => {
+          secondResult = consumeProbeCache(tmpDir);
+        }).not.toThrow();
+
+        // The second call must either return the build directory (sentinel still
+        // present and build dir exists → warm start again) or null (if somehow
+        // cleaned up).  It must never throw.
+        expect(
+          secondResult === buildDir || secondResult === null,
+        ).toBe(true);
+
+        // After the second call the sentinel must be gone — the second rmSync
+        // succeeded, so it must be consumed now.
+        expect(fs.existsSync(sentinelPath())).toBe(false);
+      } finally {
+        logSpy.mockRestore();
+        vi.mocked(fs.rmSync).mockRestore();
+      }
+    },
+  );
+
+  it(
     "is idempotent: a second call after a successful cache hit returns null (sentinel already consumed)",
     () => {
       const buildDir = ".next-probe";
