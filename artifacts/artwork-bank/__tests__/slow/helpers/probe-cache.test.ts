@@ -2704,18 +2704,33 @@ describe("subprocess environment integration (age-guard CI override)", () => {
         label: "ageMs = maxAgeMs: exactly at the raw limit → ACCEPTED",
       },
       {
-        offsetFromMaxAge: MTIME_TRUNCATION_TOLERANCE_MS / 2,
+        // Hardcoded to 500 ms (half of the documented 1 000 ms tolerance) so
+        // that a change to MTIME_TRUNCATION_TOLERANCE_MS (e.g. reducing it to
+        // 250 ms) makes this case fail rather than silently recalculating
+        // around the new constant.
+        offsetFromMaxAge: 500,
         expectedAccepted: true,
         label: "ageMs = maxAgeMs + 500: halfway through the tolerance window → ACCEPTED",
       },
       {
-        offsetFromMaxAge: MTIME_TRUNCATION_TOLERANCE_MS,
+        // Hardcoded to 1 000 ms (the documented tolerance ceiling) so that a
+        // change to MTIME_TRUNCATION_TOLERANCE_MS (e.g. reducing it to 500 ms)
+        // makes this case fail: the weakened guard would reject ageMs =
+        // maxAgeMs + 1 000 (since 1 000 > 500), but expectedAccepted is true.
+        // If this offset were derived from the constant it would recalculate to
+        // the new value and the regression would ship undetected.
+        offsetFromMaxAge: 1000,
         expectedAccepted: true,
         label:
           "ageMs = maxAgeMs + 1 000: exactly at the tolerance ceiling → ACCEPTED (rejected by a buggy >= guard)",
       },
       {
-        offsetFromMaxAge: MTIME_TRUNCATION_TOLERANCE_MS + 1,
+        // Hardcoded to 1 001 ms (1 ms above the documented 1 000 ms tolerance
+        // ceiling) so that a change to MTIME_TRUNCATION_TOLERANCE_MS makes
+        // this case fail: if the constant grew (e.g. to 2 000 ms) the guard
+        // would now accept ageMs = maxAgeMs + 1 001, contradicting
+        // expectedAccepted: false.
+        offsetFromMaxAge: 1001,
         expectedAccepted: false,
         label: "ageMs = maxAgeMs + 1 001: 1 ms above the tolerance ceiling → REJECTED",
       },
