@@ -1598,4 +1598,77 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       }
     },
   );
+
+  it(
+    "falls back to 24 hours and does not crash when MAX_SENTINEL_AGE_HOURS is set to -Infinity",
+    async () => {
+      // The string "-Infinity" converts to the JavaScript value -Infinity via
+      // Number("-Infinity").  -Infinity fails both guards in the IIFE:
+      // Number.isFinite(-Infinity) is false (not a finite number) and
+      // -Infinity > 0 is also false (negative, not positive).  The IIFE must
+      // fall back to 24 hours.  This test documents that the finite-number guard
+      // is symmetric — a value that is negative AND non-finite is also rejected,
+      // not just positive non-finite values like Infinity.
+      //
+      // For consistency with the null-byte and Infinity tests, and because the
+      // IIFE is evaluated at module-load time, we use the vi.resetModules() +
+      // dynamic-import path so the IIFE runs against the modified env without
+      // spawning a child process.
+      const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      process.env["MAX_SENTINEL_AGE_HOURS"] = "-Infinity";
+      vi.resetModules();
+
+      try {
+        const {
+          consumeProbeCache: consume,
+          MAX_SENTINEL_AGE_HOURS: resolvedHours,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        // The IIFE must reject the -Infinity value (Number("-Infinity") is
+        // -Infinity, which fails both Number.isFinite and parsed > 0) and fall
+        // back to the 24-hour default.
+        expect(resolvedHours).toBe(24);
+
+        const buildDir = ".next-probe-neg-infinity";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // Backdate to 2 hours ago — stale under a 1-hour threshold but fresh
+        // under the 24-hour default.  Accepting this sentinel confirms the
+        // fallback threshold is active, not the -Infinity value (which, if used,
+        // would make every sentinel look stale because no age is less than
+        // -Infinity hours).
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        fs.utimesSync(sentinel, twoHoursAgo, twoHoursAgo);
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // The 2-hour-old sentinel is within the 24-hour default threshold.
+          // consumeProbeCache must accept it and return the build directory name.
+          expect(result).toBe(buildDir);
+
+          // No age-staleness warning must be emitted.
+          expect(warnSpy).not.toHaveBeenCalled();
+
+          // The normal warm-start log must appear.
+          expect(logSpy).toHaveBeenCalledOnce();
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
+        }
+        vi.resetModules();
+      }
+    },
+  );
 });
