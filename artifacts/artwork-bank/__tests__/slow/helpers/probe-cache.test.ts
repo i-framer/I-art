@@ -3763,6 +3763,71 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       expect(output.result).toBeNull();
     },
   );
+
+  it(
+    "a sentinel aged exactly 36 000 ms is accepted via subprocess when MTIME_TRUNCATION_TOLERANCE_MS=0 (at-boundary acceptance side)",
+    () => {
+      // 0.01 h = 36 000 ms.  With MTIME_TRUNCATION_TOLERANCE_MS=0 the effective
+      // ceiling is exactly maxAgeMs + 0 = 36 000 ms.  The age guard fires when:
+      //
+      //   ageMs > maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS
+      //   36 000 > 36 000 + 0  →  36 000 > 36 000  →  false → ACCEPTED
+      //
+      // So a sentinel backdated by exactly 36 000 ms sits exactly on the boundary
+      // and must NOT be rejected by the strictly-greater-than guard.
+      //
+      // To make the age deterministic despite wall-clock drift, we pass NOW_MS to
+      // the helper script.  The helper freezes Date.now() to NOW_MS for the
+      // duration of consumeProbeCache(), and sets the sentinel's mtime to
+      // (NOW_MS - 36 000 ms).  The age seen by consumeProbeCache() is therefore
+      // exactly 36 000 ms — not 36 000 ms + ε — so the assertion is unconditional.
+      //
+      //   NOW_MS - (NOW_MS - 36 000) = 36 000
+      //   36 000 > 36 000 + 0  →  false  →  result must be ".next-probe-ci"
+      //
+      // We choose a synthetic NOW_MS well ahead of real time so the frozen
+      // timestamp is clearly synthetic and cannot be confused with a real-time
+      // value.  Critically, it must be whole-second aligned: on filesystems that
+      // truncate mtime to 1-second resolution (ext4, HFS+, NTFS), utimesSync
+      // stores (NOW_MS - 36 000) rounded down to the nearest second.  If NOW_MS
+      // carries sub-second fractional milliseconds, the stored mtime is
+      // (NOW_MS - 36 000 - remainder), making the observed age
+      // 36 000 + remainder (up to 36 999 ms) — enough to trip the zero-tolerance
+      // guard.  Rounding NOW_MS down to a whole second eliminates the remainder:
+      // both NOW_MS and NOW_MS - 36 000 are second-aligned, utimesSync stores the
+      // value exactly, and the age is exactly 36 000 ms with no truncation error.
+      const nowMs = Math.floor((Date.now() + 300_000) / 1000) * 1000;
+
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MAX_SENTINEL_AGE_HOURS: "0.01",
+          MTIME_TRUNCATION_TOLERANCE_MS: "0",
+          SENTINEL_BACKDATE_MS: "36000",
+          NOW_MS: String(nowMs),
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // The IIFE must have read MAX_SENTINEL_AGE_HOURS and produced 0.01.
+      expect(output.constant).toBe(0.01);
+
+      // With the clock frozen via NOW_MS, the sentinel age is exactly 36 000 ms.
+      // The guard (ageMs > 36 000 + 0) does not fire at the boundary, so
+      // consumeProbeCache must return the build directory name, not null.
+      expect(output.result).toBe(".next-probe-ci");
+    },
+  );
 });
 
 // These tests spawn a fresh `tsx` child process with MTIME_TRUNCATION_TOLERANCE_MS

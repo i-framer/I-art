@@ -19,6 +19,13 @@
  * SENTINEL_BACKDATE_MS controls how far in the past the sentinel's mtime is set.
  * Defaults to 2 hours (7_200_000 ms) when not provided, preserving the original
  * behaviour used by the 1 h / 3 h / 0.5 h / 3.5 h test cases.
+ *
+ * NOW_MS (optional) freezes Date.now() to the given millisecond timestamp for the
+ * duration of the consumeProbeCache() call.  When supplied, the mtime backdate is
+ * computed relative to NOW_MS rather than the real clock, so the age observed by
+ * consumeProbeCache() is exactly SENTINEL_BACKDATE_MS with no wall-clock drift.
+ * This is used by boundary tests that need a deterministic age at exact-threshold
+ * values (e.g. ageMs === 36 000 ms with MTIME_TRUNCATION_TOLERANCE_MS=0).
  */
 
 import * as fs from "node:fs";
@@ -73,10 +80,44 @@ try {
     Number(backdateEnv) > 0
       ? Number(backdateEnv)
       : 2 * 60 * 60 * 1000; // default: 2 hours
-  const backdatedDate = new Date(Date.now() - backdateMs);
+
+  // NOW_MS: optional frozen clock value.  When provided, Date.now() is replaced
+  // with a function that always returns this value for the duration of the
+  // consumeProbeCache() call.  The mtime is then set to (nowMs - backdateMs),
+  // so the age observed by consumeProbeCache() is exactly backdateMs with no
+  // wall-clock drift.  Without this override, a few milliseconds of elapsed time
+  // between utimesSync and consumeProbeCache's internal Date.now() call make the
+  // observed age slightly larger than backdateMs — enough to cause a spurious
+  // rejection when MTIME_TRUNCATION_TOLERANCE_MS=0 and backdateMs equals
+  // maxAgeMs exactly (the strict-greater-than boundary case).
+  const nowMsEnv = process.env["NOW_MS"];
+  const frozenNowMs =
+    nowMsEnv !== undefined &&
+    nowMsEnv !== "" &&
+    Number.isFinite(Number(nowMsEnv))
+      ? Number(nowMsEnv)
+      : undefined;
+
+  // Use the frozen clock (if provided) as the reference for the mtime write.
+  const effectiveNow = frozenNowMs ?? Date.now();
+  const backdatedDate = new Date(effectiveNow - backdateMs);
   fs.utimesSync(sentinelPath, backdatedDate, backdatedDate);
 
-  const result = consumeProbeCache(tmpDir);
+  // If a frozen clock was requested, monkey-patch Date.now for the duration of
+  // consumeProbeCache() so the age computation inside the module sees exactly
+  // (effectiveNow - backdatedDate) = backdateMs, with no wall-clock drift.
+  const realDateNow = Date.now;
+  if (frozenNowMs !== undefined) {
+    Date.now = () => frozenNowMs;
+  }
+
+  let result: string | null;
+  try {
+    result = consumeProbeCache(tmpDir);
+  } finally {
+    // Always restore the real clock, even if consumeProbeCache throws.
+    Date.now = realDateNow;
+  }
 
   // Restore console before writing so the JSON line reaches stdout cleanly.
   console.warn = _warn;
