@@ -917,4 +917,39 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       expect(output.result).toBe(".next-probe-ci");
     },
   );
+
+  it(
+    "a 2-hour-old sentinel is accepted when MAX_SENTINEL_AGE_HOURS is absent from the subprocess environment (24-hour default)",
+    () => {
+      // This is the most common CI misconfiguration: the env var is simply not
+      // set in the job's environment.  The IIFE must fall back to 24 hours.
+      // Removing the key from the child process env ensures the subprocess sees
+      // a completely absent variable, ruling out an inherited value from the
+      // Vitest runner that would mask the missing-variable code path.
+      const childEnv = { ...process.env };
+      delete childEnv["MAX_SENTINEL_AGE_HOURS"];
+
+      const proc = spawnSync(tsxBin, [helperScript], {
+        env: childEnv,
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // The subprocess must not crash.
+      expect(proc.error).toBeUndefined();
+      expect(proc.status).toBe(0);
+
+      const output = JSON.parse(proc.stdout.trim()) as {
+        constant: number;
+        result: string | null;
+      };
+
+      // With the variable absent the IIFE must produce the 24-hour default.
+      expect(output.constant).toBe(24);
+
+      // The sentinel is only 2 hours old — well within the 24-hour default.
+      // consumeProbeCache must accept it and return the build directory name.
+      expect(output.result).toBe(".next-probe-ci");
+    },
+  );
 });
