@@ -1234,6 +1234,114 @@ import(moduleUrl)
     },
   );
 
+  it(
+    "accepts a sentinel whose age is exactly at the tolerance ceiling (maxAge + MTIME_TRUNCATION_TOLERANCE_MS) — the strictly-greater-than guard must not fire at the boundary",
+    async () => {
+      // The age guard in probe-cache.ts is:
+      //   if (ageMs > maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS)
+      //
+      // MTIME_TRUNCATION_TOLERANCE_MS is 1 000 ms.  The guard fires only when
+      // ageMs is *strictly greater than* (maxAgeMs + 1 000).  A sentinel whose
+      // ageMs is *exactly* (maxAgeMs + 1 000) sits on the ceiling of the
+      // tolerance window and must therefore be accepted — not rejected.
+      //
+      // The three neighbouring boundary tests cover:
+      //   (a) ageMs === maxAgeMs          → accepted  (at-threshold)
+      //   (b) ageMs === maxAgeMs + 1 001  → rejected  (1 ms past tolerance)
+      //   (c) ageMs === maxAgeMs + 499    → accepted  (worst-case mtime rounding)
+      //
+      // This test fills the remaining gap: ageMs === maxAgeMs + 1 000 (the
+      // ceiling itself).  Without it, a future regression that changes the guard
+      // to >= would accept (a) and (c) unchanged, reject (b) unchanged, and
+      // only this test would catch the breakage.
+      //
+      // Construction (no mtime truncation needed):
+      //   Choose fixedNow as a whole-second boundary (fixedNow % 1000 === 0).
+      //   Set mtime = fixedNow − (maxAgeMs + 1 000).
+      //   Because (maxAgeMs + 1 000) is a multiple of 1 000 and fixedNow has
+      //   ms === 0, the mtime Date has ms === 0 too — the filesystem stores it
+      //   exactly (no sub-second truncation).
+      //   With the clock frozen:
+      //     ageMs = fixedNow − mtime = maxAgeMs + 1 000.
+      //   Guard: maxAgeMs + 1 000 > maxAgeMs + 1 000 → false → ACCEPTED.
+      const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      process.env["MAX_SENTINEL_AGE_HOURS"] = "2.5";
+      vi.resetModules();
+
+      try {
+        // Dynamic import picks up the new env var and re-evaluates the IIFE.
+        const {
+          consumeProbeCache: consume,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        const buildDir = ".next-probe-exact-tolerance-ceiling";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // maxAgeMs = 2.5 h × 3 600 000 ms/h = 9 000 000 ms (a multiple of 1 000).
+        const maxAgeMs = 2.5 * 60 * 60 * 1000;
+        const MTIME_TRUNCATION_TOLERANCE_MS = 1000;
+
+        // Round fixedNow down to a whole-second boundary so that
+        // (fixedNow − (maxAgeMs + TOLERANCE)) also lands on a whole-second
+        // boundary and is stored exactly by the filesystem (no truncation).
+        const rawNow = Date.now();
+        const fixedNow = rawNow - (rawNow % 1000);
+        expect(fixedNow % 1000).toBe(0);
+
+        vi.useFakeTimers();
+        vi.setSystemTime(fixedNow);
+
+        // Set the sentinel mtime to exactly (maxAgeMs + TOLERANCE) ms before
+        // fixedNow.  With the frozen clock:
+        //   ageMs = fixedNow − mtime = maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS.
+        const atToleranceCeiling = new Date(
+          fixedNow - (maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS),
+        );
+        fs.utimesSync(sentinel, atToleranceCeiling, atToleranceCeiling);
+
+        // Confirm the mtime was stored without sub-second truncation.
+        const observedAgeMs = fixedNow - atToleranceCeiling.getTime();
+        expect(observedAgeMs).toBe(maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS);
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // ageMs === maxAgeMs + TOLERANCE is NOT strictly greater than
+          // maxAgeMs + TOLERANCE → the guard must not fire → sentinel ACCEPTED.
+          expect(result).toBe(buildDir);
+
+          // The sentinel must be consumed (deleted) after a successful read.
+          expect(fs.existsSync(sentinel)).toBe(false);
+
+          // No staleness warning must be emitted — the sentinel is on the
+          // ceiling of the tolerance window, which is still within the accepted
+          // range.
+          expect(warnSpy).not.toHaveBeenCalled();
+
+          // The normal warm-start log must appear once.
+          expect(logSpy).toHaveBeenCalledOnce();
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+          vi.useRealTimers();
+        }
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
+        }
+        // Restore the module registry so subsequent tests use the original module.
+        vi.resetModules();
+      }
+    },
+  );
+
   it.each([
     ["0", "zero is not a positive number"],
     ["-1", "negative numbers are not valid"],
