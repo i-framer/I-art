@@ -132,6 +132,42 @@ function assertBoundarySkipFires(
   expect(result).toBe("skipped");
 }
 
+// Shared assertion runner for one row of the second-order stall-guard meta-test.
+//
+// Both the real second-order meta-test and the independence meta-meta-test
+// call this function with different runFn arguments so the meta-meta-test
+// exercises the same assertion code path as the real test: if any assertion
+// in this runner is weakened, the meta-meta-test's expect().toThrow() call
+// will fail because the runner would no longer throw for the broken variant.
+//
+// runFn signature: (toleranceMs: number) => { status: number | null }
+//   • real test:         spawns the helper subprocess and returns the
+//                        spawnSync result object (status comes from process exit)
+//   • meta-meta-test:    returns a mock { status } without spawning a process,
+//                        letting targeted broken variants be injected without
+//                        real subprocesses
+//
+// The probe-cache-meta-guard-check.ts script exits with:
+//   0 — guard fired correctly  (sentinel rejected, tolerance < overshoot)
+//   1 — guard did NOT fire     (sentinel accepted, tolerance ≥ overshoot)
+function assertStallGuardRow(
+  runFn: (toleranceMs: number) => { status: number | null },
+  toleranceMs: number,
+  expectedStatus: 0 | 1,
+): void {
+  const result = runFn(toleranceMs);
+  expect(
+    result.status,
+    `stall-guard row tolerance=${toleranceMs}ms: ` +
+      `expected subprocess exit ${expectedStatus} ` +
+      `(${
+        expectedStatus === 1
+          ? "sentinel accepted — tolerance > 500 ms overshoot, guard silent"
+          : "sentinel rejected — tolerance < 500 ms overshoot, guard fired"
+      }), got ${String(result.status)}`,
+  ).toBe(expectedStatus);
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("MTIME_TRUNCATION_TOLERANCE_MS", () => {
@@ -3106,56 +3142,115 @@ describe("subprocess environment integration (age-guard CI override)", () => {
         "../../../node_modules/.bin/tsx",
       );
 
+      // Build a run function that spawns the helper script with the given
+      // MTIME_TRUNCATION_TOLERANCE_MS value.  Wrapping the spawnSync call
+      // here lets assertStallGuardRow receive it as a plain
+      // (toleranceMs) => { status } callback, so the independence
+      // meta-meta-test can inject a mock variant without spawning real
+      // subprocesses.
+      const realRunFn = (toleranceMs: number): { status: number | null } => {
+        const proc = spawnSync(tsxBin, [helperScript], {
+          env: {
+            ...process.env,
+            MTIME_TRUNCATION_TOLERANCE_MS: String(toleranceMs),
+          },
+          encoding: "utf8",
+          timeout: 15_000,
+        });
+        // Surface subprocess stderr to make failures diagnosable.
+        if (proc.stderr) {
+          process.stdout.write(
+            `[tolerance=${toleranceMs}ms stderr]\n${proc.stderr}\n`,
+          );
+        }
+        return proc;
+      };
+
       // ── Bypass run: tolerance = 10 000 ms ───────────────────────────────────
       // The 500 ms net overshoot is well inside 10 000 ms, so the guard must
       // stay silent and the sentinel must be accepted.  The subprocess exits 1.
-      const bypassResult = spawnSync(tsxBin, [helperScript], {
-        env: {
-          ...process.env,
-          MTIME_TRUNCATION_TOLERANCE_MS: "10000",
-        },
-        encoding: "utf8",
-        timeout: 15_000,
-      });
-
-      // Surface subprocess stderr to make failures diagnosable.
-      if (bypassResult.stderr) {
-        process.stdout.write(
-          `[bypass run stderr]\n${bypassResult.stderr}\n`,
-        );
-      }
-
-      expect(
-        bypassResult.status,
-        "bypass run (10 000 ms tolerance): expected subprocess exit 1 " +
-          "(sentinel accepted because tolerance > overshoot), got " +
-          String(bypassResult.status),
-      ).toBe(1);
+      assertStallGuardRow(realRunFn, 10_000, 1);
 
       // ── Narrow run: tolerance = 400 ms ──────────────────────────────────────
       // The 500 ms overshoot exceeds 400 ms, so the guard must fire and the
       // sentinel must be rejected.  The subprocess exits 0.
-      const narrowResult = spawnSync(tsxBin, [helperScript], {
-        env: {
-          ...process.env,
-          MTIME_TRUNCATION_TOLERANCE_MS: "400",
-        },
-        encoding: "utf8",
-        timeout: 15_000,
-      });
+      assertStallGuardRow(realRunFn, 400, 0);
+    },
+  );
 
-      if (narrowResult.stderr) {
-        process.stdout.write(
-          `[narrow run stderr]\n${narrowResult.stderr}\n`,
-        );
-      }
+  it(
+    "each stall-guard row independently catches its own regression — assertStallGuardRow throws for the targeted tolerance and passes for the other",
+    () => {
+      // Independence proof for the second-order stall-guard meta-test rows.
+      //
+      // The second-order meta-test delegates to assertStallGuardRow(realRunFn, …).
+      // That runner asserts the subprocess exit code matches the expected value
+      // for each tolerance (10 000 ms bypass and 400 ms narrow).
+      //
+      // This meta-meta-test injects two targeted broken run functions —
+      // one per tolerance value — and feeds them through the SAME
+      // assertStallGuardRow runner the real test uses.  Because both paths share
+      // the runner, any weakening of the runner's assertion (removing the expect,
+      // or removing a row) also weakens this test's expect().toThrow() guard,
+      // making the coupling explicit and machine-checkable.
+      //
+      // Regression A — guard broken for bypass tolerance 10 000 ms:
+      //   assertStallGuardRow(brokenForBypass, 10_000, 1)
+      //     → runFn returns { status: 0 } → expect(0).toBe(1) throws ✗
+      //   assertStallGuardRow(brokenForBypass, 400, 0)
+      //     → runFn returns { status: 0 } (correct for narrow) → passes ✓
+      //
+      // Regression B — guard broken for narrow tolerance 400 ms:
+      //   assertStallGuardRow(brokenForNarrow, 10_000, 1)
+      //     → runFn returns { status: 1 } (correct for bypass) → passes ✓
+      //   assertStallGuardRow(brokenForNarrow, 400, 0)
+      //     → runFn returns { status: 1 } → expect(1).toBe(0) throws ✗
 
-      expect(
-        narrowResult.status,
-        "narrow run (400 ms tolerance): expected subprocess exit 0 " +
-          "(sentinel rejected because tolerance < overshoot), got " +
-          String(narrowResult.status),
-      ).toBe(0);
+      // ── Regression A: guard broken for bypass tolerance 10 000 ms ──────────
+      //
+      // brokenForBypass simulates a subprocess that exits 0 for the 10 000 ms
+      // tolerance — the wide-tolerance case has been neutered so it no longer
+      // signals "guard did not fire" (expected exit 1).  For the narrow 400 ms
+      // tolerance the exit code is unchanged (0 = sentinel correctly rejected).
+
+      const brokenForBypass = (
+        toleranceMs: number,
+      ): { status: number | null } => {
+        if (toleranceMs === 10_000) return { status: 0 };
+        // Narrow 400 ms: guard fires → sentinel rejected → correct exit 0.
+        return { status: 0 };
+      };
+
+      // Row 1 (bypass 10_000): runner detects the regression — status 0 ≠ 1.
+      expect(() =>
+        assertStallGuardRow(brokenForBypass, 10_000, 1),
+      ).toThrow();
+
+      // Row 2 (narrow 400): correct status 0 — runner passes without throwing.
+      assertStallGuardRow(brokenForBypass, 400, 0);
+
+      // ── Regression B: guard broken for narrow tolerance 400 ms ─────────────
+      //
+      // brokenForNarrow simulates a subprocess that exits 1 for the 400 ms
+      // tolerance — the narrow-tolerance case has been neutered so it no longer
+      // signals "guard fired" (expected exit 0).  For the bypass 10 000 ms
+      // tolerance the exit code is unchanged (1 = sentinel correctly accepted).
+
+      const brokenForNarrow = (
+        toleranceMs: number,
+      ): { status: number | null } => {
+        if (toleranceMs === 400) return { status: 1 };
+        // Bypass 10 000 ms: guard silent → sentinel accepted → correct exit 1.
+        return { status: 1 };
+      };
+
+      // Row 1 (bypass 10_000): correct status 1 — runner passes without throwing.
+      assertStallGuardRow(brokenForNarrow, 10_000, 1);
+
+      // Row 2 (narrow 400): runner detects the regression — status 1 ≠ 0.
+      expect(() =>
+        assertStallGuardRow(brokenForNarrow, 400, 0),
+      ).toThrow();
     },
   );
 
