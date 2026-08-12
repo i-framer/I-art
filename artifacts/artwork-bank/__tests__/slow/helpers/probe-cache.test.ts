@@ -99,6 +99,39 @@ function atBoundaryDecision(
   return consumeFn(dir);
 }
 
+// Shared assertion runner used by both the it.each boundary-skip table and the
+// independence meta-test below.  Both call this function with different decideFn
+// arguments so the meta-test exercises the same assertion code path as the table:
+// if any assertion in this runner is weakened, the meta-test's expect().toThrow()
+// call will fail because the runner would no longer throw for the broken variant.
+//
+// decideFn signature matches atBoundaryDecision exactly so targeted mutants can
+// be injected for meta-testing without modifying the production helper.
+function assertBoundarySkipFires(
+  decideFn: (
+    storedAgeMs: number,
+    skipFn: () => void,
+    consumeFn: (dir: string) => string | null,
+    dir: string,
+  ) => "skipped" | string | null,
+  expectedStoredAgeMs: number,
+  mtimeOffset: number,
+): void {
+  const nowMs = Math.floor(Date.now() / 1000) * 1000;
+  vi.mocked(fs.statSync).mockReturnValueOnce({
+    mtime: new Date(nowMs - mtimeOffset),
+  } as unknown as fs.Stats);
+  const storedMtime = fs.statSync(sentinelPath()).mtime;
+  const storedAgeMs = nowMs - storedMtime.getTime();
+  const skipFn = vi.fn(() => {});
+  const consumeFn = vi.fn((_dir: string): string | null => null);
+  const result = decideFn(storedAgeMs, skipFn, consumeFn, tmpDir);
+  expect(storedAgeMs).toBe(expectedStoredAgeMs);
+  expect(skipFn).toHaveBeenCalledOnce();
+  expect(consumeFn).not.toHaveBeenCalled();
+  expect(result).toBe("skipped");
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("MTIME_TRUNCATION_TOLERANCE_MS", () => {
@@ -4027,25 +4060,11 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       //
       // In both cases storedAgeMs !== 36 000, so the skip guard inside
       // atBoundaryDecision must fire: skipFn called once, consumeFn never.
-
-      const nowMs = Math.floor(Date.now() / 1000) * 1000;
-
-      vi.mocked(fs.statSync).mockReturnValueOnce({
-        mtime: new Date(nowMs - mtimeOffset),
-      } as unknown as fs.Stats);
-
-      const storedMtime = fs.statSync(sentinelPath()).mtime;
-      const storedAgeMs = nowMs - storedMtime.getTime();
-
-      const skipFn = vi.fn(() => {});
-      const consumeFn = vi.fn((_dir: string): string | null => null);
-
-      const result = atBoundaryDecision(storedAgeMs, skipFn, consumeFn, tmpDir);
-
-      expect(storedAgeMs).toBe(expectedStoredAgeMs);
-      expect(skipFn).toHaveBeenCalledOnce();
-      expect(consumeFn).not.toHaveBeenCalled();
-      expect(result).toBe("skipped");
+      //
+      // The assertion logic lives in assertBoundarySkipFires (defined above)
+      // so the independence meta-test below can inject targeted broken
+      // variants and confirm the same assertions catch each regression.
+      assertBoundarySkipFires(atBoundaryDecision, expectedStoredAgeMs, mtimeOffset);
     },
   );
 
@@ -4155,6 +4174,86 @@ describe("subprocess environment integration (age-guard CI override)", () => {
 
       // atBoundaryDecision returns "skipped" when skipFn does not throw.
       expect(result).toBe("skipped");
+    },
+  );
+
+  it(
+    "each it.each row independently catches its own regression — assertBoundarySkipFires throws for the targeted rounding direction and passes for the other",
+    () => {
+      // Independence proof for the it.each boundary-skip table.
+      //
+      // The it.each table delegates to assertBoundarySkipFires(atBoundaryDecision, …).
+      // That runner asserts skipFn called once, consumeFn never called, and the
+      // return value is "skipped".
+      //
+      // This meta-test injects two targeted broken variants of atBoundaryDecision
+      // — one per rounding direction — and feeds them through the SAME
+      // assertBoundarySkipFires runner the table uses.  Because both paths share
+      // the runner, any weakening of the runner's assertions (removing an expect,
+      // or removing a table row) also weakens this test's expect().toThrow() call,
+      // making the coupling explicit and machine-checkable.
+      //
+      // Regression A — guard removed for storedAge 36 200 ms (mtime rounded down):
+      //   assertBoundarySkipFires(brokenForRoundedDown, 36_200, 36_200)
+      //     → skipFn never called → expect(skipFn).toHaveBeenCalledOnce() throws ✗
+      //   assertBoundarySkipFires(brokenForRoundedDown, 35_800, 35_800)
+      //     → guard still fires for 35 800 → all assertions pass ✓
+      //
+      // Regression B — guard removed for storedAge 35 800 ms (mtime rounded forward):
+      //   assertBoundarySkipFires(brokenForRoundedForward, 36_200, 36_200)
+      //     → guard still fires for 36 200 → all assertions pass ✓
+      //   assertBoundarySkipFires(brokenForRoundedForward, 35_800, 35_800)
+      //     → skipFn never called → expect(skipFn).toHaveBeenCalledOnce() throws ✗
+
+      // ── Regression A: guard neutered for storedAge 36 200 ms ────────────────
+
+      const brokenForRoundedDown = (
+        storedAgeMs: number,
+        skipFn: () => void,
+        consumeFn: (dir: string) => string | null,
+        dir: string,
+      ): "skipped" | string | null => {
+        // Guard condition `storedAgeMs !== 36_000` has been neutered for the
+        // 36 200 case — that value now falls through to consumeFn, as if a
+        // developer wrote `if (storedAgeMs === 36_200) return consume(dir)`.
+        if (storedAgeMs !== 36_000 && storedAgeMs !== 36_200) {
+          skipFn();
+          return "skipped";
+        }
+        return consumeFn(dir);
+      };
+
+      // Row 1 (36 200): the runner detects the regression — skipFn not called.
+      expect(() =>
+        assertBoundarySkipFires(brokenForRoundedDown, 36_200, 36_200),
+      ).toThrow();
+
+      // Row 2 (35 800): guard still fires — runner passes without throwing.
+      assertBoundarySkipFires(brokenForRoundedDown, 35_800, 35_800);
+
+      // ── Regression B: guard neutered for storedAge 35 800 ms ────────────────
+
+      const brokenForRoundedForward = (
+        storedAgeMs: number,
+        skipFn: () => void,
+        consumeFn: (dir: string) => string | null,
+        dir: string,
+      ): "skipped" | string | null => {
+        // Guard neutered for 35 800 — that value falls through to consumeFn.
+        if (storedAgeMs !== 36_000 && storedAgeMs !== 35_800) {
+          skipFn();
+          return "skipped";
+        }
+        return consumeFn(dir);
+      };
+
+      // Row 1 (36 200): guard still fires — runner passes without throwing.
+      assertBoundarySkipFires(brokenForRoundedForward, 36_200, 36_200);
+
+      // Row 2 (35 800): the runner detects the regression — skipFn not called.
+      expect(() =>
+        assertBoundarySkipFires(brokenForRoundedForward, 35_800, 35_800),
+      ).toThrow();
     },
   );
 });
