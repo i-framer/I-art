@@ -3828,6 +3828,144 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       expect(output.result).toBe(".next-probe-ci");
     },
   );
+
+  it(
+    "at-boundary acceptance holds on a real filesystem with 1-second mtime resolution (reads actual stored mtime, skips if filesystem rounds beyond epsilon)",
+    async (ctx) => {
+      // This test validates the at-boundary acceptance directly in the test
+      // process using a real utimesSync call — no subprocess, no statSync stub.
+      //
+      // Strategy
+      // ─────────
+      // 1. Align nowMs to a whole second so the target mtime (nowMs − 36 000 ms)
+      //    is also second-aligned.  On a filesystem with 1-second precision
+      //    (ext4, HFS+, NTFS) utimesSync stores the value exactly, giving
+      //    storedAge = 36 000 ms with no truncation error.
+      //
+      // 2. After utimesSync, read back the actual stored mtime with fs.statSync.
+      //    Compute storedAge = nowMs − storedMtime.getTime().  If storedAge
+      //    differs from 36 000 ms at all — filesystem rounded the timestamp
+      //    back (storedAge > 36 000 ms, guard would reject it) or forward
+      //    (storedAge < 36 000 ms, not the boundary under test) — explicitly
+      //    skip via ctx.skip() so the test appears as skipped, not passed.
+      //
+      // 3. Assert storedAge === 36 000 ms before calling consumeProbeCache().
+      //    This makes the coverage claim explicit: we have confirmed the guard
+      //    is about to receive exactly the boundary value.
+      //
+      // 4. Freeze Date.now() to nowMs for the consumeProbeCache() call so the
+      //    age the guard sees is exactly storedAge (= 36 000 ms).  The guard
+      //    fires when ageMs > maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS,
+      //    i.e. 36 000 > 36 000 + 0 — false — so the sentinel must be accepted.
+      //
+      // Relationship to the subprocess test above
+      // ──────────────────────────────────────────
+      // The subprocess test passes NOW_MS to freeze the clock but never reads
+      // back the stored mtime; it relies on the second-alignment argument for
+      // determinism.  This in-process test explicitly reads and validates what
+      // the filesystem stored, surfacing host-specific precision behaviour via
+      // ctx.skip() rather than a silent pass or a spurious rejection.
+
+      const originalAge = process.env["MAX_SENTINEL_AGE_HOURS"];
+      const originalTol = process.env["MTIME_TRUNCATION_TOLERANCE_MS"];
+      process.env["MAX_SENTINEL_AGE_HOURS"] = "0.01";
+      process.env["MTIME_TRUNCATION_TOLERANCE_MS"] = "0";
+      vi.resetModules();
+
+      try {
+        const {
+          consumeProbeCache: consume,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+          MTIME_TRUNCATION_TOLERANCE_MS: tolerance,
+          MAX_SENTINEL_AGE_HOURS: maxHours,
+        } = await import("./probe-cache");
+
+        // Verify the module re-evaluated its IIFEs against the overridden env vars.
+        expect(maxHours).toBe(0.01);
+        expect(tolerance).toBe(0);
+
+        // Choose a second-aligned nowMs so (nowMs − 36 000 ms) is also second-
+        // aligned.  On a 1-second-precision filesystem utimesSync stores the
+        // value exactly, leaving no sub-second remainder for truncation to bite.
+        const nowMs = Math.floor(Date.now() / 1000) * 1000;
+
+        const buildDir = ".next-probe-ci";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // Backdate the sentinel by exactly 36 000 ms relative to nowMs.
+        const targetMtime = new Date(nowMs - 36_000);
+        fs.utimesSync(sentinel, targetMtime, targetMtime);
+
+        // Read back the actual stored mtime from the real filesystem.
+        // fs.statSync is wrapped in a vi.fn() that passes through to the real
+        // implementation by default, so this returns the true on-disk value.
+        const storedMtime = fs.statSync(sentinel).mtime;
+        const storedAgeMs = nowMs - storedMtime.getTime();
+
+        // Skip explicitly when the filesystem did not store the second-aligned
+        // timestamp exactly:
+        //   storedAgeMs > 36 000: filesystem truncated the mtime (rounded back),
+        //     making the sentinel appear older than the boundary.  The zero-
+        //     tolerance guard would reject it — this is not the at-boundary
+        //     acceptance case the test is designed to verify.
+        //   storedAgeMs < 36 000: filesystem rounded the mtime forward (unusual),
+        //     making the sentinel appear younger.  Also not the exact boundary.
+        // ctx.skip() marks the test as skipped rather than passing, preventing
+        // silent false-positive coverage when the host filesystem cannot produce
+        // the worst-case rounding scenario.
+        if (storedAgeMs !== 36_000) {
+          ctx.skip();
+          return;
+        }
+
+        // Assert the exact age that will be supplied to the guard.  This makes
+        // the coverage claim explicit before consumeProbeCache() is called:
+        //   36 000 > 36 000 + 0  →  false  →  sentinel must be accepted.
+        expect(storedAgeMs).toBe(36_000);
+
+        // Freeze Date.now() to nowMs for the duration of consumeProbeCache().
+        // With the clock frozen the age the guard computes is exactly storedAgeMs
+        // (= 36 000 ms), eliminating any wall-clock drift between this line and
+        // the internal Date.now() call inside consumeProbeCache().
+        const realDateNow = Date.now;
+        Date.now = () => nowMs;
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // storedAgeMs = 36 000 ms, tolerance = 0 ms:
+          // guard (36 000 > 36 000 + 0) → false → sentinel must be accepted.
+          expect(result).toBe(".next-probe-ci");
+
+          // No staleness warning must be emitted for an at-boundary sentinel.
+          expect(warnSpy).not.toHaveBeenCalled();
+
+          // The normal warm-start log must appear.
+          expect(logSpy).toHaveBeenCalledOnce();
+        } finally {
+          Date.now = realDateNow;
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+      } finally {
+        if (originalAge === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalAge;
+        }
+        if (originalTol === undefined) {
+          delete process.env["MTIME_TRUNCATION_TOLERANCE_MS"];
+        } else {
+          process.env["MTIME_TRUNCATION_TOLERANCE_MS"] = originalTol;
+        }
+        vi.resetModules();
+      }
+    },
+  );
 });
 
 // These tests spawn a fresh `tsx` child process with MTIME_TRUNCATION_TOLERANCE_MS
