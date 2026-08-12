@@ -1449,4 +1449,80 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       expect(output.result).toBe(".next-probe-ci");
     },
   );
+
+  it(
+    "falls back to 24 hours and does not crash when MAX_SENTINEL_AGE_HOURS is set to a null byte",
+    async () => {
+      // Some legacy tooling or misconfigured shell scripts can produce a null
+      // byte ("\0") as the value of an environment variable.  Unlike the
+      // whitespace-only variants (spaces, tabs, newlines, etc.) that produce
+      // NaN when passed to Number(), a null byte produces 0 — Number("\0") is
+      // 0, not NaN.  Zero is a finite number, so it passes
+      // `Number.isFinite(parsed)`, but it fails the `parsed > 0` guard in the
+      // IIFE because 0 is not a positive number of hours.  The IIFE must
+      // therefore fall back to 24 hours.  This test documents that the `> 0`
+      // guard covers null bytes, not just non-finite values.
+      //
+      // Node.js rejects null bytes in spawnSync's env option with
+      // ERR_INVALID_ARG_VALUE, so this case cannot be exercised through the
+      // real subprocess boundary.  We use the vi.resetModules() + dynamic-
+      // import path instead — the same technique used by the in-process
+      // invalid-value tests above — to evaluate the IIFE against a
+      // null-byte env var without spawning a child process.
+      const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      process.env["MAX_SENTINEL_AGE_HOURS"] = "\0";
+      vi.resetModules();
+
+      try {
+        const {
+          consumeProbeCache: consume,
+          MAX_SENTINEL_AGE_HOURS: resolvedHours,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        // The IIFE must reject the null-byte value (Number("\0") is 0, which
+        // passes Number.isFinite but fails the parsed > 0 guard) and fall
+        // back to the 24-hour default.
+        expect(resolvedHours).toBe(24);
+
+        const buildDir = ".next-probe-null-byte";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // Backdate to 2 hours ago — stale under a 1-hour threshold but fresh
+        // under the 24-hour default.  Accepting this sentinel confirms the
+        // fallback threshold is active, not the null-byte value (which would
+        // yield 0 hours, making every sentinel stale).
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        fs.utimesSync(sentinel, twoHoursAgo, twoHoursAgo);
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // The 2-hour-old sentinel is within the 24-hour default threshold.
+          // consumeProbeCache must accept it and return the build directory name.
+          expect(result).toBe(buildDir);
+
+          // No age-staleness warning must be emitted.
+          expect(warnSpy).not.toHaveBeenCalled();
+
+          // The normal warm-start log must appear.
+          expect(logSpy).toHaveBeenCalledOnce();
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
+        }
+        vi.resetModules();
+      }
+    },
+  );
 });
