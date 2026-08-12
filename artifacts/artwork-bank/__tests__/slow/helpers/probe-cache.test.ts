@@ -131,6 +131,11 @@ describe("consumeProbeCache", () => {
       expect(fs.existsSync(sentinelPath())).toBe(true);
       expect(fs.existsSync(path.join(tmpDir, buildDir))).toBe(false);
 
+      // Capture the exact mtime of the sentinel file before consumeProbeCache
+      // deletes it.  The warn message must contain this exact ISO string so a
+      // regression that omits or misstates the timestamp is caught immediately.
+      const expectedMtime = fs.statSync(sentinelPath()).mtime.toISOString();
+
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         const result = consumeProbeCache(tmpDir);
@@ -142,11 +147,13 @@ describe("consumeProbeCache", () => {
         expect(fs.existsSync(sentinelPath())).toBe(false);
 
         // The mismatch warning must be visible in CI logs so the BUILD_DIR drift
-        // is not silently swallowed.  Assert that console.warn was called and
-        // that the message names the directory from the sentinel.
+        // is not silently swallowed.  Assert that console.warn was called, that
+        // the message names the directory from the sentinel, and that it includes
+        // the sentinel mtime so operators can correlate with the probe CI run.
         expect(warnSpy).toHaveBeenCalledOnce();
         const [warnMessage] = warnSpy.mock.calls[0] as [string];
         expect(warnMessage).toContain(buildDir);
+        expect(warnMessage).toContain(expectedMtime);
       } finally {
         warnSpy.mockRestore();
       }

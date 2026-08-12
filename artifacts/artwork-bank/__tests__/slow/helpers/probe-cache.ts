@@ -64,9 +64,20 @@ export function consumeProbeCache(artworkBankDir: string): string | null {
   // the mismatch is visible in CI logs.
   const buildOutputPath = path.join(artworkBankDir, buildDir);
   if (!fs.existsSync(buildOutputPath)) {
+    // Capture the sentinel mtime before deleting it so the warning message can
+    // record when the probe step created the cache.  This lets operators
+    // correlate a stale-sentinel warning with a specific CI run even when
+    // multiple jobs run back-to-back.
+    let staleMtime = "";
+    try {
+      staleMtime = fs.statSync(sentinelPath).mtime.toISOString();
+    } catch {
+      /* best-effort — if stat fails we still proceed */
+    }
     console.warn(
       `[slow-test] WARNING: probe cache sentinel names "${buildDir}" but that ` +
         `directory does not exist at ${buildOutputPath}. ` +
+        `Sentinel was created at ${staleMtime}. ` +
         `This usually means BUILD_DIR was changed between the probe step and the ` +
         `test run. Discarding stale sentinel and falling back to a cold start.`,
     );
