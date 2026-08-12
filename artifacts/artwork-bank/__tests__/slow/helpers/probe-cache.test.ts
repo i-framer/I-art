@@ -398,6 +398,56 @@ describe("consumeProbeCache", () => {
   );
 
   it(
+    "returns null and does not throw when fs.rmSync throws on the stale sentinel",
+    () => {
+      // Set up a stale-sentinel scenario: sentinel present, build directory absent.
+      const buildDir = ".next-probe-rmsync-throws-stale";
+      writeSentinel(buildDir);
+
+      expect(fs.existsSync(sentinelPath())).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, buildDir))).toBe(false);
+
+      // Stub rmSync to throw for the sentinel path, simulating a race where the
+      // sentinel disappears between the warn and the rmSync call in the
+      // stale-sentinel branch (lines 85-89 of probe-cache.ts).
+      const sentinelFullPath = path.join(tmpDir, PROBE_CACHE_SENTINEL);
+      vi.mocked(fs.rmSync).mockImplementationOnce((p) => {
+        if (p === sentinelFullPath) {
+          throw new Error("ENOENT: simulated race — sentinel vanished before rmSync");
+        }
+        // Should not be reached in this test (only rmSync on the sentinel is
+        // called in the stale-sentinel branch), but guard anyway.
+        throw new Error(`Unexpected rmSync call for ${String(p)}`);
+      });
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        // Must not throw even though fs.rmSync throws inside the try/catch.
+        let result: string | null = undefined!;
+        expect(() => {
+          result = consumeProbeCache(tmpDir);
+        }).not.toThrow();
+
+        // Stale sentinel → must return null, even when rmSync failed.
+        expect(result).toBeNull();
+
+        // console.warn must still be called — the rmSync failure must not
+        // prevent the stale-sentinel warning from reaching CI logs.
+        expect(warnSpy).toHaveBeenCalledOnce();
+        const [warnMessage] = warnSpy.mock.calls[0] as [string];
+
+        // The message must name the build directory so operators can identify
+        // which sentinel was stale, even when it could not be deleted.
+        expect(warnMessage).toContain(buildDir);
+      } finally {
+        warnSpy.mockRestore();
+        // Restore the rmSync spy to pass-through for subsequent tests.
+        vi.mocked(fs.rmSync).mockRestore();
+      }
+    },
+  );
+
+  it(
     "is idempotent: a second call after a successful cache hit returns null (sentinel already consumed)",
     () => {
       const buildDir = ".next-probe";
