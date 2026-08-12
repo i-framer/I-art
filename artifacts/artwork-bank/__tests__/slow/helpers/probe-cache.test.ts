@@ -1169,6 +1169,141 @@ import(moduleUrl)
       }
     },
   );
+
+  it(
+    "accepts a clearly-fresh sentinel even after a real-time sleep introduces clock drift",
+    async () => {
+      // This test deliberately does NOT freeze the clock.  Its purpose is to
+      // confirm that the age guard accepts a sentinel that is well within the
+      // threshold even when real milliseconds elapse between writing the
+      // sentinel and calling consumeProbeCache.
+      //
+      // We use a threshold of 10 seconds (≈ 0.00278 h) and backdate the
+      // sentinel to only 100 ms ago — a margin of ~9.9 s.  A 20 ms real-time
+      // sleep adds drift that is orders of magnitude smaller than that margin,
+      // so the sentinel must always be accepted regardless of CI scheduling
+      // jitter.  If the age guard were removed or inverted the test would fail
+      // because any always-reject implementation returns null rather than the
+      // build directory name.
+      const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      // 10 s expressed in fractional hours.
+      process.env["MAX_SENTINEL_AGE_HOURS"] = String(10 / 3600);
+      vi.resetModules();
+
+      try {
+        const {
+          consumeProbeCache: consume,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        const buildDir = ".next-probe-fresh-drift";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // Sentinel is 100 ms old — far below the 10 s threshold.
+        // Even with 20 ms of real drift the age stays well under the limit.
+        const hundredMsAgo = new Date(Date.now() - 100);
+        fs.utimesSync(sentinel, hundredMsAgo, hundredMsAgo);
+
+        // Introduce real clock drift without freezing the clock.
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // A clearly-fresh sentinel must always be accepted.
+          expect(result).toBe(buildDir);
+
+          // The sentinel must be consumed after a successful read.
+          expect(fs.existsSync(sentinel)).toBe(false);
+
+          // No staleness warning must be emitted.
+          expect(warnSpy).not.toHaveBeenCalled();
+
+          // The normal warm-start log must appear.
+          expect(logSpy).toHaveBeenCalledOnce();
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
+        }
+        vi.resetModules();
+      }
+    },
+  );
+
+  it(
+    "rejects a clearly-stale sentinel even after a real-time sleep introduces clock drift",
+    async () => {
+      // This test deliberately does NOT freeze the clock.  Its purpose is to
+      // confirm that the age guard rejects a sentinel that is well past the
+      // threshold even when real milliseconds elapse between writing the
+      // sentinel and calling consumeProbeCache.
+      //
+      // We use a threshold of 10 seconds (≈ 0.00278 h) and backdate the
+      // sentinel to 20 seconds ago — double the threshold.  A 20 ms real-time
+      // sleep adds drift that is orders of magnitude smaller than that margin,
+      // so the sentinel must always be rejected regardless of CI scheduling
+      // jitter.  If the age guard were removed or weakened the test would fail
+      // because any always-accept implementation returns the build directory
+      // rather than null.
+      const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      // 10 s expressed in fractional hours.
+      process.env["MAX_SENTINEL_AGE_HOURS"] = String(10 / 3600);
+      vi.resetModules();
+
+      try {
+        const {
+          consumeProbeCache: consume,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        const buildDir = ".next-probe-stale-drift";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // Sentinel is 20 s old — double the 10 s threshold.
+        // Even with 20 ms of real drift the age remains comfortably past the limit.
+        const twentySecondsAgo = new Date(Date.now() - 20_000);
+        fs.utimesSync(sentinel, twentySecondsAgo, twentySecondsAgo);
+
+        // Introduce real clock drift without freezing the clock.
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // A clearly-stale sentinel must always be rejected.
+          expect(result).toBeNull();
+
+          // The stale sentinel must be removed so subsequent runs are not tricked.
+          expect(fs.existsSync(sentinel)).toBe(false);
+
+          // A staleness warning must be emitted.
+          expect(warnSpy).toHaveBeenCalledOnce();
+        } finally {
+          warnSpy.mockRestore();
+        }
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
+        }
+        vi.resetModules();
+      }
+    },
+  );
 });
 
 // ── Constant contract ─────────────────────────────────────────────────────────
