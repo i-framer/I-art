@@ -24,6 +24,11 @@ vi.mock("node:fs", async (importOriginal) => {
       (...args: Parameters<typeof actual.statSync>) =>
         actual.statSync(...(args as [fs.PathLike, fs.StatSyncOptions])),
     ),
+    // Wrap rmSync so individual tests can stub it without affecting others.
+    rmSync: vi.fn(
+      (...args: Parameters<typeof actual.rmSync>) =>
+        actual.rmSync(...(args as [fs.PathLike, fs.RmOptions])),
+    ),
   };
 });
 
@@ -274,6 +279,58 @@ describe("consumeProbeCache", () => {
         logSpy.mockRestore();
         // Restore the statSync spy to pass-through for subsequent tests.
         vi.mocked(fs.statSync).mockRestore();
+      }
+    },
+  );
+
+  it(
+    "still logs the build directory name and returns it when fs.rmSync throws on the sentinel in the warm-start branch",
+    () => {
+      // Set up a warm-start scenario: sentinel present AND build directory exists.
+      const buildDir = ".next-probe-rmsync-throws-warm";
+      fs.mkdirSync(path.join(tmpDir, buildDir));
+      writeSentinel(buildDir);
+
+      expect(fs.existsSync(sentinelPath())).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, buildDir))).toBe(true);
+
+      // Stub rmSync to throw for the sentinel path, simulating a race where the
+      // sentinel disappears between the statSync call and the rmSync call in the
+      // warm-start branch (lines 104-109 of probe-cache.ts).
+      const sentinelFullPath = path.join(tmpDir, PROBE_CACHE_SENTINEL);
+      vi.mocked(fs.rmSync).mockImplementationOnce((p) => {
+        if (p === sentinelFullPath) {
+          throw new Error("ENOENT: simulated race — sentinel vanished before rmSync");
+        }
+        // Should not be reached in this test (only rmSync on the sentinel is
+        // called in the warm-start branch), but guard anyway.
+        throw new Error(`Unexpected rmSync call for ${String(p)}`);
+      });
+
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        // Must not throw even though fs.rmSync throws inside the try/catch.
+        let result: string | null = undefined!;
+        expect(() => {
+          result = consumeProbeCache(tmpDir);
+        }).not.toThrow();
+
+        // The warm-start branch must still return the build directory name —
+        // a failed rmSync must not abort the return.
+        expect(result).toBe(buildDir);
+
+        // console.log must still be called — the rmSync failure must not silently
+        // swallow the warm-start signal.
+        expect(logSpy).toHaveBeenCalledOnce();
+        const [logMessage] = logSpy.mock.calls[0] as [string];
+
+        // The message must name the build directory so operators can trace
+        // which probe cache was reused, even when the sentinel could not be deleted.
+        expect(logMessage).toContain(buildDir);
+      } finally {
+        logSpy.mockRestore();
+        // Restore the rmSync spy to pass-through for subsequent tests.
+        vi.mocked(fs.rmSync).mockRestore();
       }
     },
   );
