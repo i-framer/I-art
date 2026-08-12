@@ -2585,6 +2585,121 @@ describe("subprocess environment integration (age-guard CI override)", () => {
     },
   );
 
+  // ── Parameterised age-guard sweep ───────────────────────────────────────────
+  //
+  // The age guard in consumeProbeCache uses a strict greater-than comparison:
+  //
+  //   if (ageMs > maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS)
+  //
+  // A weakened guard that uses >= instead of > would incorrectly reject the
+  // case where ageMs === maxAgeMs + MTIME_TRUNCATION_TOLERANCE_MS (the
+  // tolerance ceiling), causing a false-positive staleness discard.  The
+  // parameterised suite below exercises every sub-range around that ceiling so
+  // the regression is caught at test-time instead of after it ships.
+  //
+  // Sub-ranges tested:
+  //   ageMs = maxAgeMs − 1          → strictly inside the raw limit → ACCEPTED
+  //   ageMs = maxAgeMs              → exactly at the raw limit → ACCEPTED
+  //   ageMs = maxAgeMs + 500        → halfway through the tolerance → ACCEPTED
+  //   ageMs = maxAgeMs + 1 000      → exactly at the tolerance ceiling → ACCEPTED
+  //                                   (rejected by a buggy >= guard)
+  //   ageMs = maxAgeMs + 1 001      → 1 ms above the tolerance ceiling → REJECTED
+  //
+  // Each case stubs Date.now() and fs.statSync() to inject a precise ageMs so
+  // the test is fully deterministic regardless of host clock resolution.
+
+  describe("age-guard parameterised sweep", () => {
+    // MTIME_TRUNCATION_TOLERANCE_MS is a module-internal constant (1 000 ms).
+    // Mirror the value here so the parameterisation is self-contained.
+    const MTIME_TRUNCATION_TOLERANCE_MS = 1000;
+
+    const cases: Array<{
+      offsetFromMaxAge: number;
+      expectedAccepted: boolean;
+      label: string;
+    }> = [
+      {
+        offsetFromMaxAge: -1,
+        expectedAccepted: true,
+        label: "ageMs = maxAgeMs − 1: strictly inside the raw limit → ACCEPTED",
+      },
+      {
+        offsetFromMaxAge: 0,
+        expectedAccepted: true,
+        label: "ageMs = maxAgeMs: exactly at the raw limit → ACCEPTED",
+      },
+      {
+        offsetFromMaxAge: MTIME_TRUNCATION_TOLERANCE_MS / 2,
+        expectedAccepted: true,
+        label: "ageMs = maxAgeMs + 500: halfway through the tolerance window → ACCEPTED",
+      },
+      {
+        offsetFromMaxAge: MTIME_TRUNCATION_TOLERANCE_MS,
+        expectedAccepted: true,
+        label:
+          "ageMs = maxAgeMs + 1 000: exactly at the tolerance ceiling → ACCEPTED (rejected by a buggy >= guard)",
+      },
+      {
+        offsetFromMaxAge: MTIME_TRUNCATION_TOLERANCE_MS + 1,
+        expectedAccepted: false,
+        label: "ageMs = maxAgeMs + 1 001: 1 ms above the tolerance ceiling → REJECTED",
+      },
+    ];
+
+    it.each(cases)("$label", ({ offsetFromMaxAge, expectedAccepted }) => {
+      const maxAgeMs = MAX_SENTINEL_AGE_HOURS * 60 * 60 * 1000;
+      const ageMs = maxAgeMs + offsetFromMaxAge;
+
+      // Pin Date.now() to a stable value (millisecond component = 500) so
+      // computed ages are fully deterministic regardless of when the test runs.
+      const fakeNow = Math.floor(Date.now() / 1000) * 1000 + 500;
+      const dateSpy = vi.spyOn(Date, "now").mockReturnValue(fakeNow);
+
+      // Derive the mtime that would produce exactly ageMs when subtracted from
+      // fakeNow, then stub statSync to return it for the sentinel path.
+      const fakeMtime = fakeNow - ageMs;
+      const sentinelFullPath = path.join(tmpDir, PROBE_CACHE_SENTINEL);
+      const fakeStats = {
+        mtime: new Date(fakeMtime),
+      } as ReturnType<typeof fs.statSync>;
+      vi.mocked(fs.statSync).mockImplementation((p) => {
+        if (p === sentinelFullPath) return fakeStats;
+        throw new Error(`Unexpected statSync call for ${String(p)}`);
+      });
+
+      const buildDir = ".next-probe-age-param";
+      fs.mkdirSync(path.join(tmpDir, buildDir));
+      writeSentinel(buildDir);
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        let result: string | null = undefined!;
+        expect(() => {
+          result = consumeProbeCache(tmpDir);
+        }).not.toThrow();
+
+        if (expectedAccepted) {
+          // Sentinel is within (or at) the tolerance ceiling — must be accepted.
+          // A weakened >= guard would fail this assertion for the ceiling case.
+          expect(result).toBe(buildDir);
+          expect(warnSpy).not.toHaveBeenCalled();
+          expect(logSpy).toHaveBeenCalledOnce();
+        } else {
+          // Sentinel exceeds the tolerance ceiling — must be discarded.
+          expect(result).toBeNull();
+          expect(warnSpy).toHaveBeenCalledOnce();
+          expect(logSpy).not.toHaveBeenCalled();
+        }
+      } finally {
+        dateSpy.mockRestore();
+        vi.mocked(fs.statSync).mockRestore();
+        warnSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+    });
+  });
+
   it(
     "accepts a sentinel whose true age is just inside the limit even when filesystem mtime truncation makes it appear just over the limit",
     () => {
