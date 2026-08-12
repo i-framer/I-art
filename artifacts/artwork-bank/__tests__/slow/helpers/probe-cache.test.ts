@@ -2923,6 +2923,106 @@ describe("subprocess environment integration (age-guard CI override)", () => {
   );
 
   it(
+    "second-order meta-test: the reduced-tolerance meta-test itself fails (exits non-zero) when the tolerance guard is bypassed with a large value",
+    () => {
+      // ── Purpose ─────────────────────────────────────────────────────────────
+      // The meta-test below verifies that setting MTIME_TRUNCATION_TOLERANCE_MS
+      // to 400 ms causes consumeProbeCache to reject a sentinel with a 500 ms
+      // apparent overshoot.  But that meta-test relies on the production module
+      // actually reading and applying the tolerance; if someone hardcoded a
+      // large value (or removed the env-var gate entirely), the meta-test could
+      // vacuously pass even though the guard is no longer working.
+      //
+      // This second-order meta-test closes that gap: it spawns a subprocess via
+      // spawnSync that runs the same mtime-truncation scenario as the primary
+      // meta-test, but with MTIME_TRUNCATION_TOLERANCE_MS set to 10 000 ms
+      // (well above the 500 ms overshoot).  The subprocess exits 0 when the
+      // guard correctly rejects and exits 1 when the tolerance is too wide and
+      // the sentinel is accepted.  We assert exit code 1, proving that the
+      // scenario is sensitive to the tolerance value — i.e. the meta-test
+      // *would* fail if the guard were bypassed.
+      //
+      // ── Subprocess script ───────────────────────────────────────────────────
+      // probe-cache-meta-guard-check.ts (in this directory) runs the identical
+      // mtime setup (fakeNow ms=500, trueAge=maxAgeMs−300, truncation error
+      // 800 ms → 500 ms net overshoot) and imports probe-cache without
+      // overriding the tolerance, so it picks up whatever value the environment
+      // provides.
+      //
+      //   bypass env  (10 000 ms): 500 ≤ 10 000 → accepted → exit 1 ✓
+      //   narrow env  (    400 ms): 500 >    400 → rejected → exit 0 ✓
+      //
+      // ── Why spawnSync rather than vi.resetModules again ──────────────────────
+      // Using spawnSync keeps the production module's IIFE evaluation fully
+      // isolated — there is no shared module registry or env-var override from
+      // the test process.  The subprocess reads the env var at import time and
+      // the helper script's exit code is the sole observable outcome, making the
+      // test immune to vitest module-cache edge cases.
+
+      const helperScript = path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "probe-cache-meta-guard-check.ts",
+      );
+
+      const tsxBin = path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../../node_modules/.bin/tsx",
+      );
+
+      // ── Bypass run: tolerance = 10 000 ms ───────────────────────────────────
+      // The 500 ms net overshoot is well inside 10 000 ms, so the guard must
+      // stay silent and the sentinel must be accepted.  The subprocess exits 1.
+      const bypassResult = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MTIME_TRUNCATION_TOLERANCE_MS: "10000",
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      // Surface subprocess stderr to make failures diagnosable.
+      if (bypassResult.stderr) {
+        process.stdout.write(
+          `[bypass run stderr]\n${bypassResult.stderr}\n`,
+        );
+      }
+
+      expect(
+        bypassResult.status,
+        "bypass run (10 000 ms tolerance): expected subprocess exit 1 " +
+          "(sentinel accepted because tolerance > overshoot), got " +
+          String(bypassResult.status),
+      ).toBe(1);
+
+      // ── Narrow run: tolerance = 400 ms ──────────────────────────────────────
+      // The 500 ms overshoot exceeds 400 ms, so the guard must fire and the
+      // sentinel must be rejected.  The subprocess exits 0.
+      const narrowResult = spawnSync(tsxBin, [helperScript], {
+        env: {
+          ...process.env,
+          MTIME_TRUNCATION_TOLERANCE_MS: "400",
+        },
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+
+      if (narrowResult.stderr) {
+        process.stdout.write(
+          `[narrow run stderr]\n${narrowResult.stderr}\n`,
+        );
+      }
+
+      expect(
+        narrowResult.status,
+        "narrow run (400 ms tolerance): expected subprocess exit 0 " +
+          "(sentinel rejected because tolerance < overshoot), got " +
+          String(narrowResult.status),
+      ).toBe(0);
+    },
+  );
+
+  it(
     "meta-test: rejects the mtime-truncation sentinel when MTIME_TRUNCATION_TOLERANCE_MS is reduced strictly below the 500 ms filesystem overshoot",
     async () => {
       // ── Purpose ─────────────────────────────────────────────────────────────
