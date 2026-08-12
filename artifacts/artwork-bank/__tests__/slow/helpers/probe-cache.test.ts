@@ -40,6 +40,7 @@ import {
   PROBE_CACHE_SENTINEL,
   DEV_BUILD_DIR,
   MAX_SENTINEL_AGE_HOURS,
+  MTIME_TRUNCATION_TOLERANCE_MS,
 } from "./probe-cache";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -66,6 +67,24 @@ function writeSentinel(buildDir: string): void {
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+
+describe("MTIME_TRUNCATION_TOLERANCE_MS", () => {
+  it(
+    "is exactly 1 000 ms — the documented 1-second buffer for filesystem mtime truncation",
+    () => {
+      // This test exists so that a change to the constant (e.g. halving it to
+      // 500 ms) is caught immediately rather than silently weakening the age
+      // guard.  The parameterised age-guard sweep in this file references
+      // MTIME_TRUNCATION_TOLERANCE_MS directly, so a mutation would cause those
+      // cases to be computed against the wrong ceiling — but *this* assertion
+      // catches the mutation at the source before the sweep even runs.
+      //
+      // If you genuinely need to change the value, update this assertion and
+      // revise the JSDoc in probe-cache.ts to explain the new rationale.
+      expect(MTIME_TRUNCATION_TOLERANCE_MS).toBe(1000);
+    },
+  );
+});
 
 describe("consumeProbeCache", () => {
   it(
@@ -1067,7 +1086,6 @@ import(moduleUrl)
 
         // Backdate to exactly 2.5 hours + 1 001 ms before fixedNow.
         // ageMs = 2.5h + 1001ms; tolerance = 1 000ms; 2.5h + 1001ms > 2.5h + 1000ms → rejected.
-        const MTIME_TRUNCATION_TOLERANCE_MS = 1000;
         const pastTolerance = new Date(
           fixedNow - (2.5 * 60 * 60 * 1000 + MTIME_TRUNCATION_TOLERANCE_MS + 1),
         );
@@ -1282,7 +1300,6 @@ import(moduleUrl)
 
         // maxAgeMs = 2.5 h × 3 600 000 ms/h = 9 000 000 ms (a multiple of 1 000).
         const maxAgeMs = 2.5 * 60 * 60 * 1000;
-        const MTIME_TRUNCATION_TOLERANCE_MS = 1000;
 
         // Round fixedNow down to a whole-second boundary so that
         // (fixedNow − (maxAgeMs + TOLERANCE)) also lands on a whole-second
@@ -2609,10 +2626,6 @@ describe("subprocess environment integration (age-guard CI override)", () => {
   // the test is fully deterministic regardless of host clock resolution.
 
   describe("age-guard parameterised sweep", () => {
-    // MTIME_TRUNCATION_TOLERANCE_MS is a module-internal constant (1 000 ms).
-    // Mirror the value here so the parameterisation is self-contained.
-    const MTIME_TRUNCATION_TOLERANCE_MS = 1000;
-
     const cases: Array<{
       offsetFromMaxAge: number;
       expectedAccepted: boolean;

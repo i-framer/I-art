@@ -51,6 +51,18 @@ export const MAX_SENTINEL_AGE_HOURS: number = (() => {
 })();
 
 /**
+ * Tolerance added to the age-guard rejection threshold to absorb filesystem
+ * mtime truncation.  Many filesystems (ext3, HFS+, FAT, some network
+ * filesystems) store mtime at 1-second precision.  After a utimesSync
+ * round-trip the stored mtime is the floor of the true write time to the
+ * nearest second, so a sentinel can appear up to 999 ms older than its true
+ * age.  Adding 1 000 ms to the rejection threshold ensures a genuinely fresh
+ * sentinel is never falsely discarded because the filesystem rounded its
+ * mtime down into the stale zone.
+ */
+export const MTIME_TRUNCATION_TOLERANCE_MS = 1000;
+
+/**
  * Try to consume the probe's retained build cache.
  *
  * Returns the name of the build directory to use.  Side-effects:
@@ -87,7 +99,6 @@ export function consumeProbeCache(artworkBankDir: string): string | null {
   // adds a 1-second buffer to the rejection threshold so a genuinely fresh
   // sentinel is never falsely discarded because the filesystem rounded its
   // mtime down into the stale zone.
-  const MTIME_TRUNCATION_TOLERANCE_MS = 1000;
   let sentinelAgeTooOld = false;
   let sentinelMtimeForAge = "";
   try {
