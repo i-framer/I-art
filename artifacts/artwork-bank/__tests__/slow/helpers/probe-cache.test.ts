@@ -1970,4 +1970,78 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       }
     },
   );
+
+  it(
+    "a 2-hour-old sentinel is accepted when MAX_SENTINEL_AGE_HOURS is set to '2.5' (decimal without trailing letters)",
+    async () => {
+      // The string "2.5" converts to the finite positive number 2.5 via
+      // Number("2.5").  Unlike "2.5abc", which converts to NaN because of the
+      // trailing non-digit characters, "2.5" is a fully valid numeric string:
+      // Number.isFinite(2.5) is true and 2.5 > 0 is true, so the IIFE must
+      // accept it and set MAX_SENTINEL_AGE_HOURS to 2.5 — not the 24-hour
+      // default.  This closes the boundary between integer values like "2" and
+      // "3" (already covered as valid) and decimal-prefix alphanumeric strings
+      // like "2.5abc" (already covered as invalid): a plain decimal string with
+      // no trailing letters is valid and must be used as the threshold.
+      //
+      // For consistency with the other env-var tests that exercise IIFE
+      // module-load-time behaviour, we use the vi.resetModules() +
+      // dynamic-import path so the IIFE runs against the modified env without
+      // spawning a child process.
+      const originalEnv = process.env["MAX_SENTINEL_AGE_HOURS"];
+      process.env["MAX_SENTINEL_AGE_HOURS"] = "2.5";
+      vi.resetModules();
+
+      try {
+        const {
+          consumeProbeCache: consume,
+          MAX_SENTINEL_AGE_HOURS: resolvedHours,
+          PROBE_CACHE_SENTINEL: SENTINEL,
+        } = await import("./probe-cache");
+
+        // The IIFE must accept "2.5" (Number("2.5") === 2.5, which passes both
+        // Number.isFinite and parsed > 0) and use it as the threshold.
+        expect(resolvedHours).toBe(2.5);
+
+        const buildDir = ".next-probe-2.5";
+        fs.mkdirSync(path.join(tmpDir, buildDir));
+        const sentinel = path.join(tmpDir, SENTINEL);
+        fs.writeFileSync(sentinel, buildDir, "utf8");
+
+        // Backdate to 2 hours ago — within the 2.5-hour threshold.
+        // Accepting this sentinel confirms that the resolved threshold is 2.5
+        // and not the 24-hour default, and not a fallback that happens to accept
+        // a 2-hour-old sentinel for the wrong reason.
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        fs.utimesSync(sentinel, twoHoursAgo, twoHoursAgo);
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          const result = consume(tmpDir);
+
+          // The 2-hour-old sentinel is within the 2.5-hour threshold.
+          // consumeProbeCache must accept it and return the build directory name.
+          expect(result).toBe(buildDir);
+
+          // No age-staleness warning must be emitted — the sentinel is fresh
+          // enough under the 2.5-hour threshold.
+          expect(warnSpy).not.toHaveBeenCalled();
+
+          // The normal warm-start log must appear.
+          expect(logSpy).toHaveBeenCalledOnce();
+        } finally {
+          warnSpy.mockRestore();
+          logSpy.mockRestore();
+        }
+      } finally {
+        if (originalEnv === undefined) {
+          delete process.env["MAX_SENTINEL_AGE_HOURS"];
+        } else {
+          process.env["MAX_SENTINEL_AGE_HOURS"] = originalEnv;
+        }
+        vi.resetModules();
+      }
+    },
+  );
 });
