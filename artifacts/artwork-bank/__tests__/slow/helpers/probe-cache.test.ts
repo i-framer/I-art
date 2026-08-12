@@ -2844,7 +2844,13 @@ describe("subprocess environment integration (age-guard CI override)", () => {
       // Without the tolerance:  maxAgeMs + 500 > maxAgeMs → REJECTED (false positive)
       // With the tolerance:     maxAgeMs + 500 ≤ maxAgeMs + 1 000 → ACCEPTED ✓
 
-      const maxAgeMs = MAX_SENTINEL_AGE_HOURS * 60 * 60 * 1000;
+      // Hard-code 86 400 000 ms (24 h) rather than deriving from
+      // MAX_SENTINEL_AGE_HOURS.  If the default were silently reduced (e.g.
+      // 24 → 12) the derived value would shrink, the math comment above would
+      // still hold for the new smaller window, and the test would continue to
+      // pass — masking the regression.  Pinning to the expected production
+      // value means a weakened default makes this test fail immediately.
+      const maxAgeMs = 86_400_000; // 24 h in ms — must match the intended default
 
       // Pin Date.now() to a value whose millisecond component is exactly 500.
       const fakeNow = Math.floor(Date.now() / 1000) * 1000 + 500;
