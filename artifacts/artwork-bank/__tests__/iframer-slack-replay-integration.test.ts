@@ -175,6 +175,35 @@ describeIntegration("replayFailedIframerSlackAlerts — real-DB integration", ()
     // just assert the call was not made for our tenant.
   });
 
+  it("exception path: iframerSlackPostFailed is left untouched when Slack call throws", async () => {
+    const failedAt = new Date(Date.now() - 60000);
+    const tenantId = await createTenant({
+      iframerSlackPostFailed: failedAt,
+      iframerSlackFailedPayload: VALID_PAYLOAD,
+    });
+
+    // Make the Slack call throw an exception instead of returning ok:false.
+    sendIframerAccountSlackNotificationMock.mockRejectedValueOnce(
+      new Error("Slack network timeout"),
+    );
+
+    const result = await replayFailedIframerSlackAlerts();
+
+    // The exception path must increment failed.
+    expect(result.failed).toBeGreaterThanOrEqual(1);
+
+    // The failure timestamp must be left exactly as it was — the exception
+    // catch block calls continue without updating iframerSlackPostFailed.
+    const row = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, tenantId),
+    });
+    expect(row?.iframerSlackPostFailed).not.toBeNull();
+    expect(row?.iframerSlackPostFailed!.getTime()).toBe(failedAt.getTime());
+    // Payload must also remain intact so the next retry can reconstruct the
+    // notification.
+    expect(row?.iframerSlackFailedPayload).toBe(VALID_PAYLOAD);
+  });
+
   it("missing SLACK_BILLING_ALERTS_CHANNEL: tenant is skipped and iframerSlackPostFailed is preserved", async () => {
     const failedAt = new Date(Date.now() - 60000);
     const tenantId = await createTenant({
