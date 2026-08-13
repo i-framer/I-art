@@ -436,6 +436,91 @@ describeIntegration(
       expect(row?.slackPostFailed).toBeInstanceOf(Date);
     });
 
+    it("mismatch-path alert with Slack failure has slackPostFailed set on the DB row", async () => {
+      // Make the Slack notifier reject this call so slackPostFailed gets set.
+      vi.mocked(sendBillingAlertSlackNotification).mockResolvedValueOnce({
+        ok: false,
+        error: "channel_not_found",
+      });
+
+      const tenantA = await createTenant();
+      const tenantB = await createTenant();
+      const artworkId = await createArtwork(tenantA); // artwork belongs to tenantA
+      const sessionId = `cs_test_${uid()}`;
+      const eventId = `evt-${sessionId}`;
+      createdAlertEventIds.push(eventId);
+
+      // Event claims artwork belongs to tenantB — mismatch triggers the alert.
+      const mismatchEvent = {
+        id: eventId,
+        type: "checkout.session.completed",
+        data: {
+          object: {
+            id: sessionId,
+            mode: "payment",
+            payment_intent: `pi-${sessionId}`,
+            amount_total: 50000,
+            metadata: { artworkId, tenantId: tenantB, fulfillmentType: "PICKUP" },
+            customer_details: { email: "buyer@example.com", name: "Test Buyer" },
+          },
+        },
+      };
+
+      const res = await POST(makeRequest(mismatchEvent));
+      expect(res.status).toBe(200);
+
+      // Read the row directly (bypassing the panel filter) to check slackPostFailed.
+      const row = await db.query.stripeAlertsTable.findFirst({
+        where: (t, { eq: eqFn }) => eqFn(t.stripeEventId, eventId),
+      });
+
+      expect(row).toBeDefined();
+      expect(row?.slackPostFailed).toBeInstanceOf(Date);
+    });
+
+    it("mismatch-path alert with slackPostFailed still appears in the panel query (dismissedAt is the only filter)", async () => {
+      // Make the Slack notifier reject this call so slackPostFailed gets set.
+      vi.mocked(sendBillingAlertSlackNotification).mockResolvedValueOnce({
+        ok: false,
+        error: "channel_not_found",
+      });
+
+      const tenantA = await createTenant();
+      const tenantB = await createTenant();
+      const artworkId = await createArtwork(tenantA); // artwork belongs to tenantA
+      const sessionId = `cs_test_${uid()}`;
+      const eventId = `evt-${sessionId}`;
+      createdAlertEventIds.push(eventId);
+
+      // Event claims artwork belongs to tenantB — mismatch triggers the alert.
+      const mismatchEvent = {
+        id: eventId,
+        type: "checkout.session.completed",
+        data: {
+          object: {
+            id: sessionId,
+            mode: "payment",
+            payment_intent: `pi-${sessionId}`,
+            amount_total: 50000,
+            metadata: { artworkId, tenantId: tenantB, fulfillmentType: "PICKUP" },
+            customer_details: { email: "buyer@example.com", name: "Test Buyer" },
+          },
+        },
+      };
+
+      const res = await POST(makeRequest(mismatchEvent));
+      expect(res.status).toBe(200);
+
+      // The panel query only filters on isNull(dismissedAt) — slackPostFailed must not hide the row.
+      const alerts = await panelQuery();
+      const row = alerts.find((a) => a.stripeEventId === eventId);
+
+      expect(row).toBeDefined();
+      expect(row?.eventType).toBe("checkout.session.completed");
+      // Confirm the Slack failure was recorded.
+      expect(row?.slackPostFailed).toBeInstanceOf(Date);
+    });
+
     it("checkout alert with slackPostFailed can still be dismissed", async () => {
       vi.mocked(sendBillingAlertSlackNotification).mockResolvedValueOnce({
         ok: false,
