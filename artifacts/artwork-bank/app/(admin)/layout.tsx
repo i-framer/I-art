@@ -15,6 +15,7 @@ import {
   Palette,
   Award,
   Handshake,
+  GalleryVertical,
 } from "lucide-react";
 import { InquiryBadge } from "@/app/(admin)/_components/inquiry-badge";
 
@@ -24,6 +25,7 @@ const navItems = [
   { href: "/orders", label: "Orders", icon: ShoppingBag },
   { href: "/inquiries", label: "Inquiries", icon: MessageSquare },
   { href: "/certificates", label: "Certificates", icon: Award },
+  { href: "/exhibitions", label: "Exhibitions", icon: GalleryVertical },
   { href: "/consignment", label: "Consignment", icon: Handshake },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
