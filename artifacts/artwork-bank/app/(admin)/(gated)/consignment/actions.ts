@@ -33,21 +33,7 @@ async function getSessionAndTenant() {
   return { session, tenant };
 }
 
-/**
- * Calculate artist and gallery amounts from a sale price and artist percentage.
- * Artist amount = floor(salePriceCents * artistPct / 100).
- * Gallery amount = salePriceCents - artistAmount.
- */
-function calculateSplit(
-  salePriceCents: number,
-  artistPct: number,
-): { artistAmountCents: number; galleryAmountCents: number } {
-  const artistAmountCents = Math.floor((salePriceCents * artistPct) / 100);
-  return {
-    artistAmountCents,
-    galleryAmountCents: salePriceCents - artistAmountCents,
-  };
-}
+import { calculateSplit } from "./utils";
 
 // ── Agreement actions ─────────────────────────────────────────────────────────
 

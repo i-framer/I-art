@@ -17,7 +17,7 @@ import {
   consignmentSalesTable,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import { calculateSplit } from "@/app/(admin)/(gated)/consignment/actions";
+import { calculateSplit } from "@/app/(admin)/(gated)/consignment/utils";
 
 describeIntegration("consignment tenant isolation (Task #82)", () => {
   const ids = { tenants: [] as string[], artists: [] as string[], artworks: [] as string[], agreements: [] as string[], items: [] as string[], sales: [] as string[] };

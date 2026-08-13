@@ -25,13 +25,7 @@ const issueCertSchema = z.object({
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * Format a tenant-scoped sequential number into a human-readable certificate
- * number, e.g. seq=3, year=2026 → "CERT-2026-0003".
- */
-function formatCertificateNumber(seq: number, year: number): string {
-  return `CERT-${year}-${String(seq).padStart(4, "0")}`;
-}
+import { formatCertificateNumber } from "./utils";
 
 // ── Actions ───────────────────────────────────────────────────────────────────
 

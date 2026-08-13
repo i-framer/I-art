@@ -4,7 +4,7 @@
  * Verifies calculateSplit() is correct across a range of inputs.
  */
 import { describe, it, expect } from "vitest";
-import { calculateSplit } from "@/app/(admin)/(gated)/consignment/actions";
+import { calculateSplit } from "@/app/(admin)/(gated)/consignment/utils";
 
 describe("calculateSplit (Task #82)", () => {
   it("60/40 split on $1000 sale", () => {

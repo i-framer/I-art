@@ -18,7 +18,7 @@ import {
   certificatesTable,
 } from "@workspace/db";
 import { eq, max } from "drizzle-orm";
-import { formatCertificateNumber } from "@/app/(admin)/(gated)/certificates/actions";
+import { formatCertificateNumber } from "@/app/(admin)/(gated)/certificates/utils";
 
 // ── Unit tests: formatCertificateNumber ───────────────────────────────────────
 

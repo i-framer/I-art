@@ -17,7 +17,7 @@ import {
   certificatesTable,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
-import { formatCertificateNumber } from "@/app/(admin)/(gated)/certificates/actions";
+import { formatCertificateNumber } from "@/app/(admin)/(gated)/certificates/utils";
 
 describeIntegration("certificate tenant isolation (Task #83)", () => {
   const createdTenantIds: string[] = [];
