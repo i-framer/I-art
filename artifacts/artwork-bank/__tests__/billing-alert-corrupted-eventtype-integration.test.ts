@@ -67,19 +67,19 @@ function uid() {
 }
 
 async function createAlert(opts: {
-  eventType: string | null;
+  eventType: string;
   slackPostFailed?: Date;
 }) {
   const id = uid();
   await db.insert(stripeAlertsTable).values({
     id,
     stripeEventId: `evt-${id}`,
-    eventType: opts.eventType as string, // cast: null exercises the corruption path
+    eventType: opts.eventType,
     customerId: `cus-${id}`,
     reason: "Corrupted eventType test",
     slackPostFailed: opts.slackPostFailed ?? new Date(Date.now() - 60_000),
     dismissedAt: null,
-  } as any);
+  });
   createdAlertIds.push(id);
   return id;
 }
@@ -105,11 +105,16 @@ describeIntegration(
   "replayFailedSlackAlerts — corrupted eventType (real-DB integration)",
   () => {
     it(
-      "null eventType: alert is counted as skipped; slackPostFailed is preserved; no Slack call made",
+      "empty-string eventType (DB-level corruption proxy): alert is counted as skipped; slackPostFailed is preserved; no Slack call made",
       async () => {
+        // The stripe_alert.event_type column has a NOT NULL constraint, so a
+        // true SQL NULL cannot be seeded via the ORM.  An empty string "" is
+        // the closest DB-legal proxy for a corrupted/absent eventType value:
+        // resolveSlackChannel returns null for it (mocked above), which
+        // triggers the same skipped path as any unrecognised value.
         const failedAt = new Date(Date.now() - 60_000);
         const alertId = await createAlert({
-          eventType: null,
+          eventType: "",
           slackPostFailed: failedAt,
         });
 
