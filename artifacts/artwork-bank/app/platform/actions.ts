@@ -393,6 +393,20 @@ export async function replayFailedSlackAlerts(): Promise<{
       }
       replayed++;
     } else {
+      // Refresh the failure timestamp so operators can see when the most recent
+      // retry attempt occurred, distinguishing a newly-broken alert from one
+      // that has been stuck for days.
+      try {
+        await db
+          .update(stripeAlertsTable)
+          .set({ slackPostFailed: new Date() })
+          .where(eq(stripeAlertsTable.id, alert.id));
+      } catch (updateErr) {
+        console.error(
+          `[Slack replay] Failed to refresh slackPostFailed for alertId=${alert.id}:`,
+          (updateErr as any)?.message ?? String(updateErr),
+        );
+      }
       failed++;
     }
   }

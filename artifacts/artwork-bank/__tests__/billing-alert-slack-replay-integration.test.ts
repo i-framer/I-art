@@ -141,6 +141,29 @@ describeIntegration("replayFailedSlackAlerts (billing alerts) — real-DB integr
     expect(row?.slackPostFailed).not.toBeNull();
   });
 
+  it("failure path: retry sweep refreshes slackPostFailed to a later timestamp", async () => {
+    // Insert an alert whose slackPostFailed is well in the past so any fresh
+    // write will be strictly later.
+    const originalFailedAt = new Date(Date.now() - 60_000);
+    const alertId = await createAlert({ slackPostFailed: originalFailedAt });
+
+    sendBillingAlertSlack.mockResolvedValueOnce({ ok: false });
+
+    const beforeRetry = new Date();
+    await replayFailedSlackAlerts();
+
+    const row = await db.query.stripeAlertsTable.findFirst({
+      where: eq(stripeAlertsTable.id, alertId),
+    });
+
+    // Timestamp must have been written after the sweep started (not the
+    // original stale value), so the operator can tell this is a recent failure.
+    expect(row?.slackPostFailed).not.toBeNull();
+    expect(row!.slackPostFailed!.getTime()).toBeGreaterThanOrEqual(
+      beforeRetry.getTime(),
+    );
+  });
+
   it("dismissed alert is ignored — Slack not called for it", async () => {
     const alertId = await createAlert({
       slackPostFailed: new Date(Date.now() - 60000),

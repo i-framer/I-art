@@ -223,8 +223,17 @@ describe("replayFailedSlackAlerts — partial failure", () => {
 
     const result = await replayFailedSlackAlerts();
     expect(result).toEqual({ replayed: 1, failed: 1, skipped: 0 });
-    // update called once (for the successful one only)
-    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    // update called twice: once to clear the flag on success, once to refresh
+    // the failure timestamp on the still-failing alert.
+    expect(mockUpdate).toHaveBeenCalledTimes(2);
+    // The successful path clears the flag to null.
+    expect(mockSet).toHaveBeenCalledWith({ slackPostFailed: null });
+    // The failure path writes a fresh Date (not null) so the operator can see
+    // when the most recent retry occurred.
+    const failureSetCall = vi.mocked(mockSet).mock.calls.find(
+      ([arg]) => arg && (arg as Record<string, unknown>).slackPostFailed instanceof Date,
+    );
+    expect(failureSetCall).toBeDefined();
   });
 
   it("tolerates SDK errors during replay without throwing", async () => {
