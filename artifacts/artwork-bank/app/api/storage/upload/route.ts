@@ -66,18 +66,27 @@ function storageSizeError() {
 }
 
 function handleStorageError(err: unknown) {
+  // Capture a safe, non-secret debug string: BlobError messages are
+  // standardised ("Access denied", "This store does not exist.", etc.) and
+  // contain no credentials.  Including them in the 500 body lets an operator
+  // diagnose the root cause from the browser Network tab without needing
+  // access to Vercel function logs.
+  const errType = err instanceof Error ? err.constructor.name : typeof err;
+  const errMsg  = err instanceof Error ? err.message : String(err);
+  const debug   = `${errType}: ${errMsg}`;
+
   if (
     err instanceof StorageNotConfiguredError ||
     (err instanceof BlobError && !(err instanceof BlobNotFoundError))
   ) {
-    console.error("[storage/upload] Storage misconfigured:", err);
+    console.error("[storage/upload] Storage error:", debug, err);
     return NextResponse.json(
-      { error: "Storage misconfigured — check storage environment variables" },
+      { error: "Storage misconfigured — check storage environment variables", debug },
       { status: 500 },
     );
   }
-  console.error("[storage/upload] Upload failed:", err);
-  return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+  console.error("[storage/upload] Upload failed:", debug, err);
+  return NextResponse.json({ error: "Upload failed", debug }, { status: 500 });
 }
 
 // getReadTimeoutMs, getTotalTimeoutMs, ReadResult, and readStreamWithDeadlines
