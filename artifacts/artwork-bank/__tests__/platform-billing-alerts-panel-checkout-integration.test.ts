@@ -521,6 +521,107 @@ describeIntegration(
       expect(row?.slackPostFailed).toBeInstanceOf(Date);
     });
 
+    it("replaying a mismatch event does not create a second alert row (idempotency)", async () => {
+      const tenantA = await createTenant();
+      const tenantB = await createTenant();
+      const artworkId = await createArtwork(tenantA); // artwork belongs to tenantA
+      const sessionId = `cs_test_${uid()}`;
+      const eventId = `evt-${sessionId}`;
+      createdAlertEventIds.push(eventId);
+
+      // Event claims artwork belongs to tenantB — mismatch triggers the alert.
+      const mismatchEvent = {
+        id: eventId,
+        type: "checkout.session.completed",
+        data: {
+          object: {
+            id: sessionId,
+            mode: "payment",
+            payment_intent: `pi-${sessionId}`,
+            amount_total: 50000,
+            metadata: { artworkId, tenantId: tenantB, fulfillmentType: "PICKUP" },
+            customer_details: { email: "buyer@example.com", name: "Test Buyer" },
+          },
+        },
+      };
+
+      // First delivery — alert row is created.
+      const res1 = await POST(makeRequest(mismatchEvent));
+      expect(res1.status).toBe(200);
+
+      // Second delivery of the identical event (Stripe retry / replay).
+      const res2 = await POST(makeRequest(mismatchEvent));
+      expect(res2.status).toBe(200);
+
+      // Exactly one row must exist for this eventId.
+      const rows = await db
+        .select()
+        .from(stripeAlertsTable)
+        .where(eq(stripeAlertsTable.stripeEventId, eventId));
+
+      expect(rows).toHaveLength(1);
+    });
+
+    it("replaying a mismatch event does not overwrite the original slackPostFailed timestamp", async () => {
+      // First delivery: Slack fails → slackPostFailed is written.
+      vi.mocked(sendBillingAlertSlackNotification).mockResolvedValueOnce({
+        ok: false,
+        error: "channel_not_found",
+      });
+
+      const tenantA = await createTenant();
+      const tenantB = await createTenant();
+      const artworkId = await createArtwork(tenantA); // artwork belongs to tenantA
+      const sessionId = `cs_test_${uid()}`;
+      const eventId = `evt-${sessionId}`;
+      createdAlertEventIds.push(eventId);
+
+      const mismatchEvent = {
+        id: eventId,
+        type: "checkout.session.completed",
+        data: {
+          object: {
+            id: sessionId,
+            mode: "payment",
+            payment_intent: `pi-${sessionId}`,
+            amount_total: 50000,
+            metadata: { artworkId, tenantId: tenantB, fulfillmentType: "PICKUP" },
+            customer_details: { email: "buyer@example.com", name: "Test Buyer" },
+          },
+        },
+      };
+
+      const res1 = await POST(makeRequest(mismatchEvent));
+      expect(res1.status).toBe(200);
+
+      // Read the row after first delivery to capture the original slackPostFailed.
+      const rowAfterFirst = await db.query.stripeAlertsTable.findFirst({
+        where: (t, { eq: eqFn }) => eqFn(t.stripeEventId, eventId),
+      });
+      expect(rowAfterFirst).toBeDefined();
+      const originalSlackPostFailed = rowAfterFirst!.slackPostFailed;
+      expect(originalSlackPostFailed).toBeInstanceOf(Date);
+
+      // Second delivery: Slack succeeds this time (to prove the onConflict path
+      // is what prevents the overwrite, not a Slack failure on the replay).
+      const res2 = await POST(makeRequest(mismatchEvent));
+      expect(res2.status).toBe(200);
+
+      // The row must still show the original slackPostFailed — not null, not changed.
+      const rowAfterSecond = await db.query.stripeAlertsTable.findFirst({
+        where: (t, { eq: eqFn }) => eqFn(t.stripeEventId, eventId),
+      });
+      expect(rowAfterSecond).toBeDefined();
+      expect(rowAfterSecond!.slackPostFailed).toEqual(originalSlackPostFailed);
+
+      // And still exactly one row.
+      const rows = await db
+        .select()
+        .from(stripeAlertsTable)
+        .where(eq(stripeAlertsTable.stripeEventId, eventId));
+      expect(rows).toHaveLength(1);
+    });
+
     it("checkout alert with slackPostFailed can still be dismissed", async () => {
       vi.mocked(sendBillingAlertSlackNotification).mockResolvedValueOnce({
         ok: false,
