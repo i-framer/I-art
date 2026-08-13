@@ -89,12 +89,12 @@ on Vercel — re-upload any artwork images you want in production (seed/demo dat
 
 ### ⚠️ Apex vs www redirect — critical production configuration
 
-> **🚨 CONFIRMED BROKEN (verified August 2026)**
-> `curl -sI https://i-art.com.au/api/stripe/webhook` returns **HTTP 308 →
-> `https://www.i-art.com.au/api/stripe/webhook`**.
-> Stripe does not follow redirects — every webhook delivery to the apex URL is
-> currently counted as a failure.  Orders and subscription events are silently lost.
-> **This must be fixed before go-live.**
+> **✅ FIXED (2026-08-13, via Option C below)**
+> The apex `i-art.com.au` still 308-redirects to `www.i-art.com.au` (Vercel
+> primary-domain setting), but the Stripe webhook endpoint
+> `we_1TymEuErHGiDuwvxwsMw2NWC` was re-registered at
+> `https://www.i-art.com.au/api/stripe/webhook`, so webhook deliveries no
+> longer hit the redirect. The health probe workflow now targets the www URL.
 >
 > Run `bash scripts/check-webhook-redirect.sh` at any time to re-verify the
 > redirect direction.
@@ -122,6 +122,17 @@ Vercel's default for a domain it doesn't recognise as primary is to redirect
 1. Remove `www.i-art.com.au` from Vercel → Domains.
 2. The apex domain is then served directly with no redirect in either direction.
 3. Ensure `NEXT_PUBLIC_SITE_URL=https://i-art.com.au`.
+
+**Option C (applied 2026-08-13): Register the Stripe webhook at the www URL**
+
+1. Keep `www.i-art.com.au` as the Vercel primary domain (apex 308s to www).
+2. Register/update the Stripe webhook endpoint as
+   `https://www.i-art.com.au/api/stripe/webhook` — deliveries then never hit
+   the redirect. (Updating an endpoint's URL does NOT rotate its signing secret.)
+3. Update the health-probe workflow default URL to the www endpoint so the
+   probe checks the URL Stripe actually delivers to.
+4. Note: Vercel Cron hits relative paths on the deployment directly, so crons
+   are unaffected by the apex redirect under this option.
 
 > After changing the primary domain:
 > 1. Run `bash scripts/check-webhook-redirect.sh` (no arguments) and confirm it prints **✅ ALL PASS**.
@@ -152,8 +163,9 @@ Vercel's default for a domain it doesn't recognise as primary is to redirect
 1. Stripe Dashboard → Developers → Webhooks → Add endpoint.
    - **Before DNS cutover** use the Vercel-assigned URL:
      `https://<your-project>.vercel.app/api/stripe/webhook`
-   - **After DNS points to Vercel and §4 redirect fix is applied** update (or add a second endpoint) for:
-     `https://i-art.com.au/api/stripe/webhook`
+   - **After DNS points to Vercel and §4 redirect fix is applied** update (or add a second endpoint) for
+     the URL served without a redirect — currently
+     `https://www.i-art.com.au/api/stripe/webhook` (Option C).
 2. Events to subscribe to — select all seven:
    `checkout.session.completed`, `checkout.session.expired`,
    `customer.subscription.created`, `customer.subscription.updated`,
