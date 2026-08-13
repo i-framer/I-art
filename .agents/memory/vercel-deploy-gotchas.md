@@ -19,3 +19,6 @@ production upload 500. Reads (`list()`) still pass, so a read-only health check 
 **How to apply:** health checks on storage must probe writes, not just reads. The app's
 architecture (stable public blob URLs via getServeUrl) requires a PUBLIC store; fixing it
 is a Vercel dashboard action (create/connect a public store), not a code change.
+
+## Stale-build false alarm (Aug 2026)
+A "missing tables" drift-check failure in the Vercel dashboard turned out to be an old deployment that ran before the schema push — not a second database. Before hunting for a rogue DATABASE_URL, check the failing build's timestamp vs the schema-push time, and just redeploy. Note: workspace secret VERCEL_DATABASE_URL is byte-identical to PROD_DATABASE_URL (one Neon project, one branch).
