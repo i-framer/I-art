@@ -222,4 +222,81 @@ describe("checkout.session.completed — applicationFeeCents", () => {
     // 12 000 × 0.05 = 600
     expect(insertedOrderVals.current.applicationFeeCents).toBe(600);
   });
+
+  // ── Per-tenant commission override (i-Framer Premium = 3.5%)  (Task #217) ──
+
+  it("uses 3.5% (350 bp) from session metadata for an i-Framer Premium tenant", async () => {
+    // When checkout passes commissionBasisPoints=350 in metadata the webhook
+    // must record both the correct applicationFeeCents AND the bp value.
+    const event = {
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_iframer_350",
+          payment_intent: "pi_iframer_1",
+          mode: "payment",
+          amount_total: 10_000,
+          customer_details: { email: "buyer@example.com", name: "Buyer" },
+          metadata: {
+            artworkId: "art-1",
+            tenantId: "tenant-1",
+            fulfillmentType: "SHIP",
+            commissionBasisPoints: "350",
+          },
+        },
+      },
+    };
+    const res = await webhookPOST(
+      new Request("http://localhost/api/stripe/webhook", {
+        method: "POST",
+        body: JSON.stringify(event),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(insertedOrderVals.current).not.toBeNull();
+    // 3.5% of $100 = $3.50 = 350 cents
+    expect(insertedOrderVals.current.applicationFeeCents).toBe(350);
+    expect(insertedOrderVals.current.commissionBasisPoints).toBe(350);
+  });
+
+  it("falls back to global rate when commissionBasisPoints is absent from metadata", async () => {
+    // A session without commissionBasisPoints in metadata (pre-feature orders)
+    // must still compute fee using the global 5% rate.
+    const res = await post(10_000);
+    expect(res.status).toBe(200);
+    // 5% of $100 = $5 = 500 cents
+    expect(insertedOrderVals.current.applicationFeeCents).toBe(500);
+    // commissionBasisPoints field on the order should be null when not present in metadata
+    expect(insertedOrderVals.current.commissionBasisPoints).toBeNull();
+  });
+
+  it("records commissionBasisPoints=500 when metadata explicitly carries 500 bp", async () => {
+    const event = {
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_std_500",
+          payment_intent: "pi_std_1",
+          mode: "payment",
+          amount_total: 20_000,
+          customer_details: { email: "buyer@example.com", name: "Buyer" },
+          metadata: {
+            artworkId: "art-1",
+            tenantId: "tenant-1",
+            fulfillmentType: "SHIP",
+            commissionBasisPoints: "500",
+          },
+        },
+      },
+    };
+    const res = await webhookPOST(
+      new Request("http://localhost/api/stripe/webhook", {
+        method: "POST",
+        body: JSON.stringify(event),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(insertedOrderVals.current.applicationFeeCents).toBe(1_000); // 5% of $200
+    expect(insertedOrderVals.current.commissionBasisPoints).toBe(500);
+  });
 });
