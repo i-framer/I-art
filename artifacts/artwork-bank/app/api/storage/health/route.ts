@@ -61,7 +61,7 @@ export async function GET() {
       const result = await blobPut(
         writeProbePathname,
         new Blob(["health-check"], { type: "text/plain" }),
-        { access: "public", contentType: "text/plain", addRandomSuffix: false },
+        { access: "private", contentType: "text/plain", addRandomSuffix: false },
       );
       // Best-effort delete — don't let a delete failure mask a successful write.
       blobDel(result.url).catch(() => undefined);
