@@ -20,9 +20,7 @@ import * as path from "node:path";
 void (async () => {
   // Dynamic import so we can vary MTIME_TRUNCATION_TOLERANCE_MS via env
   // without module-level caching issues.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { consumeProbeCache, PROBE_CACHE_SENTINEL, MTIME_TRUNCATION_TOLERANCE_MS } =
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (await import("./probe-cache")) as any;
 
   // ── Identical mtime scenario to the primary meta-test ──────────────────────

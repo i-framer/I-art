@@ -8,7 +8,6 @@ import { describe, it, expect } from "vitest";
 import {
   calcApplicationFeeForTenant,
   PLATFORM_FEE_PERCENT,
-  PLATFORM_FEE_PERCENT_DEFAULT,
 } from "@/lib/stripe";
 
 describe("calcApplicationFeeForTenant (Task #217)", () => {

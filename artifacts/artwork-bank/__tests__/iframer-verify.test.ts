@@ -5,7 +5,7 @@
  * Integration tests for verifyIFramerPremium are skipped when
  * IFRAMER_VERIFY_DB_URL is not set.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   normaliseIFramerUrl,
   isIFramerVerifyConfigured,

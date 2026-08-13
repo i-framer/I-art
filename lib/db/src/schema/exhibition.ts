@@ -5,7 +5,6 @@ import {
   integer,
   timestamp,
   date,
-  boolean,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { tenantsTable } from "./tenant";

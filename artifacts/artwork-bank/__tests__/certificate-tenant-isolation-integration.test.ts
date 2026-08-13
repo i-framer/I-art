@@ -149,7 +149,6 @@ describeIntegration("certificate tenant isolation (Task #83)", () => {
     const tenantA = await createTenant();
     const tenantB = await createTenant();
     const artworkB = await createArtwork(tenantB); // belongs to B
-    const year = new Date().getFullYear();
 
     // Trying to create a cert for tenantA but using tenantB's artworkId:
     // The issueCertificate action verifies the artwork belongs to the session
