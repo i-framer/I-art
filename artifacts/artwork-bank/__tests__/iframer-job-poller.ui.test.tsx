@@ -526,4 +526,76 @@ describe("IFramerJobPoller", () => {
     });
     expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
   });
+
+  // ── Counter reset: wrapper state drives false, external call re-arms true ──
+
+  it("resets the poll counter when wrapper state drives isPending false then an external re-arm flips it back to true", () => {
+    /**
+     * Closest simulation of the real parent-component lifecycle:
+     *
+     *   Phase 1 – "pending":  isPending=true  → poller runs; after 2 ticks the
+     *              mockRefresh side-effect sets internal state (jobArrived=true)
+     *              which synchronously re-renders with isPending=false.
+     *   Phase 2 – "arrived":  isPending=false → poller stops; driven by React
+     *              state inside the wrapper (not an external rerender prop).
+     *   Phase 3 – "reset":    external rerender passes forceReset=true → the
+     *              wrapper overrides jobArrived and returns isPending=true so the
+     *              poller re-arms (simulates an error clearing the job ID).
+     *
+     * Key invariant: run 2 must receive a FRESH MAX_POLLS budget — it must not
+     * carry forward the 2 ticks already consumed in run 1.
+     */
+    let refreshCount = 0;
+
+    function OrderDetailWrapper({ forceReset }: { forceReset: boolean }) {
+      const [jobArrived, setJobArrived] = useState(false);
+
+      // After the second tick mockRefresh drives jobArrived=true (isPending=false).
+      // On forceReset the wrapper overrides that state so isPending flips back.
+      mockRefresh.mockImplementation(() => {
+        refreshCount++;
+        if (refreshCount >= 2) {
+          setJobArrived(true);
+        }
+      });
+
+      // forceReset overrides the arrived state so the poller re-arms.
+      const isPending = forceReset ? true : !jobArrived;
+      return <IFramerJobPoller isPending={isPending} />;
+    }
+
+    const { rerender } = render(<OrderDetailWrapper forceReset={false} />);
+
+    // Phase 1: two ticks fire; the second sets jobArrived=true inside act(),
+    // causing a synchronous re-render with isPending=false.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 2);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(2);
+
+    // Phase 2: confirm no further ticks fire while isPending=false.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 3);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(2);
+
+    // Reset counters so run 2 can be measured in isolation.
+    mockRefresh.mockClear();
+    refreshCount = 0;
+
+    // Phase 3: external re-arm — forceReset overrides jobArrived → isPending=true.
+    rerender(<OrderDetailWrapper forceReset={true} />);
+
+    // Run 2 must receive a full MAX_POLLS budget (counter was reset, not 2 fewer).
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * MAX_POLLS);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
+
+    // Confirm the auto-stop still works: no ticks beyond MAX_POLLS.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 5);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
+  });
 });
