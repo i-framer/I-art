@@ -21,6 +21,7 @@ import {
   artworksTable,
   ordersTable,
   orderItemsTable,
+  stripeAlertsTable,
 } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -59,6 +60,7 @@ let seq = 0;
 const createdTenantIds: string[] = [];
 const createdArtworkIds: string[] = [];
 const createdOrderIds: string[] = [];
+const createdAlertEventIds: string[] = [];
 
 function uid() { return `${randomUUID()}-wh-${RUN}-${++seq}`; }
 
@@ -92,6 +94,9 @@ async function cleanup() {
   }
   for (const id of createdTenantIds.splice(0)) {
     await db.delete(tenantsTable).where(eq(tenantsTable.id, id)).catch(() => {});
+  }
+  for (const eventId of createdAlertEventIds.splice(0)) {
+    await db.delete(stripeAlertsTable).where(eq(stripeAlertsTable.stripeEventId, eventId)).catch(() => {});
   }
 }
 
@@ -215,11 +220,13 @@ describeIntegration("Stripe webhook — checkout.session.completed — real-DB i
     if (orders[0]) createdOrderIds.push(orders[0].id);
   });
 
-  it("missing metadata → early return; no order inserted", async () => {
+  it("missing metadata → early return; no order inserted; durable alert created", async () => {
     const tenantId = await createTenant();
     const sessionId = `cs_test_${uid()}`;
+    const eventId = `evt-${sessionId}`;
+    createdAlertEventIds.push(eventId);
     const noMetaEvent = {
-      id: `evt-${sessionId}`,
+      id: eventId,
       type: "checkout.session.completed",
       data: {
         object: {
@@ -233,26 +240,168 @@ describeIntegration("Stripe webhook — checkout.session.completed — real-DB i
     const res = await POST(makeRequest(noMetaEvent));
     expect(res.status).toBe(200);
 
+    // No order must be created.
     const orders = await db.select({ id: ordersTable.id })
       .from(ordersTable)
       .where(eq(ordersTable.tenantId, tenantId));
     expect(orders).toHaveLength(0);
+
+    // A durable alert row must exist so the paid session is never silent.
+    const alert = await db.query.stripeAlertsTable.findFirst({
+      where: eq(stripeAlertsTable.stripeEventId, eventId),
+    });
+    expect(alert).toBeDefined();
+    expect(alert?.eventType).toBe("checkout.session.completed");
+    expect(alert?.reason).toMatch(/missing required metadata/);
+    expect(alert?.reason).toMatch(sessionId);
   });
 
-  it("artwork tenant mismatch → early return; no order inserted", async () => {
+  it("artwork tenant mismatch → early return; no order inserted; durable alert created", async () => {
     const tenantA = await createTenant();
     const tenantB = await createTenant();
     const artworkId = await createArtwork(tenantA); // belongs to tenantA
     const sessionId = `cs_test_${uid()}`;
+    const eventId = `evt-${sessionId}`;
+    createdAlertEventIds.push(eventId);
     // Event claims artwork belongs to tenantB — integrity check should reject it.
-    const event = checkoutEvent(sessionId, artworkId, tenantB);
+    const event = { ...checkoutEvent(sessionId, artworkId, tenantB), id: eventId };
+
+    const res = await POST(makeRequest(event));
+    expect(res.status).toBe(200);
+
+    // No order must be created.
+    const orders = await db.select({ id: ordersTable.id })
+      .from(ordersTable)
+      .where(eq(ordersTable.stripeSessionId, sessionId));
+    expect(orders).toHaveLength(0);
+
+    // A durable alert row must exist so the paid session is never silent.
+    const alert = await db.query.stripeAlertsTable.findFirst({
+      where: eq(stripeAlertsTable.stripeEventId, eventId),
+    });
+    expect(alert).toBeDefined();
+    expect(alert?.eventType).toBe("checkout.session.completed");
+    expect(alert?.reason).toMatch(/artwork not found or tenant mismatch/);
+    expect(alert?.reason).toMatch(artworkId);
+    expect(alert?.reason).toMatch(sessionId);
+  });
+
+  it("missing artworkId only → no order; durable alert with artworkId=(missing)", async () => {
+    const tenantId = await createTenant();
+    const sessionId = `cs_test_${uid()}`;
+    const eventId = `evt-${sessionId}`;
+    createdAlertEventIds.push(eventId);
+    const event = {
+      id: eventId,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: sessionId, mode: "payment", amount_total: 50000,
+          metadata: { tenantId, fulfillmentType: "PICKUP" }, // artworkId absent
+          customer_details: { email: "buyer@example.com", name: "Test Buyer" },
+        },
+      },
+    };
 
     const res = await POST(makeRequest(event));
     expect(res.status).toBe(200);
 
     const orders = await db.select({ id: ordersTable.id })
-      .from(ordersTable)
-      .where(eq(ordersTable.stripeSessionId, sessionId));
+      .from(ordersTable).where(eq(ordersTable.stripeSessionId, sessionId));
     expect(orders).toHaveLength(0);
+
+    const alert = await db.query.stripeAlertsTable.findFirst({
+      where: eq(stripeAlertsTable.stripeEventId, eventId),
+    });
+    expect(alert).toBeDefined();
+    expect(alert?.reason).toMatch(/artworkId=\(missing\)/);
+  });
+
+  it("missing tenantId only → no order; durable alert with tenantId=(missing)", async () => {
+    const artworkId = await createArtwork(await createTenant());
+    const sessionId = `cs_test_${uid()}`;
+    const eventId = `evt-${sessionId}`;
+    createdAlertEventIds.push(eventId);
+    const event = {
+      id: eventId,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: sessionId, mode: "payment", amount_total: 50000,
+          metadata: { artworkId, fulfillmentType: "PICKUP" }, // tenantId absent
+          customer_details: { email: "buyer@example.com", name: "Test Buyer" },
+        },
+      },
+    };
+
+    const res = await POST(makeRequest(event));
+    expect(res.status).toBe(200);
+
+    const orders = await db.select({ id: ordersTable.id })
+      .from(ordersTable).where(eq(ordersTable.stripeSessionId, sessionId));
+    expect(orders).toHaveLength(0);
+
+    const alert = await db.query.stripeAlertsTable.findFirst({
+      where: eq(stripeAlertsTable.stripeEventId, eventId),
+    });
+    expect(alert).toBeDefined();
+    expect(alert?.reason).toMatch(/tenantId=\(missing\)/);
+  });
+
+  it("missing fulfillmentType only → no order; durable alert with fulfillmentType=(missing)", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+    const sessionId = `cs_test_${uid()}`;
+    const eventId = `evt-${sessionId}`;
+    createdAlertEventIds.push(eventId);
+    const event = {
+      id: eventId,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: sessionId, mode: "payment", amount_total: 50000,
+          metadata: { artworkId, tenantId }, // fulfillmentType absent
+          customer_details: { email: "buyer@example.com", name: "Test Buyer" },
+        },
+      },
+    };
+
+    const res = await POST(makeRequest(event));
+    expect(res.status).toBe(200);
+
+    const orders = await db.select({ id: ordersTable.id })
+      .from(ordersTable).where(eq(ordersTable.stripeSessionId, sessionId));
+    expect(orders).toHaveLength(0);
+
+    const alert = await db.query.stripeAlertsTable.findFirst({
+      where: eq(stripeAlertsTable.stripeEventId, eventId),
+    });
+    expect(alert).toBeDefined();
+    expect(alert?.reason).toMatch(/fulfillmentType=\(missing\)/);
+  });
+
+  it("duplicate invalid event → idempotent; only one alert row created", async () => {
+    const sessionId = `cs_test_${uid()}`;
+    const eventId = `evt-${sessionId}`;
+    createdAlertEventIds.push(eventId);
+    const event = {
+      id: eventId,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: sessionId, mode: "payment", amount_total: 50000,
+          metadata: {}, // all missing
+          customer_details: { email: "buyer@example.com" },
+        },
+      },
+    };
+
+    await POST(makeRequest(event));
+    await POST(makeRequest(event)); // second delivery — Stripe retry simulation
+
+    const alerts = await db.select({ id: stripeAlertsTable.id })
+      .from(stripeAlertsTable)
+      .where(eq(stripeAlertsTable.stripeEventId, eventId));
+    expect(alerts).toHaveLength(1); // onConflictDoNothing deduplicates
   });
 });

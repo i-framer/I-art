@@ -82,7 +82,7 @@ export async function POST(request: Request) {
       if (session.mode === "subscription") {
         await handleSubscriptionCheckoutCompleted(session, event.id, event.type);
       } else {
-        await handleCheckoutCompleted(session);
+        await handleCheckoutCompleted(session, event.id);
       }
     } else if (event.type === "checkout.session.expired") {
       await handleCheckoutExpired(event.data.object as Stripe.Checkout.Session);
@@ -640,11 +640,34 @@ async function handleInvoicePaymentFailed(
   }
 }
 
-async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
+async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId: string) {
   const { artworkId, tenantId, fulfillmentType } = session.metadata ?? {};
+  const customerId = typeof session.customer === "string" ? session.customer : null;
 
   if (!artworkId || !tenantId || !fulfillmentType) {
-    console.error("Missing metadata in session:", session.id);
+    const reason =
+      `checkout.session.completed missing required metadata — ` +
+      `sessionId=${session.id} ` +
+      `artworkId=${artworkId ?? "(missing)"} ` +
+      `tenantId=${tenantId ?? "(missing)"} ` +
+      `fulfillmentType=${fulfillmentType ?? "(missing)"}`;
+    console.error("[webhook]", reason);
+    // Persist a durable alert so a paid session can never vanish silently.
+    // Stripe treats our 200 as successful delivery and will not retry, so
+    // the alert row is the only operator-visible record of this event.
+    try {
+      await db
+        .insert(stripeAlertsTable)
+        .values({
+          stripeEventId: eventId,
+          eventType: "checkout.session.completed",
+          customerId,
+          reason,
+        })
+        .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId });
+    } catch (dbErr) {
+      console.error("[webhook] Failed to persist metadata-missing alert:", dbErr);
+    }
     return;
   }
 
@@ -662,9 +685,26 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     ),
   });
   if (!artwork) {
-    console.error(
-      `Webhook integrity error: artwork ${artworkId} not found for tenant ${tenantId}`,
-    );
+    const reason =
+      `Webhook integrity error: artwork not found or tenant mismatch — ` +
+      `sessionId=${session.id} artworkId=${artworkId} tenantId=${tenantId}`;
+    console.error("[webhook]", reason);
+    // Same durable-alert approach: 200 is intentional (Stripe delivered the event
+    // successfully; the data is simply inconsistent). Returning 5xx would just
+    // cause Stripe to re-deliver the same malformed event repeatedly.
+    try {
+      await db
+        .insert(stripeAlertsTable)
+        .values({
+          stripeEventId: eventId,
+          eventType: "checkout.session.completed",
+          customerId,
+          reason,
+        })
+        .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId });
+    } catch (dbErr) {
+      console.error("[webhook] Failed to persist artwork-mismatch alert:", dbErr);
+    }
     return;
   }
 
