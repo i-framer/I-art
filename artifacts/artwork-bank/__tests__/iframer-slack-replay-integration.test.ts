@@ -204,6 +204,34 @@ describeIntegration("replayFailedIframerSlackAlerts — real-DB integration", ()
     expect(row?.iframerSlackFailedPayload).toBe(VALID_PAYLOAD);
   });
 
+  it("malformed payload: failed incremented; iframerSlackPostFailed and iframerSlackFailedPayload are preserved", async () => {
+    const failedAt = new Date(Date.now() - 60000);
+    const MALFORMED_PAYLOAD = "not-valid-json{{{";
+    const tenantId = await createTenant({
+      iframerSlackPostFailed: failedAt,
+      iframerSlackFailedPayload: MALFORMED_PAYLOAD,
+    });
+
+    const result = await replayFailedIframerSlackAlerts();
+
+    // A corrupted payload must count as failed, not skipped.
+    expect(result.failed).toBeGreaterThanOrEqual(1);
+
+    // No Slack call should have been attempted — parse failed before the call.
+    expect(sendIframerAccountSlackNotificationMock).not.toHaveBeenCalled();
+
+    const row = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, tenantId),
+    });
+    // The failure timestamp must be preserved exactly — the catch block must
+    // not touch iframerSlackPostFailed, so a future schema fix can recover.
+    expect(row?.iframerSlackPostFailed).not.toBeNull();
+    expect(row?.iframerSlackPostFailed!.getTime()).toBe(failedAt.getTime());
+    // The raw payload must also remain intact so a future operator can inspect
+    // or repair it without data loss.
+    expect(row?.iframerSlackFailedPayload).toBe(MALFORMED_PAYLOAD);
+  });
+
   it("missing SLACK_BILLING_ALERTS_CHANNEL: tenant is skipped and iframerSlackPostFailed is preserved", async () => {
     const failedAt = new Date(Date.now() - 60000);
     const tenantId = await createTenant({
