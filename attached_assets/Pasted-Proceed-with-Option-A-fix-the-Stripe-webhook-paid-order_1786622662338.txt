@@ -1,0 +1,98 @@
+Proceed with Option A: fix the Stripe webhook paid-order silent-discard payment integrity gap.
+
+This is now the highest-priority task.
+
+Problem:
+A `checkout.session.completed` event can receive missing or mismatched `artworkId`, `tenantId`, or `artworkTenantId`. The current webhook returns HTTP 200 without creating the order, without triggering a Stripe retry, and without creating a durable operator alert.
+
+Because Stripe treats HTTP 200 as successful delivery, the payment can be collected while the order is never fulfilled.
+
+Implement the minimum safe fix.
+
+Requirements:
+
+1. Inspect the complete `checkout.session.completed` webhook flow before modifying it.
+2. Identify every branch where:
+   - `artworkId` is missing
+   - `tenantId` is missing
+   - `artworkTenantId` is missing
+   - artwork cannot be found
+   - artwork tenant does not match
+   - tenant validation fails
+   - metadata is malformed or inconsistent
+   and where the current behavior silently returns HTTP 200.
+
+3. For each confirmed payment-integrity failure path:
+   - Do NOT create an order.
+   - Create a durable `stripeAlertsTable` record using the existing alert pattern.
+   - Include enough diagnostic information for an operator to identify the affected Stripe checkout/payment/event.
+   - Never store secrets or sensitive payment credentials.
+   - Preserve the Stripe event/payment identifiers needed for reconciliation.
+
+4. Determine whether returning HTTP 200 is intentional for these business-validation failures.
+   - Do not blindly change all failures to 4xx/5xx.
+   - Follow the existing Stripe webhook idempotency/retry design.
+   - The important requirement is that the payment can no longer disappear silently.
+   - If a non-2xx response is safer for a specific transient failure, explain why before changing the behavior.
+
+5. Reuse the existing `stripeAlertsTable` and alert insertion pattern. Do not create a second alert system.
+
+6. Add automated tests covering at minimum:
+   - Missing `artworkId`
+   - Missing `tenantId`
+   - Missing `artworkTenantId`
+   - Artwork/tenant mismatch
+   - Valid metadata still creates the order
+   - Invalid metadata creates a durable Stripe alert
+   - Invalid metadata does NOT create an order
+   - Duplicate webhook delivery remains idempotent
+   - Existing successful Stripe checkout behavior is unchanged
+
+7. Run:
+   - Relevant Stripe webhook tests
+   - Integration tests
+   - Typecheck
+   - Lint
+   - Build
+
+8. Review the final diff and remove only genuinely unnecessary changes.
+
+IMPORTANT:
+- Do not modify Vercel Blob.
+- Do not modify Neon architecture.
+- Do not change unrelated billing behavior.
+- Do not weaken Stripe webhook signature verification.
+- Do not invent Stripe credentials.
+- Do not make production dashboard changes.
+- Do not silently swallow payment-integrity failures.
+- Do not create an order when artwork/tenant validation fails.
+
+If you discover that the correct behavior requires a product/business decision about whether Stripe should receive HTTP 200 or a retry-triggering status, STOP and explain the decision required rather than guessing.
+
+Otherwise, implement and test the fix automatically.
+
+FINAL REPORT:
+
+COMPLETED:
+- ...
+
+PAYMENT-INTEGRITY FIX:
+- ...
+
+ALERT BRANCHES:
+- ...
+
+TESTS:
+- ...
+
+BUILD/LINT/TYPECHECK:
+- ...
+
+HUMAN ACTION REQUIRED:
+- None / exact action required
+
+REMAINING RISKS:
+- ...
+
+NEXT PRIORITY:
+- Identify the next highest-priority unfinished task after this fix.
