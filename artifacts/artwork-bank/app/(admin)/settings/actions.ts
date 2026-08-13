@@ -534,8 +534,7 @@ export async function verifyIFramerAccount(formData: FormData) {
   // Enforce one-tenant-per-i-Framer-account: check if this accountId is already
   // linked to a different tenant.
   const existing = await db.query.tenantsTable.findFirst({
-    where: (t, { eq: eqOp, ne }) =>
-      // Using raw SQL because drizzle doesn't support AND(col=X, col!=Y) via helpers elegantly
+    where: (t, { ne }) =>
       and(eq(t.iframerAccountId, accountId), ne(t.id, session.tenantId)),
     columns: { id: true },
   });

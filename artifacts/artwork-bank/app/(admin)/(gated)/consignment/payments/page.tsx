@@ -15,7 +15,6 @@ import {
   consignmentItemsTable,
   artistPaymentsTable,
   representedArtistsTable,
-  tenantsTable,
 } from "@workspace/db";
 import { eq, and, sum, sql, asc } from "drizzle-orm";
 import { ChevronLeft } from "lucide-react";

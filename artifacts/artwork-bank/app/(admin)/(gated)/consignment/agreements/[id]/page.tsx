@@ -12,7 +12,6 @@ import {
   consignmentSalesTable,
   representedArtistsTable,
   artworksTable,
-  tenantsTable,
 } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
 import { ChevronLeft, PackageCheck, Plus, DollarSign } from "lucide-react";
@@ -71,7 +70,7 @@ export default async function AgreementDetailPage({
 
   const today = new Date().toISOString().split("T")[0];
 
-  const inStock = items.filter((i) => i.item.status === "IN_STOCK");
+  const _inStock = items.filter((i) => i.item.status === "IN_STOCK"); // reserved for future in-stock count display
   const salesTotal = items
     .filter((i) => i.sale)
     .reduce((sum, i) => sum + (i.sale?.salePriceCents ?? 0), 0);

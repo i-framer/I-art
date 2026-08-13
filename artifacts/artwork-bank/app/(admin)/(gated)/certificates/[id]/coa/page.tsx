@@ -352,7 +352,8 @@ export default async function CertificateCOAPage({
 
           {/* QR code */}
           <div className="qr-section">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {/* img is intentional here — print/PDF layout requires native img */}
+            {/* eslint-disable-line */}
             <img src={qrUrl} alt="Artwork page QR code" />
             <div className="qr-caption">
               <strong style={{ color: "#1c1917" }}>Scan to view artwork online</strong>

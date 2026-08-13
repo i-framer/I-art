@@ -9,7 +9,6 @@ import { db } from "@workspace/db";
 import {
   exhibitionShowsTable,
   exhibitionPlacementsTable,
-  exhibitionGuestsTable,
   tenantsTable,
 } from "@workspace/db";
 import { eq, desc, count } from "drizzle-orm";

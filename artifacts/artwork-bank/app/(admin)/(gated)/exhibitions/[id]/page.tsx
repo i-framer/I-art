@@ -15,7 +15,6 @@ import {
   exhibitionGuestsTable,
   exhibitionMilestonesTable,
   artworksTable,
-  tenantsTable,
 } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
 import { ChevronLeft, Plus, Trash2, CheckCircle, Circle } from "lucide-react";

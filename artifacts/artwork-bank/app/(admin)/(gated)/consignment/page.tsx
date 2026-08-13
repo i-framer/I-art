@@ -13,7 +13,7 @@ import {
   tenantsTable,
 } from "@workspace/db";
 import { eq, desc, count } from "drizzle-orm";
-import { Handshake, Plus, AlertCircle } from "lucide-react";
+import { Handshake, Plus } from "lucide-react";
 
 export const metadata: Metadata = { title: "Consignment" };
 

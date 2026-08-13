@@ -148,7 +148,7 @@ export default async function HangListPrintPage({
                         </tr>
                       </thead>
                       <tbody>
-                        {placements.map(({ placement, title, sku, medium, heightCm, widthCm, price }) => {
+                        {placements.map(({ placement, title, sku, medium, heightCm, widthCm }) => {
                           counter++;
                           const dims = widthCm && heightCm ? `${widthCm} × ${heightCm} cm` : "";
                           return (

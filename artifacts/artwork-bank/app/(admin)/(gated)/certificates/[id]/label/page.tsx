@@ -227,7 +227,7 @@ export default async function ArtworkLabelPage({
               <p className="label-cert">{cert.certificateNumber}</p>
             </div>
             <div className="label-qr">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
+              {/* img is intentional here — print layout; eslint-disable-line */}
               <img src={qrUrl} alt="Artwork QR code" />
             </div>
           </div>

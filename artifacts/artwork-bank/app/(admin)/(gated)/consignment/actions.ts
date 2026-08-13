@@ -38,7 +38,7 @@ async function getSessionAndTenant() {
  * Artist amount = floor(salePriceCents * artistPct / 100).
  * Gallery amount = salePriceCents - artistAmount.
  */
-export function calculateSplit(
+function calculateSplit(
   salePriceCents: number,
   artistPct: number,
 ): { artistAmountCents: number; galleryAmountCents: number } {
