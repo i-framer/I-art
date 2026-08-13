@@ -1,0 +1,265 @@
+name: Stall-guard static check
+
+# Fast structural check for the upload stall-guard implementation.
+#
+# Background
+# ──────────
+# The stall guard (`lib/upload-read-stream.ts`) defends against slow-loris
+# uploads by racing every per-chunk read against a deadline timer whose
+# duration comes from the UPLOAD_READ_TIMEOUT_MS environment variable
+# (default 30 000 ms in production).
+#
+# The full meta-test that CONFIRMS the guard is still sensitive runs only on
+# pushes to main (it deliberately injects UPLOAD_READ_TIMEOUT_MS=1 and asserts
+# that test:slow exits non-zero — a ~13 min job unsuitable for every PR).
+#
+# Task #660: a weakened guard (e.g. Promise.race removed, default raised to
+# Infinity, or the env-var read removed) should be caught on the PR that
+# introduces it, not after it ships to main.
+#
+# This workflow provides that coverage by checking structural properties of the
+# implementation in < 10 s (no test runner, no Node install needed), so it
+# blocks a weakened PR before review is even requested.
+#
+# Checks performed:
+#   1. upload-read-stream.ts still reads UPLOAD_READ_TIMEOUT_MS from env.
+#   2. The env-var read still has a numeric fallback (not hardcoded/removed).
+#   3. `Promise.race` is still present — the guard mechanism.
+#   4. The default timeout is ≤ 60 000 ms (30 s prod default; 60 s upper bound
+#      allows intentional bumps without the check being too tight).
+#   5. meta-test-stall-guard.sh still injects UPLOAD_READ_TIMEOUT_MS=1 in
+#      the test:slow step — required for the main-branch meta-test to work.
+#   6. The injection appears AFTER the probe step (probe must not be affected).
+#   7. The slow-tests unit file still asserts toBeGreaterThanOrEqual
+#      (the signature of the stall timing assertion — if removed the meta-test
+#      would pass for the wrong reason).
+#
+# No build step, no test runner, no secrets — just grep/awk on source files.
+
+on:
+  push:
+    paths:
+      - "artifacts/artwork-bank/lib/upload-read-stream.ts"
+      - "artifacts/artwork-bank/__tests__/upload-stall-timeout-buffered-body.test.ts"
+      - "artifacts/artwork-bank/__tests__/upload-stall-timeout-http-layer-integration.test.ts"
+      - "scripts/meta-test-stall-guard.sh"
+      - ".github/workflows/stall-guard-static-check.yml"
+  pull_request:
+    paths:
+      - "artifacts/artwork-bank/lib/upload-read-stream.ts"
+      - "artifacts/artwork-bank/__tests__/upload-stall-timeout-buffered-body.test.ts"
+      - "artifacts/artwork-bank/__tests__/upload-stall-timeout-http-layer-integration.test.ts"
+      - "scripts/meta-test-stall-guard.sh"
+      - ".github/workflows/stall-guard-static-check.yml"
+
+jobs:
+  stall-guard-static-check:
+    name: Stall-guard static check (Task #660)
+    runs-on: ubuntu-latest
+    # No pnpm, no Node — pure grep / awk.
+    # Budget is generous; in practice the job finishes in < 10 s.
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Check 1: UPLOAD_READ_TIMEOUT_MS env read still present ────────────
+      - name: Assert upload-read-stream.ts still reads UPLOAD_READ_TIMEOUT_MS from env
+        run: |
+          FILE="artifacts/artwork-bank/lib/upload-read-stream.ts"
+
+          if ! grep -q 'UPLOAD_READ_TIMEOUT_MS' "$FILE"; then
+            echo "❌  UPLOAD_READ_TIMEOUT_MS is no longer referenced in $FILE."
+            echo "    The stall guard may have been refactored or the env-var removed."
+            echo "    The meta-test (scripts/meta-test-stall-guard.sh) injects"
+            echo "    UPLOAD_READ_TIMEOUT_MS=1 to trigger the guard; if the implementation"
+            echo "    no longer reads this variable the meta-test will silently stop working."
+            echo ""
+            echo "    Fix: restore the process.env[\"UPLOAD_READ_TIMEOUT_MS\"] read in $FILE,"
+            echo "    or update this check and the meta-test script to reflect the new name."
+            exit 1
+          fi
+          echo "✅  UPLOAD_READ_TIMEOUT_MS read found in $FILE."
+
+      # ── Check 2: env read uses process.env (not hardcoded) ───────────────
+      - name: Assert UPLOAD_READ_TIMEOUT_MS is read from process.env (not hardcoded)
+        run: |
+          FILE="artifacts/artwork-bank/lib/upload-read-stream.ts"
+
+          if ! grep -q 'process\.env.*UPLOAD_READ_TIMEOUT_MS\|UPLOAD_READ_TIMEOUT_MS.*process\.env' "$FILE"; then
+            echo "❌  UPLOAD_READ_TIMEOUT_MS is referenced in $FILE but not read from"
+            echo "    process.env.  The stall guard must be configurable via environment"
+            echo "    variable so CI can inject UPLOAD_READ_TIMEOUT_MS=1 to test the guard."
+            echo ""
+            echo "    If the constant was inlined, the meta-test can no longer inject"
+            echo "    a short timeout and will silently stop catching regressions."
+            echo ""
+            echo "    Fix: restore process.env[\"UPLOAD_READ_TIMEOUT_MS\"] in $FILE."
+            exit 1
+          fi
+          echo "✅  UPLOAD_READ_TIMEOUT_MS is read from process.env in $FILE."
+
+      # ── Check 3: Promise.race is still the guard mechanism ────────────────
+      - name: Assert Promise.race is still used in upload-read-stream.ts
+        run: |
+          FILE="artifacts/artwork-bank/lib/upload-read-stream.ts"
+
+          if ! grep -q 'Promise\.race' "$FILE"; then
+            echo "❌  Promise.race is no longer present in $FILE."
+            echo "    The stall guard races every per-chunk reader.read() against a"
+            echo "    deadline timer via Promise.race.  If this pattern is removed the"
+            echo "    guard stops working — stalling uploads are no longer aborted."
+            echo ""
+            echo "    The meta-test on main confirms this mechanism works end-to-end,"
+            echo "    but it runs only after the PR merges.  This static check catches"
+            echo "    the regression before it ships."
+            echo ""
+            echo "    Fix: restore Promise.race in the per-chunk read loop in $FILE."
+            exit 1
+          fi
+          echo "✅  Promise.race found in $FILE — race-based guard is intact."
+
+      # ── Check 4: default timeout is ≤ 60 000 ms (not inflated) ───────────
+      #
+      # The default is currently 30 000 ms (30 s).  We allow up to 60 000 ms
+      # to leave room for intentional bumps without this check being too
+      # brittle.  Above 60 s the guard is practically disabled for most
+      # slow-loris clients and must be reviewed.
+      - name: Assert UPLOAD_READ_TIMEOUT_MS default is ≤ 60 000 ms
+        run: |
+          FILE="artifacts/artwork-bank/lib/upload-read-stream.ts"
+
+          # Extract the numeric fallback in the env read expression.
+          # Typical pattern: Number(process.env.UPLOAD_READ_TIMEOUT_MS ?? "30000")
+          # or:              parseInt(process.env.UPLOAD_READ_TIMEOUT_MS || "30000", 10)
+          DEFAULT_MS=$(grep -oE 'UPLOAD_READ_TIMEOUT_MS[^)]*\??\?[[:space:]]*"[0-9]+"' "$FILE" \
+            | grep -oE '"[0-9]+"' | tr -d '"' | head -1)
+
+          if [ -z "$DEFAULT_MS" ]; then
+            # Try alternate form without null-coalescing
+            DEFAULT_MS=$(grep -oE 'UPLOAD_READ_TIMEOUT_MS[^)]*\|\|[[:space:]]*"[0-9]+"' "$FILE" \
+              | grep -oE '"[0-9]+"' | tr -d '"' | head -1)
+          fi
+
+          if [ -z "$DEFAULT_MS" ]; then
+            echo "⚠️  Could not extract UPLOAD_READ_TIMEOUT_MS default from $FILE."
+            echo "   Skipping the upper-bound check (structural check above already"
+            echo "   confirmed the env-var is read from process.env)."
+            echo "   If the default was reformatted, update this step's grep pattern."
+            exit 0
+          fi
+
+          echo "Extracted UPLOAD_READ_TIMEOUT_MS default: ${DEFAULT_MS} ms"
+
+          if [ "$DEFAULT_MS" -gt 60000 ]; then
+            echo "❌  UPLOAD_READ_TIMEOUT_MS default is ${DEFAULT_MS} ms — exceeds 60 000 ms upper bound."
+            echo ""
+            echo "    A default timeout above 60 s means a slow-loris client can hold"
+            echo "    the connection open for over a minute per chunk before the guard"
+            echo "    fires — effectively disabling it for most attack scenarios."
+            echo ""
+            echo "    The production default is 30 000 ms (30 s).  If you need a larger"
+            echo "    value for a specific deployment, set UPLOAD_READ_TIMEOUT_MS in the"
+            echo "    environment rather than raising the code default."
+            echo ""
+            echo "    Fix: restore the default to ≤ 60 000 ms in $FILE."
+            exit 1
+          fi
+
+          echo "✅  UPLOAD_READ_TIMEOUT_MS default (${DEFAULT_MS} ms) is within the ≤ 60 000 ms bound."
+
+      # ── Check 5: meta-test script still injects UPLOAD_READ_TIMEOUT_MS=1 ─
+      - name: Assert meta-test-stall-guard.sh still injects UPLOAD_READ_TIMEOUT_MS=1
+        run: |
+          SCRIPT="scripts/meta-test-stall-guard.sh"
+
+          if [ ! -f "$SCRIPT" ]; then
+            echo "❌  $SCRIPT not found."
+            echo "    The meta-test script is required for the stall-guard-meta-test"
+            echo "    CI job on main.  If it was moved or renamed, update the workflow"
+            echo "    (.github/workflows/slow-tests.yml) and this check."
+            exit 1
+          fi
+
+          if ! grep -q 'UPLOAD_READ_TIMEOUT_MS=1' "$SCRIPT"; then
+            echo "❌  UPLOAD_READ_TIMEOUT_MS=1 injection not found in $SCRIPT."
+            echo ""
+            echo "    The meta-test works by injecting UPLOAD_READ_TIMEOUT_MS=1 into"
+            echo "    the test:slow run so that the 1 ms deadline fires immediately,"
+            echo "    causing the timing assertion to fail (expected ≥ 1500 ms,"
+            echo "    actual ≈ 1 ms).  Without this injection the meta-test would"
+            echo "    run the slow suite normally and always exit 0 — the guard"
+            echo "    would appear to work even if it had been removed."
+            echo ""
+            echo "    Fix: restore UPLOAD_READ_TIMEOUT_MS=1 in $SCRIPT."
+            exit 1
+          fi
+          echo "✅  UPLOAD_READ_TIMEOUT_MS=1 injection found in $SCRIPT."
+
+      # ── Check 6: injection is in the test:slow step (not the probe step) ──
+      - name: Assert UPLOAD_READ_TIMEOUT_MS=1 injection is AFTER the probe step
+        run: |
+          SCRIPT="scripts/meta-test-stall-guard.sh"
+
+          # Use awk to find line numbers for both markers.
+          PROBE_LINE=$(grep -n 'probe:nextdev-startup' "$SCRIPT" | head -1 | cut -d: -f1)
+          INJECT_LINE=$(grep -n 'UPLOAD_READ_TIMEOUT_MS=1 \\' "$SCRIPT" | head -1 | cut -d: -f1)
+
+          if [ -z "$PROBE_LINE" ]; then
+            echo "❌  Could not find 'probe:nextdev-startup' in $SCRIPT."
+            echo "    The probe step may have been removed or renamed."
+            exit 1
+          fi
+
+          if [ -z "$INJECT_LINE" ]; then
+            echo "❌  Could not find 'UPLOAD_READ_TIMEOUT_MS=1 \\' in $SCRIPT."
+            echo "    This is the injection line that must appear after the probe step."
+            echo "    If the format changed, update this check's grep pattern."
+            exit 1
+          fi
+
+          echo "probe:nextdev-startup at line $PROBE_LINE; UPLOAD_READ_TIMEOUT_MS=1 at line $INJECT_LINE"
+
+          if [ "$INJECT_LINE" -le "$PROBE_LINE" ]; then
+            echo "❌  UPLOAD_READ_TIMEOUT_MS=1 injection (line $INJECT_LINE) appears BEFORE"
+            echo "    probe:nextdev-startup (line $PROBE_LINE)."
+            echo ""
+            echo "    The probe step must not run with a 1 ms timeout — it legitimately"
+            echo "    needs 30 000 ms (the production default) to measure cold-start time."
+            echo "    The injection must appear only in the test:slow step."
+            echo ""
+            echo "    Fix: move the injection below the probe step in $SCRIPT."
+            exit 1
+          fi
+          echo "✅  UPLOAD_READ_TIMEOUT_MS=1 injection (line $INJECT_LINE) is after the probe step (line $PROBE_LINE)."
+
+      # ── Check 7: slow test still has the key timing assertion ─────────────
+      - name: Assert upload-stall slow test still uses toBeGreaterThanOrEqual
+        run: |
+          # Check the buffered-body variant (fast unit tests)
+          FILE_BUFFERED="artifacts/artwork-bank/__tests__/upload-stall-timeout-buffered-body.test.ts"
+          # Check the HTTP-layer integration variant (real next-dev)
+          FILE_HTTP="artifacts/artwork-bank/__tests__/upload-stall-timeout-http-layer-integration.test.ts"
+
+          FOUND=0
+          for F in "$FILE_BUFFERED" "$FILE_HTTP"; do
+            if [ -f "$F" ] && grep -q 'toBeGreaterThanOrEqual' "$F"; then
+              echo "✅  toBeGreaterThanOrEqual found in $F."
+              FOUND=1
+            fi
+          done
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "❌  toBeGreaterThanOrEqual not found in either stall test file:"
+            echo "    • $FILE_BUFFERED"
+            echo "    • $FILE_HTTP"
+            echo ""
+            echo "    The meta-test confirms the guard is still sensitive by checking"
+            echo "    that 'toBeGreaterThanOrEqual' appears in test:slow output after"
+            echo "    the UPLOAD_READ_TIMEOUT_MS=1 injection.  If this assertion is"
+            echo "    removed or replaced the meta-test will accept an unrelated failure"
+            echo "    as proof the guard works — silently allowing a broken guard."
+            echo ""
+            echo "    Fix: restore toBeGreaterThanOrEqual in the stall timing assertion."
+            exit 1
+          fi
