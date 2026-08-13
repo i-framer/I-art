@@ -174,4 +174,37 @@ describeIntegration("replayFailedIframerSlackAlerts — real-DB integration", ()
     // Result may have counts from other suites if running in parallel, so
     // just assert the call was not made for our tenant.
   });
+
+  it("missing SLACK_BILLING_ALERTS_CHANNEL: tenant is skipped and iframerSlackPostFailed is preserved", async () => {
+    const failedAt = new Date(Date.now() - 60000);
+    const tenantId = await createTenant({
+      iframerSlackPostFailed: failedAt,
+      iframerSlackFailedPayload: VALID_PAYLOAD,
+    });
+
+    // Temporarily remove the channel env var so the guard fires.
+    const saved = process.env.SLACK_BILLING_ALERTS_CHANNEL;
+    delete process.env.SLACK_BILLING_ALERTS_CHANNEL;
+
+    let result: { replayed: number; failed: number; skipped: number };
+    try {
+      result = await replayFailedIframerSlackAlerts();
+    } finally {
+      // Always restore so subsequent tests are unaffected.
+      process.env.SLACK_BILLING_ALERTS_CHANNEL = saved;
+    }
+
+    // The tenant must be counted as skipped, not replayed or failed.
+    expect(result.skipped).toBeGreaterThanOrEqual(1);
+
+    // No Slack call should have been made for this tenant.
+    expect(sendIframerAccountSlackNotificationMock).not.toHaveBeenCalled();
+
+    // The existing failure timestamp must be untouched.
+    const row = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, tenantId),
+    });
+    expect(row?.iframerSlackPostFailed).not.toBeNull();
+    expect(row?.iframerSlackPostFailed!.getTime()).toBe(failedAt.getTime());
+  });
 });
