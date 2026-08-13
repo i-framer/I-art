@@ -1,0 +1,72 @@
+The production Vercel Blob image upload is now confirmed working end-to-end.
+
+Please continue with the next highest-priority task.
+
+First, review the current project state, recent changes, and any remaining TODOs/issues. Do not make assumptions about what should be changed.
+
+Priority:
+
+1. Verify the complete artwork image lifecycle:
+   - Upload image
+   - Save artwork
+   - Refresh the page
+   - Logout/login
+   - Confirm the image still displays
+   - Open the public gallery/storefront and confirm the image displays for visitors
+   - Upload a second image to the same artwork
+   - Verify multiple images are handled correctly
+   - Test replace/delete functionality if implemented
+
+2. Verify the database integration:
+   - Confirm Neon/PostgreSQL stores the correct image reference/path.
+   - Confirm no temporary/local filesystem path is being stored.
+   - Confirm the stored reference remains valid after a new deployment.
+
+3. Review the Vercel Blob implementation:
+   - Confirm the current @vercel/blob implementation is correct.
+   - Confirm private Blob access is handled correctly.
+   - Do NOT recreate or change the existing Blob store.
+   - Do NOT change BLOB_READ_WRITE_TOKEN because the production upload is already working.
+   - Do NOT make unnecessary changes to the working upload flow.
+
+4. Check production error handling:
+   - Broken/missing image
+   - Deleted Blob
+   - Invalid image reference
+   - Unauthorized image access
+   - Upload failure
+   - Large/unsupported image if validation exists
+
+5. Run build, typecheck, lint, and available tests.
+
+6. Review the git diff and identify any troubleshooting/debug code that is no longer necessary. Only remove code if you can prove it is diagnostic-only and removing it will not affect production behavior.
+
+7. Check the current project TODOs/issues and identify the NEXT highest-priority unfinished task after image storage.
+
+IMPORTANT:
+- Do not start unrelated refactoring.
+- Do not change the database architecture.
+- Do not change the Vercel Blob configuration.
+- Do not replace working code without evidence of a problem.
+- Preserve all existing functionality.
+- If a step requires human/browser access, clearly tell me exactly what I need to test.
+- If you encounter a blocker, investigate it first and provide the exact reason before stopping.
+
+At the end, provide a concise report:
+
+COMPLETED:
+- ...
+
+VERIFIED:
+- ...
+
+ISSUES FOUND:
+- ...
+
+HUMAN ACTION REQUIRED:
+- ...
+
+NEXT PRIORITY TASK:
+- ...
+
+If everything is clean, continue automatically to the next highest-priority task rather than waiting for confirmation.
