@@ -156,9 +156,12 @@ function AlertRow({ alert }: { alert: StripeAlert }) {
               <ExternalLink className="h-3 w-3" />
             </a>
             {alert.slackPostFailed && (
-              <span className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+              <span
+                className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"
+                title="This alert was never delivered to Slack. Use the 'Replay Slack failures' button above to re-send."
+              >
                 <Wifi className="h-3 w-3" />
-                Slack failed
+                Slack missed
               </span>
             )}
           </div>
