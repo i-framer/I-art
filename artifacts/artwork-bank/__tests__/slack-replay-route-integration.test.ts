@@ -55,12 +55,15 @@ async function createTenant() {
   return id;
 }
 
-async function createPendingAlert(tenantId: string, opts: { dismissed?: boolean } = {}) {
+async function createPendingAlert(
+  tenantId: string,
+  opts: { dismissed?: boolean; eventType?: string } = {},
+) {
   const id = uid();
   await db.insert(stripeAlertsTable).values({
     id, tenantId,
     reason: "Test billing alert",
-    eventType: "invoice.payment_failed",
+    eventType: opts.eventType ?? "invoice.payment_failed",
     stripeEventId: `evt_${uid()}`,
     slackPostFailed: new Date(), // has a failure
     ...(opts.dismissed ? { dismissedAt: new Date() } : {}),
@@ -150,5 +153,25 @@ describeIntegration("Slack replay route auth + DB action — real-DB integration
     const row = await getAlert(alertId);
     expect(row?.slackPostFailed).not.toBeNull();
     expect(mockSlackPost).not.toHaveBeenCalled();
+  });
+
+  it("checkout.session.completed alert with slackPostFailed → replayed by route and flag cleared", async () => {
+    delete process.env.SLACK_REPLAY_SECRET;
+    const tenantId = await createTenant();
+    const alertId  = await createPendingAlert(tenantId, { eventType: "checkout.session.completed" });
+    mockSlackPost.mockResolvedValue({ ok: true });
+
+    const res = await post();
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.replayed).toBeGreaterThanOrEqual(1);
+
+    // Slack must have been invoked at least once (for our alert).
+    expect(mockSlackPost).toHaveBeenCalled();
+
+    // slackPostFailed must be cleared to null after a successful replay.
+    const row = await getAlert(alertId);
+    expect(row?.slackPostFailed).toBeNull();
   });
 });
