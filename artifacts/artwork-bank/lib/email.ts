@@ -1041,11 +1041,11 @@ export async function sendWebhookRedirectEmail({
             </ul>
           </div>
           <div style="margin:24px 0;padding:16px;background:#fef2f2;border-left:4px solid #ef4444;border-radius:8px;">
-            <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">Fix (DEPLOY.md §4, Option A — recommended)</p>
+            <p style="margin:0 0 8px;font-weight:bold;color:#991b1b;">Fix (DEPLOY.md §4, Option B — webhook registered at www)</p>
             <ol style="margin:0;padding-left:20px;color:#7f1d1d;">
-              <li>Vercel → Project → Settings → Domains → click ⋮ next to <code>i-art.com.au</code> → <strong>Set as primary</strong>.</li>
-              <li>Ensure <code>NEXT_PUBLIC_SITE_URL=https://i-art.com.au</code> (no www).</li>
-              <li>Re-register the Stripe webhook as <code>https://i-art.com.au/api/stripe/webhook</code>.</li>
+              <li>Stripe Dashboard → Developers → Webhooks → confirm the endpoint URL is <code>https://www.i-art.com.au/api/stripe/webhook</code>.</li>
+              <li>If it points at the apex (no www), update it to the www URL — the apex 308-redirects and Stripe does not follow redirects.</li>
+              <li>Confirm the probed URL matches the registered endpoint (update the workflow default if the primary domain changed).</li>
               <li>Run <code>bash scripts/check-webhook-redirect.sh</code> and confirm ✅ No redirect.</li>
               <li>Send a test event from Stripe Dashboard and confirm 200 in the delivery log.</li>
             </ol>

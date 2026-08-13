@@ -22,7 +22,7 @@
 
 import { sendWebhookRedirectEmail } from "../lib/email";
 
-const webhookUrl = process.env.WEBHOOK_URL ?? "https://i-art.com.au/api/stripe/webhook";
+const webhookUrl = process.env.WEBHOOK_URL ?? "https://www.i-art.com.au/api/stripe/webhook";
 const httpCode = process.env.HTTP_CODE ?? "(unknown)";
 const redirectLocation = process.env.REDIRECT_LOCATION ?? "";
 const workflowRunUrl = process.env.WORKFLOW_RUN_URL ?? "";
@@ -41,10 +41,10 @@ const slackMessageText =
   `The scheduled health probe found that your Stripe webhook endpoint is returning a *${httpCode} redirect* instead of accepting the request directly.\n\n` +
   `*Probed URL:* \`${webhookUrl}\`${locationLine}\n\n` +
   `*Why this matters:* Stripe does not follow redirects. Every webhook delivery is counted as a failure — orders and subscription events are silently lost.\n\n` +
-  `*Fix (DEPLOY.md §4, Option A):*\n` +
-  `1. Vercel → Project → Settings → Domains → ⋮ next to \`i-art.com.au\` → *Set as primary*\n` +
-  `2. Ensure \`NEXT_PUBLIC_SITE_URL=https://i-art.com.au\` (no www)\n` +
-  `3. Re-register the Stripe webhook as \`https://i-art.com.au/api/stripe/webhook\`\n` +
+  `*Fix (DEPLOY.md §4, Option B — webhook registered at www):*\n` +
+  `1. Stripe Dashboard → Developers → Webhooks → confirm the endpoint URL is \`https://www.i-art.com.au/api/stripe/webhook\`\n` +
+  `2. If it points at the apex (no www), update it to the www URL — the apex 308-redirects and Stripe does not follow redirects\n` +
+  `3. Confirm the probed URL above matches the registered endpoint (update the workflow default if the primary domain changed)\n` +
   `4. Run \`bash scripts/check-webhook-redirect.sh\` and confirm ✅ No redirect\n` +
   `5. Send a test event from Stripe Dashboard and confirm 200 in the delivery log` +
   (workflowRunUrl ? `\n\n<${workflowRunUrl}|View failed workflow run →>` : "");

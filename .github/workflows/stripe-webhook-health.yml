@@ -1,6 +1,10 @@
 name: Stripe webhook health probe
 
-# Probes https://i-art.com.au/api/stripe/webhook every 15 minutes.
+# Probes https://www.i-art.com.au/api/stripe/webhook every 15 minutes.
+# (The Stripe webhook is registered at the www URL — the apex 308-redirects
+#  to www under Vercel's primary-domain setting, so probing the apex would
+#  permanently report a redirect. Fixed 2026-08-13: endpoint
+#  we_1TymEuErHGiDuwvxwsMw2NWC re-registered at the www URL.)
 # If the endpoint returns a 3xx redirect (which Stripe does NOT follow),
 # the operator is alerted via Slack and email so the issue is caught within
 # ~16 minutes instead of being discovered manually.
@@ -46,7 +50,7 @@ on:
     inputs:
       webhook_url:
         description: >
-          Webhook URL to probe (defaults to https://i-art.com.au/api/stripe/webhook).
+          Webhook URL to probe (defaults to https://www.i-art.com.au/api/stripe/webhook).
           Override this to test a staging or preview URL.
         required: false
         type: string
@@ -62,7 +66,7 @@ jobs:
         env:
           INPUT_URL: ${{ github.event.inputs.webhook_url }}
         run: |
-          URL="${INPUT_URL:-https://i-art.com.au/api/stripe/webhook}"
+          URL="${INPUT_URL:-https://www.i-art.com.au/api/stripe/webhook}"
           # Validate scheme — only https:// is accepted.
           if [[ "$URL" != https://* ]]; then
             echo "❌  webhook_url must begin with https://"

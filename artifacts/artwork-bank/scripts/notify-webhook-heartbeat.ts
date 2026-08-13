@@ -23,7 +23,7 @@
  * overall probe run as failed.
  */
 
-const webhookUrl = process.env.WEBHOOK_URL ?? "https://i-art.com.au/api/stripe/webhook";
+const webhookUrl = process.env.WEBHOOK_URL ?? "https://www.i-art.com.au/api/stripe/webhook";
 const httpCode = process.env.HTTP_CODE ?? "(unknown)";
 const workflowRunUrl = process.env.WORKFLOW_RUN_URL ?? "";
 

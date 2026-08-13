@@ -172,8 +172,8 @@ This prints the reconnect steps and exits without running the smoke test.
 ## Stripe webhook health probe
 
 A GitHub Actions workflow (`.github/workflows/stripe-webhook-health.yml`) runs
-every **5 minutes** and probes `https://i-art.com.au/api/stripe/webhook` for
-3xx redirects.
+every **15 minutes** and probes `https://www.i-art.com.au/api/stripe/webhook`
+(the URL the Stripe webhook is registered at) for 3xx redirects.
 
 Stripe does not follow redirects — a redirect means every webhook delivery
 counts as a failure and orders/subscription events are silently lost.
@@ -184,10 +184,10 @@ The operator receives a Slack message (and/or email) with the HTTP status code,
 the redirect target, and the fix steps.  The job also fails so GitHub marks the
 run red in the Actions tab.
 
-**Fix:** follow **DEPLOY.md §4, Option A**:
-1. Vercel → Project → Settings → Domains → ⋮ next to `i-art.com.au` → **Set as primary**.
-2. Ensure `NEXT_PUBLIC_SITE_URL=https://i-art.com.au` (no `www`).
-3. Re-register the Stripe webhook as `https://i-art.com.au/api/stripe/webhook`.
+**Fix:** follow **DEPLOY.md §4, Option B** (applied 2026-08-13):
+1. Stripe Dashboard → Developers → Webhooks → confirm the endpoint URL is `https://www.i-art.com.au/api/stripe/webhook`.
+2. If it points at the apex (no `www`), update it to the www URL — the apex 308-redirects and Stripe does not follow redirects.
+3. Confirm the workflow's default probe URL matches the registered endpoint.
 4. Confirm the redirect is gone: `bash scripts/check-webhook-redirect.sh`
 5. Send a test event from the Stripe Dashboard and confirm the delivery log shows **200**.
 
