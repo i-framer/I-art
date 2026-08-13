@@ -363,4 +363,70 @@ describe("IFramerJobPoller", () => {
     });
     expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
   });
+
+  // ── Counter reset after exhausted-budget → false → true ───────────────────
+
+  it("resets its tick counter when isPending flips back to true after the first run exhausted all MAX_POLLS ticks", () => {
+    /**
+     * Edge-case variant of the true → false → true test above.
+     *
+     * Phase 1 – "pending":  isPending=true  → poller runs ALL MAX_POLLS ticks;
+     *                        the interval self-clears (budget exhausted).
+     * Phase 2 – "arrived":  isPending=false → poller is already stopped but
+     *                        the effect still re-runs and returns early.
+     * Phase 3 – "reset":    isPending=true  → poller re-arms with a FRESH
+     *                        MAX_POLLS budget (the counter was exhausted in run
+     *                        1, so this verifies it is reset to 0, not left at
+     *                        MAX_POLLS which would cause an immediate no-op).
+     *
+     * The key invariant: the second polling run must deliver a full MAX_POLLS
+     * ticks even though the first run consumed all of them.
+     */
+    type Phase = "pending" | "arrived" | "reset";
+
+    function OrderDetailWrapper({ phase }: { phase: Phase }) {
+      const isPending = phase !== "arrived";
+      return <IFramerJobPoller isPending={isPending} />;
+    }
+
+    const { rerender } = render(<OrderDetailWrapper phase="pending" />);
+
+    // Phase 1: exhaust the full MAX_POLLS budget — the interval self-clears.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * MAX_POLLS);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
+
+    // Confirm the auto-stop: additional time must not produce more calls.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 3);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
+
+    // Phase 2: isPending flips false (job ID present, or error surfaced).
+    rerender(<OrderDetailWrapper phase="arrived" />);
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 3);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
+
+    // Reset the call count so run 2 can be measured in isolation.
+    mockRefresh.mockClear();
+
+    // Phase 3: error reset clears the job ID → isPending flips back to true.
+    rerender(<OrderDetailWrapper phase="reset" />);
+
+    // Run 2 must receive a full MAX_POLLS budget, not zero (which would happen
+    // if the exhausted counter from run 1 were carried forward).
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * MAX_POLLS);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
+
+    // Confirm the auto-stop still works in run 2.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 5);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
+  });
 });
