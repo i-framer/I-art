@@ -39,6 +39,7 @@ vi.mock("@/lib/stripe", () => ({
     checkout: { sessions: { create: mockStripeCreate } },
   })),
   calcApplicationFee: vi.fn(() => 0),
+  calcApplicationFeeForTenant: vi.fn().mockReturnValue({ feeCents: 500, commissionBasisPoints: 500 }),
   StripeNotConfiguredError: class extends Error {},
 }));
 

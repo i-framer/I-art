@@ -59,6 +59,7 @@ vi.mock("@/lib/stripe", () => ({
   }),
   getStripeWebhookSecret: vi.fn().mockResolvedValue(null),
   calcApplicationFee: (cents: number) => Math.round(cents * 0.05),
+  calcApplicationFeeForTenant: (cents: number) => ({ feeCents: Math.round(cents * 0.05), commissionBasisPoints: 500 }),
   StripeNotConfiguredError: class StripeNotConfiguredError extends Error {},
   PLATFORM_FEE_PERCENT: 5,
 }));

@@ -90,6 +90,7 @@ vi.mock("@/lib/stripe", () => ({
   getStripeClient: (...a: any[]) => getStripeClient(...a),
   getStripeWebhookSecret: vi.fn().mockResolvedValue(null),
   calcApplicationFee: vi.fn().mockReturnValue(600),
+  calcApplicationFeeForTenant: vi.fn().mockReturnValue({ feeCents: 600, commissionBasisPoints: 500 }),
   StripeNotConfiguredError: class StripeNotConfiguredError extends Error {},
 }));
 

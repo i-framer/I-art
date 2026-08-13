@@ -34,6 +34,7 @@ vi.mock("@/lib/stripe", () => ({
     },
   })),
   calcApplicationFee: vi.fn((amount: number) => Math.round(amount * 0.05)),
+  calcApplicationFeeForTenant: vi.fn().mockReturnValue({ feeCents: 500, commissionBasisPoints: 500 }),
   StripeNotConfiguredError: class extends Error {},
 }));
 vi.mock("@/lib/rate-limit", () => ({

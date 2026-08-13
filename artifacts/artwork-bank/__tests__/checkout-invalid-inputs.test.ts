@@ -60,6 +60,7 @@ vi.mock("@/lib/stripe", () => ({
   }),
   StripeNotConfiguredError: class extends Error {},
   calcApplicationFee: vi.fn().mockReturnValue(50),
+  calcApplicationFeeForTenant: vi.fn().mockReturnValue({ feeCents: 50, commissionBasisPoints: 500 }),
   PLATFORM_FEE_PERCENT: 5,
 }));
 

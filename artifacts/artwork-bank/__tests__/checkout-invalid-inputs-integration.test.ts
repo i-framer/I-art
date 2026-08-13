@@ -38,6 +38,7 @@ vi.mock("@/lib/tenant-cache", () => ({
 vi.mock("@/lib/stripe", () => ({
   getStripeClient: vi.fn(),
   calcApplicationFee: vi.fn(() => 0),
+  calcApplicationFeeForTenant: vi.fn().mockReturnValue({ feeCents: 500, commissionBasisPoints: 500 }),
   StripeNotConfiguredError: class extends Error {},
 }));
 
