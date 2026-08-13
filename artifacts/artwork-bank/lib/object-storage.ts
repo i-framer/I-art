@@ -195,7 +195,7 @@ export async function putObject(
 
   if (provider === "vercel-blob") {
     const result = await blobPut(entityId, body, {
-      access: "public",
+      access: "private",
       contentType,
       addRandomSuffix: false,
     });
@@ -243,14 +243,21 @@ export async function fetchObject(objectPath: string): Promise<Response> {
   const provider = getStorageProvider();
 
   let url: string;
+  let fetchHeaders: Record<string, string> | undefined;
   if (provider === "replit") {
     const { bucketName, objectName } = replitGcsLocation(entityId);
     url = await signObjectURL(bucketName, objectName, "GET", 60);
   } else {
     url = await blobUrlFor(entityId);
+    // Private blob stores require the read/write token to fetch raw blob URLs.
+    const token = process.env.BLOB_READ_WRITE_TOKEN;
+    if (token) fetchHeaders = { Authorization: `Bearer ${token}` };
   }
 
-  const upstream = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  const upstream = await fetch(url, {
+    headers: fetchHeaders,
+    signal: AbortSignal.timeout(30_000),
+  });
   if (!upstream.ok) {
     throw new Error(
       `Storage backend returned ${upstream.status} for ${objectPath}`,
