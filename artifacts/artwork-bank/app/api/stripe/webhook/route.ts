@@ -178,9 +178,20 @@ async function handleSubscriptionCheckoutCompleted(
       newStatus = sub.status;
       newTrialEnd = sub.trial_end ? new Date(sub.trial_end * 1000) : null;
     } catch (err: any) {
-      // Fall back to "active" if the retrieve fails.
-      // Expected in dev when a test-mode key can't reach a live subscription;
-      // in production this indicates a network blip or key mismatch — audit immediately.
+      // ── Fail-open decision ────────────────────────────────────────────────
+      // We grant "active" status rather than blocking access when Stripe is
+      // unreachable.  Rationale: a transient network blip should never lock out
+      // a paying customer — the subscription.* events will correct the status
+      // once Stripe recovers.  The risk of an extended outage (key mismatch,
+      // Stripe downtime) is mitigated by two mandatory operator signals:
+      //   1. A durable stripe_alerts row is written immediately so the admin
+      //      billing-alerts panel can surface it without tailing logs.
+      //   2. A Slack + email notification is dispatched; if Slack fails, the
+      //      `slackPostFailed` timestamp on the alert row is set so operators
+      //      can detect a broken alert chain at a glance (and replay it).
+      // If your risk tolerance is lower you can change newStatus to "trialing"
+      // or "incomplete" here — just ensure the subscription.* webhook handler
+      // will later promote the tenant to "active" on success.
       const retrieveFailReason =
         `subscriptions.retrieve failed (falling back to "active") — ` +
         `subscriptionId=${subscriptionId} reason=${err?.message ?? String(err)}`;
