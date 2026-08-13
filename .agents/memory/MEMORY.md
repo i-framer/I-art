@@ -6,4 +6,5 @@
 - [Next.js instrumentation Edge bundling](nextjs-instrumentation-edge.md) — Node-only imports must live in a split file behind a literal NEXT_RUNTIME check; only `next build` catches it
 - [CI pnpm version](ci-pnpm-version.md) — GitHub Actions must pin the same pnpm major as the lockfile writer (10), or frozen installs fail with LOCKFILE_CONFIG_MISMATCH
 - [Credential screenshot safeguard](github-push-token.md) — attached_assets auto-commits uploads; run scripts/check-sensitive-assets.sh before any GitHub push, .gitignore blocks token/secret filenames
+- [Vercel deploy gotchas](vercel-deploy-gotchas.md) — Hobby plan rejects sub-daily crons with instant generic failure; private blob store rejects access:"public" writes while reads pass
 - [Orphan sweep FK bypass](orphan-sweep-fk-bypass.md) — use SET LOCAL session_replication_role='replica' in db.transaction(); DISABLE TRIGGER ALL needs superuser; Neon prod DB forbids session_replication_role entirely
