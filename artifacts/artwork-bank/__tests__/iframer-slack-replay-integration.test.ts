@@ -120,7 +120,7 @@ describeIntegration("replayFailedIframerSlackAlerts — real-DB integration", ()
     expect(row?.iframerSlackFailedPayload).toBeNull();
   });
 
-  it("failure path (Slack ok:false): both fields remain non-null; failed incremented", async () => {
+  it("failure path (Slack ok:false): timestamp refreshed; payload preserved; failed incremented", async () => {
     const failedAt = new Date(Date.now() - 60000);
     const tenantId = await createTenant({
       iframerSlackPostFailed: failedAt,
@@ -136,7 +136,10 @@ describeIntegration("replayFailedIframerSlackAlerts — real-DB integration", ()
     const row = await db.query.tenantsTable.findFirst({
       where: eq(tenantsTable.id, tenantId),
     });
+    // Timestamp must have been refreshed to a value later than the original.
     expect(row?.iframerSlackPostFailed).not.toBeNull();
+    expect(row?.iframerSlackPostFailed!.getTime()).toBeGreaterThan(failedAt.getTime());
+    // Payload must remain so the next retry can reconstruct the notification.
     expect(row?.iframerSlackFailedPayload).not.toBeNull();
   });
 

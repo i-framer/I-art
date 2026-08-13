@@ -283,6 +283,20 @@ export async function replayFailedIframerSlackAlerts(): Promise<{
       }
       replayed++;
     } else {
+      // Refresh the failure timestamp so operators can see when the most recent
+      // retry attempt occurred, distinguishing a newly-broken alert from one
+      // that has been stuck for days.
+      try {
+        await db
+          .update(tenantsTable)
+          .set({ iframerSlackPostFailed: new Date() })
+          .where(eq(tenantsTable.id, tenant.id));
+      } catch (updateErr) {
+        console.error(
+          `[i-Framer Slack replay] Failed to refresh iframerSlackPostFailed for tenantId=${tenant.id}:`,
+          (updateErr as any)?.message ?? String(updateErr),
+        );
+      }
       failed++;
     }
   }
