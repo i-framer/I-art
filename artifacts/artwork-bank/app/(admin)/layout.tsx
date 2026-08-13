@@ -13,6 +13,7 @@ import {
   Settings,
   LogOut,
   Palette,
+  Award,
 } from "lucide-react";
 import { InquiryBadge } from "@/app/(admin)/_components/inquiry-badge";
 
@@ -21,6 +22,7 @@ const navItems = [
   { href: "/catalog", label: "Catalog", icon: Image },
   { href: "/orders", label: "Orders", icon: ShoppingBag },
   { href: "/inquiries", label: "Inquiries", icon: MessageSquare },
+  { href: "/certificates", label: "Certificates", icon: Award },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

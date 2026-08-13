@@ -11,3 +11,4 @@ export * from "./inquiry";
 export * from "./inquiryReply";
 export * from "./rateLimitEvent";
 export * from "./stripeAlert";
+export * from "./certificate";
