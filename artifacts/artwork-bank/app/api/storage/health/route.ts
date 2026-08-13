@@ -80,6 +80,7 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     provider,
+    probes: provider === "vercel-blob" ? ["read", "write"] : ["config"],
     message: `Storage backend "${provider}" is reachable.`,
   });
 }
