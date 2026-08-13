@@ -1,6 +1,6 @@
-# [Project name]
+# Artwork Bank
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Multi-tenant SaaS platform for Australian artists, galleries, and framers to manage and sell artwork online — see `HANDOVER.md` for a full project overview.
 
 ## Run & Operate
 
