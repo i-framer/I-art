@@ -14,7 +14,7 @@
  *   and no further ticks fire after that update.
  */
 
-import React, { useState } from "react";
+import React, { useState, useTransition } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act } from "@testing-library/react";
 import { IFramerJobPoller } from "../app/(admin)/(gated)/orders/[id]/_components/iframer-job-poller";
@@ -362,6 +362,103 @@ describe("IFramerJobPoller", () => {
       vi.advanceTimersByTime(POLL_INTERVAL_MS * 5);
     });
     expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
+  });
+
+  // ── Auto-stop via Suspense-boundary transition (startTransition) ──────────
+
+  it("auto-stop fires when the wrapper drives isPending=false via a startTransition (Suspense boundary transition)", () => {
+    /**
+     * Task #760
+     *
+     * Verifies that the poller's auto-stop works correctly when the parent
+     * component transitions isPending to false using React's startTransition —
+     * the deferred-update path that Suspense boundaries use when a pending
+     * navigation settles.
+     *
+     * The concern: concurrent-mode transitions queue state updates differently
+     * from synchronous setState.  A naive implementation that relies on the
+     * effect cleanup running synchronously might miss the update and let one
+     * extra tick fire before the interval clears.
+     *
+     * How it works:
+     *   1. Render a wrapper that starts with isPending=true.
+     *   2. Let 3 ticks fire (partial use of the MAX_POLLS budget).
+     *   3. Drive isPending=false through startTransition (Suspense-like).
+     *   4. Confirm no further ticks fire after the transition settles.
+     */
+    let driveStop: () => void = () => {};
+
+    function OrderDetailWrapper() {
+      const [isJobPending, setIsJobPending] = useState(true);
+      const [, startTransition] = useTransition();
+
+      // Expose a handle so the test can trigger the transition externally.
+      driveStop = () => {
+        startTransition(() => {
+          setIsJobPending(false);
+        });
+      };
+
+      return <IFramerJobPoller isPending={isJobPending} />;
+    }
+
+    render(<OrderDetailWrapper />);
+
+    // Let 3 ticks fire — partial budget consumption.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 3);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(3);
+
+    // Drive isPending=false through a startTransition (Suspense-boundary path).
+    act(() => {
+      driveStop();
+    });
+
+    // No further ticks should fire once the transition settles.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 5);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(3);
+  });
+
+  it("fires exactly the correct number of ticks before the startTransition auto-stop (boundary check)", () => {
+    /**
+     * Companion boundary check for Task #760.
+     *
+     * Confirms the pre-transition ticks are all preserved (none are swallowed by
+     * the transition scheduling) and only post-transition ticks are suppressed.
+     */
+    let driveStop: () => void = () => {};
+
+    function OrderDetailWrapper() {
+      const [isJobPending, setIsJobPending] = useState(true);
+      const [, startTransition] = useTransition();
+
+      driveStop = () => {
+        startTransition(() => setIsJobPending(false));
+      };
+
+      return <IFramerJobPoller isPending={isJobPending} />;
+    }
+
+    render(<OrderDetailWrapper />);
+
+    const preTicks = 7;
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * preTicks);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(preTicks);
+
+    act(() => {
+      driveStop();
+    });
+
+    // Advance well past the remaining budget — must stay at preTicks.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * (MAX_POLLS - preTicks + 5));
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(preTicks);
   });
 
   // ── Counter reset after exhausted-budget → false → true ───────────────────
