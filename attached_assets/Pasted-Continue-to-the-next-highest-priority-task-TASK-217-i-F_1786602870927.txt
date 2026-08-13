@@ -1,0 +1,127 @@
+Continue to the next highest-priority task: TASK #217 — i-Framer Premium Customer Billing Option.
+
+The previous image-storage task is complete and verified. Do not make further changes to Vercel Blob unless a new, reproducible issue is found.
+
+Before changing code, fully investigate Task #217 and understand the existing implementation.
+
+TASK #217 GOAL:
+
+Integrate the existing i-Framer premium customer verification into the gallery billing flow so that eligible premium galleries receive the correct reduced platform fee.
+
+Existing components already identified:
+- `iframer-verify.ts` — DB-backed premium subscription verification
+- `billing.ts` — Stripe subscription/billing management
+- Existing gallery billing/checkout logic
+- Existing platform fee calculation
+
+PROCESS:
+
+1. Read the complete implementation of:
+   - `iframer-verify.ts`
+   - `billing.ts`
+   - Current Stripe checkout/subscription flow
+   - Platform fee calculation
+   - Gallery/customer subscription models
+   - Relevant database schema
+   - Existing tests related to billing, Stripe, premium customers, and platform fees
+
+2. Determine exactly:
+   - How a gallery is currently identified as an i-Framer premium customer.
+   - What database record/status determines premium eligibility.
+   - What the current standard platform fee is.
+   - What the reduced premium platform fee should be.
+   - Where the platform fee is calculated.
+   - Whether the fee is calculated during checkout, order creation, payment processing, or payout.
+   - Whether the fee must also be applied to existing subscription/customer records.
+
+3. Trace the complete billing flow before modifying anything:
+
+   Gallery
+   → subscription/customer status
+   → i-Framer premium verification
+   → checkout/subscription
+   → order/payment
+   → platform fee calculation
+   → Stripe/payment processing
+
+4. Implement the smallest safe integration required for Task #217.
+
+IMPORTANT:
+- Reuse the existing `iframer-verify.ts` and `billing.ts` functionality.
+- Do not duplicate premium verification logic.
+- Do not hard-code premium customer IDs.
+- Do not hard-code a different fee in multiple places.
+- Keep the standard gallery billing behavior unchanged for non-premium galleries.
+- Premium eligibility must be verified from the existing database-backed source of truth.
+- Do not modify unrelated features.
+- Do not change the Vercel Blob implementation.
+- Do not change the Neon database architecture.
+- Preserve existing Stripe behavior.
+- Follow existing project patterns for errors, logging, authentication, and transactions.
+
+5. Add or update automated tests covering at minimum:
+
+   A. Standard gallery:
+      - Uses the normal platform fee.
+
+   B. Eligible i-Framer premium gallery:
+      - Uses the reduced platform fee.
+
+   C. Non-premium gallery:
+      - Cannot receive the premium fee accidentally.
+
+   D. Missing/invalid i-Framer verification:
+      - Falls back safely to the standard fee.
+      - Does not incorrectly grant premium pricing.
+
+   E. Premium status changes:
+      - Verify the fee follows the current eligibility state rather than stale client-side data.
+
+   F. Stripe checkout/subscription:
+      - Verify the correct billing configuration is generated for each customer type.
+
+6. Run:
+   - Typecheck
+   - Lint
+   - Build
+   - Relevant unit/integration tests
+   - Full test suite if practical
+
+7. Review the final diff carefully.
+
+8. If Stripe Dashboard configuration, webhook configuration, environment variables, or another external service must be changed manually, DO NOT guess or change production configuration. Clearly identify the exact human action required.
+
+9. If the implementation is already complete, do not rewrite it unnecessarily. Instead, verify it against Task #217 requirements and add only missing tests/fixes.
+
+STOP CONDITIONS:
+
+If you discover an ambiguity in the intended premium fee percentage, premium eligibility rules, or Stripe billing behavior that cannot be determined from the existing code, stop before implementing that part and tell me exactly what information is missing.
+
+Otherwise, continue implementation automatically.
+
+FINAL REPORT:
+
+COMPLETED:
+- ...
+
+IMPLEMENTATION:
+- ...
+
+PREMIUM FEE LOGIC:
+- Standard gallery: ...
+- i-Framer premium gallery: ...
+
+TESTS:
+- ...
+
+BUILD/TYPECHECK/LINT:
+- ...
+
+HUMAN ACTION REQUIRED:
+- None / exact action required
+
+ISSUES/BLOCKERS:
+- ...
+
+NEXT PRIORITY:
+- ...
