@@ -1,0 +1,68 @@
+**Highest-priority production bug: image upload is failing because the backend upload endpoint returns HTTP 500.**
+
+Observed in production browser console:
+
+`POST https://www.i-art.com.au/api/storage/upload`
+→ `500 Internal Server Error`
+
+The Catalog UI then shows:
+
+**“Upload failed — please try again.”**
+
+Focus investigation specifically on `/api/storage/upload`.
+
+### Required investigation
+
+1. Reproduce the failing POST request in production.
+2. Inspect the Vercel production function logs for `/api/storage/upload`.
+3. Capture the actual server-side exception/error causing the 500.
+4. Trace the upload handler end-to-end:
+
+   * authentication/session
+   * multipart/form-data parsing
+   * uploaded file validation
+   * filename/path generation
+   * Vercel Blob `put()` or equivalent upload call
+   * `BLOB_READ_WRITE_TOKEN`
+   * returned Blob URL/path
+   * database/image-record creation
+5. Check whether the route is using an old storage implementation or expecting Replit/local object storage paths.
+6. Check for any mismatch between `/api/storage/upload`, `/api/storage/blob-upload`, and `/api/storage/upload-url`.
+7. Verify the Vercel runtime supports the way the request body/file is being handled.
+8. Check for size limits, content-type issues, missing environment variables, malformed Blob paths, or database constraints.
+
+### Fix
+
+Once the exact root cause is confirmed:
+
+* Implement the proper production fix.
+* Do not hide the exception with a generic success response.
+* Add useful server-side error logging without exposing secrets.
+* Add/update automated tests for the failure condition.
+
+### Production verification
+
+After the fix:
+
+1. Deploy the corrected version.
+2. Upload a real image through:
+   `https://www.i-art.com.au/catalog/230e2f31-79d7-4557-9c2e-b48ee287ab0e`
+3. Confirm `/api/storage/upload` returns 2xx.
+4. Confirm the Blob is actually created.
+5. Confirm the image appears in the Catalog UI.
+6. Refresh the page and confirm it still loads.
+7. Confirm there are no subsequent `/api/storage/serve` 404s, CORS errors, or authentication errors.
+
+Do not mark this task complete until the real production upload works.
+
+Return:
+
+* Exact server-side error/root cause
+* File(s) changed
+* Fix implemented
+* `/api/storage/upload`: PASS/FAIL
+* Blob creation: PASS/FAIL
+* UI image display: PASS/FAIL
+* Refresh/persistence: PASS/FAIL
+* Remaining blocker, if any
+* Commit hash

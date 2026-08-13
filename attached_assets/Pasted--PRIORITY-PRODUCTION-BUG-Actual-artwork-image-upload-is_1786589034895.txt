@@ -1,0 +1,63 @@
+**PRIORITY PRODUCTION BUG: Actual artwork image upload is still failing on the live site.**
+
+Production page:
+`https://www.i-art.com.au/catalog/230e2f31-79d7-4557-9c2e-b48ee287ab0e`
+
+When uploading an artwork image through the actual Catalog UI, the application displays:
+
+**“Upload failed — please try again.”**
+
+Vercel Blob has already been configured and the storage health check previously returned `provider: "vercel-blob"`, so do not consider the health endpoint alone proof that uploads work.
+
+### Investigate the real end-to-end upload flow
+
+Trace the request from:
+
+**Catalog UI → upload API → authentication → Vercel Blob → database/image record → image serving**
+
+Check specifically:
+
+* Browser/upload request and response
+* `/api/storage/upload-url`
+* `/api/storage/blob-upload`
+* `/api/storage/serve`
+* Authentication/session handling
+* `BLOB_READ_WRITE_TOKEN` usage
+* Vercel Blob upload implementation
+* Blob pathname/key generation
+* Database image record creation
+* Stored image URL/path
+* CORS behavior
+* Production `www.i-art.com.au` vs apex-domain handling
+* Vercel production logs for the failed request
+
+Identify the **actual root cause** rather than adding a workaround.
+
+### Required action
+
+This is now the highest-priority task.
+
+1. Reproduce the failure.
+2. Find the root cause.
+3. Implement the proper fix.
+4. Run relevant automated tests.
+5. Deploy/verify against production if deployment access is available.
+6. Perform a real production smoke test by uploading an image through the Catalog UI.
+7. Refresh the page and verify the uploaded image still displays.
+8. Confirm there are no 404, 401/403, CORS, or Blob-related errors.
+9. Commit the fix.
+
+Do not mark this task complete until the **actual production UI upload succeeds**.
+
+If production verification requires credentials, Vercel access, or another human-only action, stop at that point and clearly report the exact blocker and what I need to do.
+
+At completion report:
+
+* Root cause
+* Fix implemented
+* Tests performed
+* Production UI upload: PASS/FAIL
+* Image persistence after refresh: PASS/FAIL
+* Image serving: PASS/FAIL
+* Remaining errors/blockers
+* Commit
