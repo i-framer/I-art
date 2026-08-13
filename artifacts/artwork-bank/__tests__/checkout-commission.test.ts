@@ -61,6 +61,9 @@ const tenant = vi.hoisted(() => ({
   type: "GALLERY",
   customDomain: null,
   customDomainVerified: false,
+  // null → no per-tenant override → calcApplicationFeeForTenant falls back
+  // to the global PLATFORM_FEE_PERCENT (5%), same as calcApplicationFee.
+  commissionBasisPoints: null,
 }));
 
 vi.mock("@/lib/tenant-cache", () => ({
@@ -92,6 +95,10 @@ vi.mock("@/lib/stripe", async (importOriginal) => {
       checkout: { sessions: { create: (...a: any[]) => sessionsCreate(...a) } },
     }),
     calcApplicationFee: real.calcApplicationFee,
+    // Task #217: per-tenant commission override — route calls calcApplicationFeeForTenant
+    // instead of calcApplicationFee.  Expose the real implementation so the
+    // test also catches formula drift in the new function.
+    calcApplicationFeeForTenant: real.calcApplicationFeeForTenant,
     StripeNotConfiguredError: class StripeNotConfiguredError extends Error {},
   };
 });
