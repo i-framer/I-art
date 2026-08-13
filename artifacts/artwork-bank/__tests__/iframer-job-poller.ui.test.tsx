@@ -10,8 +10,11 @@
  * - Clears the interval on component unmount.
  * - Re-arms the poll loop when isPending transitions true → false → true
  *   (prop change causes effect re-run).
+ * - Integration: parent re-renders with isPending=false once job ID arrives,
+ *   and no further ticks fire after that update.
  */
 
+import React, { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, act } from "@testing-library/react";
 import { IFramerJobPoller } from "../app/(admin)/(gated)/orders/[id]/_components/iframer-job-poller";
@@ -213,5 +216,91 @@ describe("IFramerJobPoller", () => {
     });
 
     expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
+  });
+
+  // ── Integration: full parent → child cycle ────────────────────────────────
+
+  it("stops polling as soon as the parent re-renders with isPending=false after a job ID arrives", () => {
+    /**
+     * Thin wrapper that simulates the real parent component.
+     *
+     * Starts with no job ID (isPending=true).  When router.refresh() fires for
+     * the first time the wrapper transitions to jobArrived=true (isPending=false),
+     * mirroring what happens when the webhook delivers an iframerJobId and the
+     * server component re-renders via Next.js router.refresh().
+     */
+    function OrderDetailWrapper() {
+      const [jobArrived, setJobArrived] = useState(false);
+
+      // Expose the setter so mockRefresh can drive the state transition.
+      mockRefresh.mockImplementation(() => {
+        setJobArrived(true);
+      });
+
+      return <IFramerJobPoller isPending={!jobArrived} />;
+    }
+
+    render(<OrderDetailWrapper />);
+
+    // Before any tick: no refresh calls yet.
+    expect(mockRefresh).not.toHaveBeenCalled();
+
+    // Advance one interval — the poller fires router.refresh(), which sets
+    // jobArrived=true synchronously inside act(), causing an immediate
+    // re-render with isPending=false and clearing the interval.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS);
+    });
+
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
+
+    // Advance several more intervals — the interval must already be cleared;
+    // no additional refresh calls should occur.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 5);
+    });
+
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire an extra tick between the job ID arriving and the interval clearing", () => {
+    /**
+     * Verifies the tighter timing guarantee: once isPending flips false the
+     * very next scheduled tick must not call router.refresh() again.
+     *
+     * Uses a wrapper that flips on the SECOND refresh call so we can confirm
+     * the third tick is suppressed (not just the first transition).
+     */
+    let refreshCount = 0;
+
+    function OrderDetailWrapper() {
+      const [jobArrived, setJobArrived] = useState(false);
+
+      mockRefresh.mockImplementation(() => {
+        refreshCount++;
+        if (refreshCount >= 2) {
+          setJobArrived(true);
+        }
+      });
+
+      return <IFramerJobPoller isPending={!jobArrived} />;
+    }
+
+    render(<OrderDetailWrapper />);
+
+    // Two ticks: first is a normal poll, second delivers the job and stops the
+    // interval inside the same act() flush.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 2);
+    });
+
+    expect(mockRefresh).toHaveBeenCalledTimes(2);
+
+    // Any subsequent ticks should be suppressed.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 5);
+    });
+
+    expect(mockRefresh).toHaveBeenCalledTimes(2);
   });
 });
