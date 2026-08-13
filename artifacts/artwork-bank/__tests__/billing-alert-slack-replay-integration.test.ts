@@ -195,4 +195,31 @@ describeIntegration("replayFailedSlackAlerts (billing alerts) — real-DB integr
 
     expect(callsAfter - callsBefore).toBe(0);
   });
+
+  it("exception path: slackPostFailed is left untouched when Slack call throws", async () => {
+    // Plant a failure timestamp well in the past so any DB write would produce
+    // a strictly later value — making an accidental update easy to detect.
+    const originalFailedAt = new Date(Date.now() - 60_000);
+    const alertId = await createAlert({ slackPostFailed: originalFailedAt });
+
+    // Make the Slack call throw an exception instead of returning ok:false.
+    sendBillingAlertSlack.mockRejectedValueOnce(
+      new Error("Slack network timeout"),
+    );
+
+    const result = await replayFailedSlackAlerts();
+
+    // The exception path must count as a failure.
+    expect(result.failed).toBeGreaterThanOrEqual(1);
+
+    const row = await db.query.stripeAlertsTable.findFirst({
+      where: eq(stripeAlertsTable.id, alertId),
+    });
+
+    // slackPostFailed must be left exactly as it was — the exception catch
+    // block must NOT write a new timestamp (unlike the ok:false path which
+    // intentionally refreshes it to record the most-recent retry attempt).
+    expect(row?.slackPostFailed).not.toBeNull();
+    expect(row!.slackPostFailed!.getTime()).toBe(originalFailedAt.getTime());
+  });
 });

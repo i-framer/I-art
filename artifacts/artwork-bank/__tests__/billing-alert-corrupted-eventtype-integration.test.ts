@@ -1,12 +1,17 @@
 /**
  * replayFailedSlackAlerts — corrupted eventType integration.
  *
- * Verifies that a stripeAlertsTable row whose eventType is null or
- * unrecognised (causing resolveSlackChannel to return null) is counted as
- * `skipped`, not silently dropped:
+ * Verifies that a stripeAlertsTable row whose eventType is unrecognised
+ * (causing resolveSlackChannel to return null) is counted as `skipped`,
+ * not silently dropped:
  *
- *  1. null eventType  → skipped >= 1; slackPostFailed preserved; no Slack call.
- *  2. unrecognised eventType (e.g. "bogus.event.type") → same invariants.
+ *  1. Unrecognised eventType (e.g. "bogus.event.type") → skipped >= 1;
+ *     slackPostFailed preserved; no Slack call.
+ *  2. A second distinct unrecognised eventType → same invariants.
+ *
+ * Note: the stripe_alert.event_type column is NOT NULL, so a null value
+ * cannot be inserted; tests here use invalid-but-non-null strings to cover
+ * the case where resolveSlackChannel returns null (unknown channel).
  *
  * This ensures corrupted-field rows remain visible to the operator in the
  * platform panel and are never silently lost.
@@ -126,8 +131,8 @@ describeIntegration(
         // No Slack notification should have been attempted.
         expect(sendBillingAlertSlackNotificationMock).not.toHaveBeenCalled();
 
-        // The failure timestamp must remain exactly as seeded — the row is
-        // still visible to the operator in the platform panel.
+        // slackPostFailed must be left exactly as seeded so the operator can
+        // see the row was already failing before the sweep ran.
         const row = await db.query.stripeAlertsTable.findFirst({
           where: eq(stripeAlertsTable.id, alertId),
         });
@@ -137,7 +142,7 @@ describeIntegration(
     );
 
     it(
-      "unrecognised eventType: alert is counted as skipped; slackPostFailed is preserved; no Slack call made",
+      "unrecognised eventType (variant B): alert is counted as skipped; slackPostFailed is preserved; no Slack call made",
       async () => {
         const failedAt = new Date(Date.now() - 60_000);
         const alertId = await createAlert({
