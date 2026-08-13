@@ -303,4 +303,64 @@ describe("IFramerJobPoller", () => {
 
     expect(mockRefresh).toHaveBeenCalledTimes(2);
   });
+
+  // ── Counter reset after true → false → true transition ────────────────────
+
+  it("resets its tick counter when isPending flips back to true after a false stretch", () => {
+    /**
+     * Wrapper that cycles through three phases, matching the real parent component
+     * pattern:
+     *
+     *   Phase 1 – "pending":  isPending=true  → poller runs, burns some ticks.
+     *   Phase 2 – "arrived":  isPending=false → poller stops (job ID present).
+     *   Phase 3 – "reset":    isPending=true  → poller re-arms with a FRESH
+     *                          MAX_POLLS budget (e.g. after an error clears the
+     *                          job ID so the parent is pending again).
+     *
+     * The key invariant: the second polling run must allow a full MAX_POLLS
+     * ticks regardless of how many ticks fired in the first run.
+     */
+    type Phase = "pending" | "arrived" | "reset";
+
+    function OrderDetailWrapper({ phase }: { phase: Phase }) {
+      // "arrived" is the only state where there is a job ID → isPending=false.
+      const isPending = phase !== "arrived";
+      return <IFramerJobPoller isPending={isPending} />;
+    }
+
+    const { rerender } = render(<OrderDetailWrapper phase="pending" />);
+
+    // Phase 1: let 5 ticks fire — partial use of the MAX_POLLS budget.
+    const phase1Ticks = 5;
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * phase1Ticks);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(phase1Ticks);
+
+    // Phase 2: job ID arrives → isPending flips false → poller stops.
+    rerender(<OrderDetailWrapper phase="arrived" />);
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 3);
+    });
+    // No new ticks should have fired after the flip.
+    expect(mockRefresh).toHaveBeenCalledTimes(phase1Ticks);
+
+    // Reset the call count so the second run can be measured in isolation.
+    mockRefresh.mockClear();
+
+    // Phase 3: error reset clears the job ID → isPending flips back to true.
+    rerender(<OrderDetailWrapper phase="reset" />);
+
+    // The second run must get a full MAX_POLLS budget, not MAX_POLLS - phase1Ticks.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * MAX_POLLS);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
+
+    // Confirm the auto-stop still works: no ticks beyond MAX_POLLS.
+    act(() => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 5);
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(MAX_POLLS);
+  });
 });
