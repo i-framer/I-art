@@ -263,6 +263,15 @@ export async function replayFailedIframerSlackAlerts(): Promise<{
         `[i-Framer Slack replay] Unexpected error for tenantId=${tenant.id}:`,
         (err as any)?.message ?? String(err),
       );
+      // Intentionally do NOT refresh iframerSlackPostFailed here.
+      // An exception means the Slack SDK threw before we received any
+      // response (network timeout, DNS failure, etc.).  We cannot tell
+      // whether Slack actually processed a partial request, so the
+      // existing timestamp is the most accurate signal available to
+      // operators — updating it would imply a clean retry attempt when
+      // in reality the outcome is unknown.  The ok:false path (below)
+      // refreshes the timestamp because it represents a confirmed
+      // response from Slack, not an ambiguous transport failure.
       failed++;
       continue;
     }
