@@ -691,13 +691,25 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
         fulfillmentType: fulfillmentType as "SHIP" | "PICKUP" | "FRAMING_JOB",
         totalCents: session.amount_total ?? 0,
         // Persist the platform commission actually charged on this sale.
-        // Checkout sets application_fee_amount = calcApplicationFee(price),
-        // and amount_total equals the artwork price, so recomputing here
-        // matches the fee Stripe collected.
+        // The commission rate and fee were computed at checkout time and passed
+        // through session.metadata so we don't need to recompute.
         applicationFeeCents:
           session.amount_total != null
-            ? calcApplicationFee(session.amount_total)
+            ? (() => {
+                const bp = session.metadata?.commissionBasisPoints;
+                const bpNum = bp != null ? parseInt(bp, 10) : null;
+                return bpNum != null && isFinite(bpNum)
+                  ? Math.round(session.amount_total * (bpNum / 100 / 100))
+                  : calcApplicationFee(session.amount_total);
+              })()
             : null,
+        // Record the commission rate that was in effect at checkout time.
+        commissionBasisPoints: (() => {
+          const bp = session.metadata?.commissionBasisPoints;
+          if (!bp) return null;
+          const n = parseInt(bp, 10);
+          return isFinite(n) ? n : null;
+        })(),
       })
       .returning();
 

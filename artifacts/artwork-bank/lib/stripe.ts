@@ -289,9 +289,33 @@ function parsePlatformFeePercent(): number {
 /** Platform application fee as a percentage (default 5%). */
 export const PLATFORM_FEE_PERCENT = parsePlatformFeePercent();
 
-/** Calculate the platform application fee in cents. */
+/** Calculate the platform application fee in cents using the global rate. */
 export function calcApplicationFee(subtotalCents: number): number {
   return Math.round(subtotalCents * (PLATFORM_FEE_PERCENT / 100));
+}
+
+/**
+ * Calculate the platform application fee for a specific tenant, using their
+ * per-tenant commission override when set (e.g. 350 basis points = 3.5% for
+ * i-Framer Premium accounts), otherwise falling back to the global rate.
+ *
+ * @param subtotalCents    Artwork price in cents.
+ * @param commissionBp     Tenant's commissionBasisPoints value (may be null).
+ * @returns                Fee in cents and effective percentage applied.
+ */
+export function calcApplicationFeeForTenant(
+  subtotalCents: number,
+  commissionBp: number | null | undefined,
+): { feeCents: number; commissionBasisPoints: number } {
+  const effectivePct =
+    commissionBp != null
+      ? commissionBp / 100 // basis points → percent
+      : PLATFORM_FEE_PERCENT;
+  const defaultBp = Math.round(PLATFORM_FEE_PERCENT * 100);
+  return {
+    feeCents: Math.round(subtotalCents * (effectivePct / 100)),
+    commissionBasisPoints: commissionBp ?? defaultBp,
+  };
 }
 
 // ---------------------------------------------------------------------------

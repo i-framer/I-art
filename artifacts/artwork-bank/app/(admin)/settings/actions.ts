@@ -497,6 +497,138 @@ export async function openBillingPortal() {
   redirect(portalUrl!);
 }
 
+// ── i-Framer Premium self-service verification ────────────────────────────────
+
+/**
+ * Self-service i-Framer Premium verification.
+ *
+ * Security:
+ *  - Requires an authenticated tenant admin session.
+ *  - Rate-limited to 5 attempts per hour per tenant (in-memory, resets on restart).
+ *  - URL input is normalised and validated — only alphanumeric slugs reach the DB.
+ *  - Each i-Framer account can be linked to at most one tenant.
+ *  - i-Framer DB credentials never leave server code.
+ */
+export async function verifyIFramerAccount(formData: FormData) {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  const { checkVerifyRateLimit } = await import("@/lib/iframer-rate-limit");
+  if (!checkVerifyRateLimit(session.tenantId)) {
+    redirect("/settings/billing?iframer=rate_limited");
+  }
+
+  const rawUrl = (formData.get("iframerPortalUrl") as string | null)?.trim() ?? "";
+  if (!rawUrl) redirect("/settings/billing?iframer=invalid_url");
+
+  const { normaliseIFramerUrl, verifyIFramerPremium, isIFramerVerifyConfigured } =
+    await import("@/lib/iframer-verify");
+
+  if (!isIFramerVerifyConfigured()) {
+    redirect("/settings/billing?iframer=not_configured");
+  }
+
+  const accountId = normaliseIFramerUrl(rawUrl);
+  if (!accountId) redirect("/settings/billing?iframer=invalid_url");
+
+  // Enforce one-tenant-per-i-Framer-account: check if this accountId is already
+  // linked to a different tenant.
+  const existing = await db.query.tenantsTable.findFirst({
+    where: (t, { eq: eqOp, ne }) =>
+      // Using raw SQL because drizzle doesn't support AND(col=X, col!=Y) via helpers elegantly
+      and(eq(t.iframerAccountId, accountId), ne(t.id, session.tenantId)),
+    columns: { id: true },
+  });
+  if (existing) {
+    redirect("/settings/billing?iframer=already_linked");
+  }
+
+  let result;
+  try {
+    result = await verifyIFramerPremium(accountId);
+  } catch (err) {
+    console.error("[iframer-verify] DB query failed:", err);
+    redirect("/settings/billing?iframer=db_error");
+  }
+
+  if (!result.configured) {
+    redirect("/settings/billing?iframer=not_configured");
+  }
+
+  if (!result.isPremiumActive) {
+    // Encode the failure reason in the URL (short key, not the full message which could be long)
+    redirect("/settings/billing?iframer=not_premium");
+  }
+
+  // Verification succeeded — grant i-Framer Premium benefits
+  // commissionBasisPoints: 350 = 3.5%
+  await db
+    .update(tenantsTable)
+    .set({
+      iframerAccountId: accountId,
+      iframerPortalUrl: rawUrl,
+      iframerVerifiedAt: new Date(),
+      billingExempt: true,
+      commissionBasisPoints: 350,
+    })
+    .where(eq(tenantsTable.id, session.tenantId));
+
+  redirect("/settings/billing?iframer=verified");
+}
+
+/**
+ * Re-verify a previously linked i-Framer account (called on billing page visits
+ * when the last verification is stale).  Runs silently — revokes benefits if
+ * the subscription has lapsed.
+ *
+ * @returns "still_active" | "revoked" | "skipped" (not due for re-check) | "unconfigured"
+ */
+export async function recheckIFramerVerification(
+  tenantId: string,
+  accountId: string | null | undefined,
+  verifiedAt: Date | null | undefined,
+): Promise<"still_active" | "revoked" | "skipped" | "unconfigured"> {
+  const { isIFramerVerifyConfigured } = await import("@/lib/iframer-verify");
+  if (!isIFramerVerifyConfigured()) return "unconfigured";
+  if (!accountId) return "skipped";
+
+  // Re-check every 24 hours
+  const RECHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  if (verifiedAt && Date.now() - verifiedAt.getTime() < RECHECK_INTERVAL_MS) {
+    return "skipped";
+  }
+
+  const { verifyIFramerPremium } = await import("@/lib/iframer-verify");
+  let result;
+  try {
+    result = await verifyIFramerPremium(accountId);
+  } catch {
+    return "skipped"; // Non-fatal — don't revoke on transient DB errors
+  }
+
+  if (!result.configured) return "unconfigured";
+
+  if (result.isPremiumActive) {
+    // Refresh the verification timestamp
+    await db
+      .update(tenantsTable)
+      .set({ iframerVerifiedAt: new Date() })
+      .where(eq(tenantsTable.id, tenantId));
+    return "still_active";
+  }
+
+  // Subscription lapsed — revoke exemption and restore standard commission
+  await db
+    .update(tenantsTable)
+    .set({
+      billingExempt: false,
+      iframerVerifiedAt: null,
+      commissionBasisPoints: null,
+    })
+    .where(eq(tenantsTable.id, tenantId));
+  return "revoked";
+}
+
 export async function removeTeamMember(userId: string) {
   const session = await getSession();
   if (!session.userId) return;

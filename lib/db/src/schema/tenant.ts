@@ -4,6 +4,7 @@ import {
   boolean,
   timestamp,
   pgEnum,
+  integer,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -48,6 +49,24 @@ export const tenantsTable = pgTable("tenant", {
   iframerAccountLinkedAt: timestamp("iframer_account_linked_at", {
     withTimezone: true,
   }),
+  /**
+   * The i-Framer portal URL entered by the tenant during self-service verification.
+   * Stored so it can be displayed back to the tenant and used for periodic re-checks.
+   */
+  iframerPortalUrl: text("iframer_portal_url"),
+  /**
+   * When the last i-Framer Premium verification succeeded.
+   * Used to determine whether a re-check is needed (verification TTL is 24 h).
+   * Null means the tenant has never been verified self-service.
+   */
+  iframerVerifiedAt: timestamp("iframer_verified_at", { withTimezone: true }),
+  /**
+   * Per-tenant platform commission override in basis points (hundredths of a percent).
+   * e.g. 500 = 5.00 %, 350 = 3.50 %.
+   * Null means use the global PLATFORM_FEE_PERCENT env var default.
+   * Set to 350 when an i-Framer Premium subscription is verified; cleared when it lapses.
+   */
+  commissionBasisPoints: integer("commission_basis_points"),
   /**
    * Set when the Slack audit notification for an i-Framer account link/unlink
    * failed (auth error, network error, etc.). Null means the notification

@@ -52,6 +52,14 @@ Preview too where noted).
 | `VERCEL_PROJECT_ID` | Vercel project ID (Project → Settings → General) — target project for tenant custom domains |
 | `VERCEL_TEAM_ID` | Vercel team ID, only if the project belongs to a team |
 | `IFRAMER_API_BASE_URL`, `IFRAMER_API_KEY` | i-Framer integration for framing-fulfilment jobs |
+| `IFRAMER_VERIFY_DB_URL` | **Required for i-Framer Premium self-service** — read-only Postgres connection string to the i-Framer database. When absent, the self-service verification form is hidden and the operator must link accounts manually via the platform admin. Format: `postgres://readonly_user:password@host:5432/iframer_db` |
+| `IFRAMER_VERIFY_TABLE` | i-Framer DB table to query (default: `accounts`) |
+| `IFRAMER_VERIFY_ACCOUNT_COL` | Column holding the portal account slug (default: `portal_slug`) |
+| `IFRAMER_VERIFY_STATUS_COL` | Column holding the subscription status (default: `subscription_status`) |
+| `IFRAMER_VERIFY_TIER_COL` | Column holding the plan tier (default: `plan_tier`) |
+| `IFRAMER_VERIFY_ACTIVE_STATUS` | Comma-separated active status values (default: `active`) |
+| `IFRAMER_VERIFY_PREMIUM_TIER` | Comma-separated premium tier values (default: `premium`) |
+| `IFRAMER_SIGNUP_URL` | URL shown on the billing page for non-customers to sign up (default: `https://iframer.com.au/pricing`) |
 | `STORAGE_PROVIDER` | Force `vercel-blob` or `replit` (normally auto-detected from `BLOB_READ_WRITE_TOKEN` / `PRIVATE_OBJECT_DIR`) |
 | `BLOB_BASE_URL` | Blob store public base URL (skips a one-time lookup; normally unnecessary) |
 

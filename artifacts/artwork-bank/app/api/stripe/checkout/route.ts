@@ -5,7 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { getTenantBySlug } from "@/lib/tenant-cache";
 import {
   getStripeClient,
-  calcApplicationFee,
+  calcApplicationFeeForTenant,
   StripeNotConfiguredError,
 } from "@/lib/stripe";
 import { getServeUrl } from "@/lib/object-storage";
@@ -186,7 +186,10 @@ export async function POST(request: Request) {
         }
       }
 
-      const feeAmount = calcApplicationFee(artwork.price);
+      const { feeCents: feeAmount, commissionBasisPoints } = calcApplicationFeeForTenant(
+        artwork.price,
+        tenant.commissionBasisPoints,
+      );
 
       // Build the base URL for Stripe success/cancel redirects.
       // The Origin header is ONLY used if it exactly matches a verified allowed host.
@@ -270,6 +273,8 @@ export async function POST(request: Request) {
             tenantId: tenant.id,
             slug,
             fulfillmentType,
+            // Record the commission rate used so the webhook can persist it
+            commissionBasisPoints: String(commissionBasisPoints),
           },
         });
       } catch (err: any) {

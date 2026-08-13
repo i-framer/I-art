@@ -61,6 +61,13 @@ export const ordersTable = pgTable("order", {
   statusEmailLastAttemptAt: timestamp("status_email_last_attempt_at", {
     withTimezone: true,
   }),
+  /**
+   * The platform commission rate actually applied to this order, in basis points
+   * (hundredths of a percent). e.g. 500 = 5.00 %, 350 = 3.50 %.
+   * Recorded at checkout time so a subsequent change to the tenant's rate
+   * does not retroactively alter past orders.
+   */
+  commissionBasisPoints: integer("commission_basis_points"),
   // Partial / full refund tracking
   refundedAmountCents: integer("refunded_amount_cents"),
   refundedAt: timestamp("refunded_at", { withTimezone: true }),

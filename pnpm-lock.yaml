@@ -249,6 +249,9 @@ importers:
       '@replit/connectors-sdk':
         specifier: ^0.4.1
         version: 0.4.1
+      '@types/pg':
+        specifier: ^8.20.0
+        version: 8.20.0
       '@vercel/blob':
         specifier: ^2.7.0
         version: 2.7.0
@@ -273,6 +276,9 @@ importers:
       nodemailer:
         specifier: ^9.0.3
         version: 9.0.3
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
       react:
         specifier: 'catalog:'
         version: 19.1.0
