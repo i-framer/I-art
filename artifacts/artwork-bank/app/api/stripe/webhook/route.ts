@@ -656,7 +656,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
     // Stripe treats our 200 as successful delivery and will not retry, so
     // the alert row is the only operator-visible record of this event.
     try {
-      await db
+      const inserted = await db
         .insert(stripeAlertsTable)
         .values({
           stripeEventId: eventId,
@@ -664,7 +664,35 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
           customerId,
           reason,
         })
-        .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId });
+        .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId })
+        .returning({ id: stripeAlertsTable.id });
+
+      if (inserted.length > 0) {
+        let slackFailure: string | undefined;
+        try {
+          const slackResult = await sendBillingAlertSlackNotification({
+            stripeEventId: eventId,
+            eventType: "checkout.session.completed",
+            customerId,
+            subscriptionId: null,
+            reason,
+          });
+          if (!slackResult.ok) slackFailure = slackResult.error;
+        } catch (slackErr) {
+          console.error("[webhook] Failed to send billing alert Slack message:", slackErr);
+          slackFailure = (slackErr as any)?.message ?? String(slackErr);
+        }
+        if (slackFailure) {
+          try {
+            await db
+              .update(stripeAlertsTable)
+              .set({ slackPostFailed: new Date() })
+              .where(eq(stripeAlertsTable.stripeEventId, eventId));
+          } catch (updateErr) {
+            console.error("[webhook] Failed to persist slackPostFailed flag:", updateErr);
+          }
+        }
+      }
     } catch (dbErr) {
       console.error("[webhook] Failed to persist metadata-missing alert:", dbErr);
     }
@@ -693,7 +721,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
     // successfully; the data is simply inconsistent). Returning 5xx would just
     // cause Stripe to re-deliver the same malformed event repeatedly.
     try {
-      await db
+      const inserted = await db
         .insert(stripeAlertsTable)
         .values({
           stripeEventId: eventId,
@@ -701,7 +729,35 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
           customerId,
           reason,
         })
-        .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId });
+        .onConflictDoNothing({ target: stripeAlertsTable.stripeEventId })
+        .returning({ id: stripeAlertsTable.id });
+
+      if (inserted.length > 0) {
+        let slackFailure: string | undefined;
+        try {
+          const slackResult = await sendBillingAlertSlackNotification({
+            stripeEventId: eventId,
+            eventType: "checkout.session.completed",
+            customerId,
+            subscriptionId: null,
+            reason,
+          });
+          if (!slackResult.ok) slackFailure = slackResult.error;
+        } catch (slackErr) {
+          console.error("[webhook] Failed to send billing alert Slack message:", slackErr);
+          slackFailure = (slackErr as any)?.message ?? String(slackErr);
+        }
+        if (slackFailure) {
+          try {
+            await db
+              .update(stripeAlertsTable)
+              .set({ slackPostFailed: new Date() })
+              .where(eq(stripeAlertsTable.stripeEventId, eventId));
+          } catch (updateErr) {
+            console.error("[webhook] Failed to persist slackPostFailed flag:", updateErr);
+          }
+        }
+      }
     } catch (dbErr) {
       console.error("[webhook] Failed to persist artwork-mismatch alert:", dbErr);
     }

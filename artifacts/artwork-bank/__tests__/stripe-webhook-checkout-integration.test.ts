@@ -35,8 +35,9 @@ vi.mock("@/lib/email", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/email")>();
   return { ...actual, sendOrderConfirmation, sendBillingAlertNotification: vi.fn() };
 });
+const sendBillingAlertSlackNotification = vi.hoisted(() => vi.fn(async () => ({ ok: true as const })));
 vi.mock("@/lib/slack", () => ({
-  sendBillingAlertSlackNotification: vi.fn(async () => ({ ok: true })),
+  sendBillingAlertSlackNotification,
 }));
 vi.mock("@/lib/base-url", () => ({
   getTenantUrl: vi.fn(() => "https://gallery.test/orders"),
@@ -135,6 +136,8 @@ function makeRequest(event: object): Request {
 
 afterEach(async () => {
   sendOrderConfirmation.mockReset();
+  sendBillingAlertSlackNotification.mockReset();
+  sendBillingAlertSlackNotification.mockResolvedValue({ ok: true });
   await cleanup();
 });
 afterAll(cleanup);
@@ -254,6 +257,16 @@ describeIntegration("Stripe webhook — checkout.session.completed — real-DB i
     expect(alert?.eventType).toBe("checkout.session.completed");
     expect(alert?.reason).toMatch(/missing required metadata/);
     expect(alert?.reason).toMatch(sessionId);
+
+    // Slack must be notified so the operator has a real-time signal.
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledOnce();
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stripeEventId: eventId,
+        eventType: "checkout.session.completed",
+        reason: expect.stringMatching(/missing required metadata/),
+      }),
+    );
   });
 
   it("artwork tenant mismatch → early return; no order inserted; durable alert created", async () => {
@@ -284,6 +297,16 @@ describeIntegration("Stripe webhook — checkout.session.completed — real-DB i
     expect(alert?.reason).toMatch(/artwork not found or tenant mismatch/);
     expect(alert?.reason).toMatch(artworkId);
     expect(alert?.reason).toMatch(sessionId);
+
+    // Slack must be notified so the operator has a real-time signal.
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledOnce();
+    expect(sendBillingAlertSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stripeEventId: eventId,
+        eventType: "checkout.session.completed",
+        reason: expect.stringMatching(/artwork not found or tenant mismatch/),
+      }),
+    );
   });
 
   it("missing artworkId only → no order; durable alert with artworkId=(missing)", async () => {
