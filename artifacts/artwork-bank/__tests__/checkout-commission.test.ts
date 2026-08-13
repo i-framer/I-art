@@ -1,16 +1,15 @@
 /**
- * Task #305 — Confirm the checkout session sets the correct commission amount
- * before payment starts.
+ * Task #305 / Task #217 — Confirm the checkout session sets the correct
+ * commission amount before payment starts.
  *
  * Verifies that the Stripe checkout session is created with
  * payment_intent_data.application_fee_amount equal to the value returned by
- * the REAL calcApplicationFee(artwork.price), and that the gallery's connected
- * account receives the transfer (transfer_data.destination =
- * tenant.stripeAccountId).
+ * the REAL calcApplicationFee(artwork.price) for standard tenants, and the
+ * REAL calcApplicationFeeForTenant(artwork.price, 350) for i-Framer Premium
+ * tenants (Task #217).
  *
- * calcApplicationFee is intentionally NOT mocked here (uses importOriginal like
- * the webhook-commission sibling test) so a regression in the production
- * rounding formula would cause these tests to fail.
+ * Neither calcApplicationFee nor calcApplicationFeeForTenant are mocked — the
+ * real implementations are used so formula regressions fail the tests.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
@@ -63,7 +62,8 @@ const tenant = vi.hoisted(() => ({
   customDomainVerified: false,
   // null → no per-tenant override → calcApplicationFeeForTenant falls back
   // to the global PLATFORM_FEE_PERCENT (5%), same as calcApplicationFee.
-  commissionBasisPoints: null,
+  // Widened to number | null so tests can mutate it to 350/500 for i-Framer Premium cases.
+  commissionBasisPoints: null as number | null,
 }));
 
 vi.mock("@/lib/tenant-cache", () => ({
@@ -134,6 +134,8 @@ function dbUpdateReturning(price: number) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Restore default (standard) tenant state before each test
+  tenant.commissionBasisPoints = null;
   sessionsCreate.mockResolvedValue({
     url: "https://checkout.stripe.com/cs_test_abc",
   });
@@ -194,5 +196,182 @@ describe("POST /api/stripe/checkout — commission amount", () => {
     const realFee = calcApplicationFee(oddCentPrice);
     expect(realFee).toBe(500); // sanity-check the real function
     expect(args.payment_intent_data.application_fee_amount).toBe(realFee);
+  });
+});
+
+// ── Task #217 — i-Framer Premium checkout commission ─────────────────────────
+//
+// Requirements:
+//   B. Eligible i-Framer Premium gallery → reduced 3.5% fee (350 bp)
+//   C. Non-premium gallery → cannot accidentally receive the premium fee
+//   E. Fee follows current DB eligibility state, not stale/client-side data
+//   F. Session metadata carries the correct commissionBasisPoints for the webhook
+//
+// The real calcApplicationFeeForTenant implementation is used throughout so
+// formula drift causes these tests to fail rather than silently passing.
+
+import { calcApplicationFeeForTenant } from "@/lib/stripe";
+
+describe("POST /api/stripe/checkout — i-Framer Premium commission (Task #217)", () => {
+  // artwork.price = 24_000 cents ($240 AUD)
+  // 5.0%: Math.round(24000 * 0.05) = 1200 cents
+  // 3.5%: Math.round(24000 * 0.035) = 840 cents
+
+  beforeEach(async () => {
+    // The "odd-cent" test in the sibling describe block mutates db.update to
+    // return price 9 999 and that mutation persists across describe blocks
+    // because the mock module is a shared object. Restore it here so these
+    // tests always operate on artwork.price = 24 000.
+    const { db: mockDb } = await import("@workspace/db");
+    (mockDb as any).update = (_table: any) => ({
+      set: (_vals: any) => ({
+        where: (_cond: any) => ({
+          returning: () => Promise.resolve([{ ...artwork }]),
+        }),
+      }),
+    });
+  });
+
+  // ── Requirement B: Premium gallery receives 3.5% fee ───────────────────────
+
+  it("uses 3.5% (350 bp) fee when tenant.commissionBasisPoints = 350", async () => {
+    // Simulate a verified i-Framer Premium tenant (commissionBasisPoints set to 350
+    // by verifyIFramerAccount when the portal URL was successfully checked).
+    tenant.commissionBasisPoints = 350;
+
+    const res = await POST(checkoutRequest());
+    expect(res.status).toBe(200);
+
+    const args = sessionsCreate.mock.calls[0][0];
+    const expected = calcApplicationFeeForTenant(artwork.price, 350);
+    expect(args.payment_intent_data.application_fee_amount).toBe(expected.feeCents);
+    // Sanity: 3.5% of $240 = $8.40 = 840 cents
+    expect(args.payment_intent_data.application_fee_amount).toBe(840);
+  });
+
+  it("Premium 3.5% fee is strictly lower than the standard 5% fee on the same artwork", async () => {
+    // Regression guard: the Premium rate must always be a discount, not equal
+    // or greater than the standard rate.
+    tenant.commissionBasisPoints = 350;
+    await POST(checkoutRequest());
+    const premiumFee = sessionsCreate.mock.calls[0][0].payment_intent_data.application_fee_amount;
+
+    vi.clearAllMocks();
+    sessionsCreate.mockResolvedValue({ url: "https://checkout.stripe.com/cs_test_std" });
+    tenant.commissionBasisPoints = null; // standard rate
+    await POST(checkoutRequest());
+    const standardFee = sessionsCreate.mock.calls[0][0].payment_intent_data.application_fee_amount;
+
+    expect(premiumFee).toBeLessThan(standardFee);
+  });
+
+  // ── Requirement F: Session metadata carries commissionBasisPoints ───────────
+
+  it("carries commissionBasisPoints=350 in session metadata for Premium tenant", async () => {
+    tenant.commissionBasisPoints = 350;
+
+    await POST(checkoutRequest());
+    const args = sessionsCreate.mock.calls[0][0];
+
+    // The webhook reads commissionBasisPoints from metadata to persist the
+    // effective rate on the order row — it must be present and correct.
+    expect(args.metadata.commissionBasisPoints).toBe("350");
+  });
+
+  it("carries commissionBasisPoints matching the global rate in metadata for standard tenant", async () => {
+    // commissionBasisPoints is null → route uses global PLATFORM_FEE_PERCENT
+    // and should embed the effective bp in metadata so the webhook can record it.
+    tenant.commissionBasisPoints = null;
+
+    await POST(checkoutRequest());
+    const args = sessionsCreate.mock.calls[0][0];
+
+    // The route stores String(commissionBasisPoints) where commissionBasisPoints
+    // is the effective value returned by calcApplicationFeeForTenant, which
+    // converts the global PLATFORM_FEE_PERCENT back to basis points.
+    const { commissionBasisPoints: effectiveBp } = calcApplicationFeeForTenant(artwork.price, null);
+    expect(args.metadata.commissionBasisPoints).toBe(String(effectiveBp));
+  });
+
+  // ── Requirement C: Non-premium cannot accidentally get Premium fee ──────────
+
+  it("non-Premium tenant (null bp) does NOT receive the 3.5% Premium fee", async () => {
+    tenant.commissionBasisPoints = null; // not a Premium tenant
+
+    await POST(checkoutRequest());
+    const args = sessionsCreate.mock.calls[0][0];
+
+    const premiumFee = calcApplicationFeeForTenant(artwork.price, 350).feeCents;
+    const actualFee = args.payment_intent_data.application_fee_amount;
+
+    // A non-Premium tenant must never have the Premium reduced fee applied.
+    expect(actualFee).not.toBe(premiumFee);
+    // Must use the global rate instead.
+    expect(actualFee).toBe(calcApplicationFee(artwork.price));
+  });
+
+  it("tenant with an explicit standard 500 bp override does not receive the Premium 3.5% rate", async () => {
+    // If an operator explicitly sets commissionBasisPoints to 500 (the global
+    // default), the checkout must honour that value, not apply 350 by accident.
+    tenant.commissionBasisPoints = 500;
+
+    await POST(checkoutRequest());
+    const args = sessionsCreate.mock.calls[0][0];
+
+    const premiumFee = calcApplicationFeeForTenant(artwork.price, 350).feeCents;
+    expect(args.payment_intent_data.application_fee_amount).not.toBe(premiumFee);
+    expect(args.payment_intent_data.application_fee_amount).toBe(
+      calcApplicationFeeForTenant(artwork.price, 500).feeCents,
+    );
+  });
+
+  // ── Requirement E: Fee follows current eligibility state ───────────────────
+
+  it("uses the tenant's current DB commissionBasisPoints — not a cached/stale value", async () => {
+    // The checkout route reads commissionBasisPoints from the tenant record
+    // returned by getTenantBySlug() on every request, so it always reflects the
+    // current verified state set by verifyIFramerAccount / recheckIFramerVerification.
+    //
+    // Simulate a tenant whose premium lapsed: commissionBasisPoints was just
+    // cleared to null by recheckIFramerVerification.
+    tenant.commissionBasisPoints = null; // lapsed — cleared by recheck
+
+    await POST(checkoutRequest());
+    const args = sessionsCreate.mock.calls[0][0];
+
+    // Must use the global (standard) rate, not the old 350 bp Premium rate.
+    expect(args.payment_intent_data.application_fee_amount).toBe(
+      calcApplicationFee(artwork.price),
+    );
+    expect(args.metadata.commissionBasisPoints).not.toBe("350");
+  });
+
+  it("immediately applies Premium rate on the first checkout after verification", async () => {
+    // Simulate a tenant who just verified: commissionBasisPoints set to 350.
+    tenant.commissionBasisPoints = 350;
+
+    const res = await POST(checkoutRequest());
+    expect(res.status).toBe(200);
+
+    const args = sessionsCreate.mock.calls[0][0];
+    expect(args.payment_intent_data.application_fee_amount).toBe(840); // 3.5% of $240
+    expect(args.metadata.commissionBasisPoints).toBe("350");
+  });
+
+  // ── Rounding with Premium rate ──────────────────────────────────────────────
+
+  it("rounds 3.5% Premium fee correctly — 9 999 × 3.5% = 349.965 → 350 cents", async () => {
+    tenant.commissionBasisPoints = 350;
+
+    const { db: mockDb } = await import("@workspace/db");
+    (mockDb as any).update = dbUpdateReturning(9_999);
+
+    await POST(checkoutRequest());
+    const args = sessionsCreate.mock.calls[0][0];
+
+    // Math.round(9999 * (350/100/100)) = Math.round(349.965) = 350
+    const expected = calcApplicationFeeForTenant(9_999, 350).feeCents;
+    expect(expected).toBe(350); // sanity-check real function
+    expect(args.payment_intent_data.application_fee_amount).toBe(expected);
   });
 });
