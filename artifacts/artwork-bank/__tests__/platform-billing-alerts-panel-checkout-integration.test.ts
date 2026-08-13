@@ -69,6 +69,7 @@ vi.mock("next/cache", () => ({
 
 import { POST } from "@/app/api/stripe/webhook/route";
 import { dismissBillingAlert } from "@/app/platform/actions";
+import { sendBillingAlertSlackNotification } from "@/lib/slack";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 const RUN = Date.now();
@@ -362,6 +363,119 @@ describeIntegration(
 
       expect(subRow).toBeDefined();
       expect(subRow?.eventType).toBe("customer.subscription.updated");
+    });
+
+    it("checkout alert with slackPostFailed still appears in the panel query (dismissedAt is the only filter)", async () => {
+      // Make the Slack notifier reject this call so slackPostFailed gets set.
+      vi.mocked(sendBillingAlertSlackNotification).mockResolvedValueOnce({
+        ok: false,
+        error: "token_revoked",
+      });
+
+      const sessionId = `cs_test_${uid()}`;
+      const eventId = `evt-${sessionId}`;
+      createdAlertEventIds.push(eventId);
+
+      const noMetaEvent = {
+        id: eventId,
+        type: "checkout.session.completed",
+        data: {
+          object: {
+            id: sessionId,
+            mode: "payment",
+            amount_total: 50000,
+            metadata: {}, // triggers missing-metadata path
+            customer_details: { email: "buyer@example.com", name: "Test Buyer" },
+          },
+        },
+      };
+
+      const res = await POST(makeRequest(noMetaEvent));
+      expect(res.status).toBe(200);
+
+      // The panel query only filters on isNull(dismissedAt) — slackPostFailed must not hide the row.
+      const alerts = await panelQuery();
+      const row = alerts.find((a) => a.stripeEventId === eventId);
+
+      expect(row).toBeDefined();
+      expect(row?.eventType).toBe("checkout.session.completed");
+    });
+
+    it("checkout alert with Slack failure has slackPostFailed set on the DB row", async () => {
+      vi.mocked(sendBillingAlertSlackNotification).mockResolvedValueOnce({
+        ok: false,
+        error: "token_revoked",
+      });
+
+      const sessionId = `cs_test_${uid()}`;
+      const eventId = `evt-${sessionId}`;
+      createdAlertEventIds.push(eventId);
+
+      const noMetaEvent = {
+        id: eventId,
+        type: "checkout.session.completed",
+        data: {
+          object: {
+            id: sessionId,
+            mode: "payment",
+            amount_total: 50000,
+            metadata: {},
+            customer_details: { email: "buyer@example.com", name: "Test Buyer" },
+          },
+        },
+      };
+
+      await POST(makeRequest(noMetaEvent));
+
+      // Read the row directly (bypassing the panel filter) to check slackPostFailed.
+      const row = await db.query.stripeAlertsTable.findFirst({
+        where: (t, { eq: eqFn }) => eqFn(t.stripeEventId, eventId),
+      });
+
+      expect(row).toBeDefined();
+      expect(row?.slackPostFailed).toBeInstanceOf(Date);
+    });
+
+    it("checkout alert with slackPostFailed can still be dismissed", async () => {
+      vi.mocked(sendBillingAlertSlackNotification).mockResolvedValueOnce({
+        ok: false,
+        error: "token_revoked",
+      });
+
+      const sessionId = `cs_test_${uid()}`;
+      const eventId = `evt-${sessionId}`;
+      createdAlertEventIds.push(eventId);
+
+      const noMetaEvent = {
+        id: eventId,
+        type: "checkout.session.completed",
+        data: {
+          object: {
+            id: sessionId,
+            mode: "payment",
+            amount_total: 50000,
+            metadata: {},
+            customer_details: { email: "buyer@example.com", name: "Test Buyer" },
+          },
+        },
+      };
+
+      await POST(makeRequest(noMetaEvent));
+
+      // Confirm the alert is in the panel (slackPostFailed did not hide it).
+      const before = await panelQuery();
+      const rowBefore = before.find((a) => a.stripeEventId === eventId);
+      expect(rowBefore).toBeDefined();
+      // slackPostFailed must be set (Slack failure was persisted).
+      expect(rowBefore?.slackPostFailed).toBeInstanceOf(Date);
+
+      // Dismiss via the real server action.
+      await dismissBillingAlert(rowBefore!.id);
+
+      // After dismissal the panel query must no longer include the row.
+      const after = await panelQuery();
+      const rowAfter = after.find((a) => a.stripeEventId === eventId);
+      expect(rowAfter).toBeUndefined();
     });
   },
 );
