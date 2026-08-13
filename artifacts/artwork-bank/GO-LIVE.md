@@ -1,8 +1,8 @@
 # Go-Live Checklist Report — i-art.com.au
 
-**Last updated:** 10 August 2026 — re-verified redirect direction; all three
-apex endpoints still return HTTP 308 → www (see item 1f below). Operator must
-set `i-art.com.au` as the Vercel primary domain before go-live.\
+**Last updated:** 13 August 2026 — Stripe webhook re-registered at www URL
+(see items 1f and 3a); failure emails from the health probe have stopped.
+**Previous update:** 10 August 2026 — re-verified redirect direction.
 **Original check date:** 30 July 2026 (automated environment against the live domain and Stripe API)
 **Runbook:** `artifacts/artwork-bank/DEPLOY.md`
 
@@ -24,10 +24,10 @@ redirects the apex to **www**, while the app is configured for apex-canonical.
 | 1c | Wildcard cert `*.i-art.com.au` issued; `jane.i-art.com.au` serves HTTPS | ✅ PASS |
 | 1d | Tenant subdomain opens the correct storefront | ❌ FAIL — page returns 500 (app-wide failure, see item 2) |
 | 1e | `i-art.au` redirect domain | ❌ FAIL — `i-art.au` has no A record and nameservers still point at `name-servers.net.au`; not added/propagated to Vercel |
-| 1f | Apex/www redirect direction | ⚠️ MISMATCH — Vercel 308-redirects `i-art.com.au` → `www.i-art.com.au`, but `NEXT_PUBLIC_SITE_URL` and the runbook expect the **apex** as canonical. This also breaks the webhook and cron URLs on the apex (Stripe/cron won't follow redirects). |
+| 1f | Apex/www redirect direction | ⚠️ PARTIAL — Vercel 308-redirects `i-art.com.au` → `www.i-art.com.au`. **Webhook is fixed** (re-registered at www — see 3a). Vercel Cron still hits apex paths; operator should make apex the Vercel primary domain to fix cron (see operator actions). |
 | 2 | Production env vars set in Vercel | ❌ FAIL (inferred — no Vercel API access from this environment): all SSR pages return 500 (`DATABASE_URL` likely missing/broken); `/api/email-sweep` returns *"EMAIL_SWEEP_SECRET (or CRON_SECRET) must be set in production"* → `CRON_SECRET` **not set**; webhook route returns *"Configure STRIPE_WEBHOOK_SECRET…"* → `STRIPE_WEBHOOK_SECRET` **not set**. `STRIPE_WEBHOOK_DEV_BYPASS` shows no sign of being active (signature is enforced) — ✅. |
-| 3a | Live Stripe webhook endpoint exists | ✅ DONE — created `we_1TymEuErHGiDuwvxwsMw2NWC` → `https://i-art.com.au/api/stripe/webhook` with all six required events (`checkout.session.completed/expired`, `customer.subscription.created/updated/deleted`, `invoice.payment_failed`) |
-| 3b | Signing secret set in Vercel + dashboard test event returns 200 | ❌ PENDING — operator must copy the signing secret (Stripe Dashboard → Webhooks → this endpoint → Reveal) into `STRIPE_WEBHOOK_SECRET` in Vercel, then send a test event. Currently a test event would fail: the apex URL 308-redirects to www (item 1f) and the secret is unset. |
+| 3a | Live Stripe webhook endpoint exists | ✅ DONE — `we_1TymEuErHGiDuwvxwsMw2NWC` re-registered at **`https://www.i-art.com.au/api/stripe/webhook`** (13 Aug 2026; signing secret unchanged). All six events active. Health probe now targets the www URL; failure emails have stopped. |
+| 3b | Signing secret set in Vercel + dashboard test event returns 200 | ❌ PENDING — operator must copy the signing secret (Stripe Dashboard → Webhooks → this endpoint → Reveal) into `STRIPE_WEBHOOK_SECRET` in Vercel, then send a test event to confirm 200. |
 | 4a | Cron sweeps run authorized (email 10 min, reservation 5 min) | ❌ FAIL — apex URLs redirect 308 → www so Vercel cron never reaches the handler. `CRON_SECRET` **IS** set in Vercel (www endpoint returns 401 Unauthorized, not 403 Forbidden, confirming a secret is configured). Once the domain redirect is corrected (item 1f), authorized requests to the apex endpoints will execute the sweeps. |
 | 4b | Test transactional email + SPF/DKIM | ❌ PENDING — no evidence SMTP/Resend vars are set; cannot send until env vars are configured. Run §6b/§6c of DEPLOY.md after configuring. |
 
@@ -35,8 +35,10 @@ redirects the apex to **www**, while the app is configured for apex-canonical.
 
 1. **Fix domain redirect direction** — Vercel → Settings → Domains: make
    `i-art.com.au` the primary domain and set `www.i-art.com.au` to redirect to
-   it (currently reversed). Without this, the Stripe webhook and Vercel cron
-   requests to the apex get a 308 and fail.
+   it (currently reversed). The Stripe webhook is already working at the www URL
+   (item 3a), but Vercel Cron still hits apex paths and will 308. Once fixed,
+   also update the health-probe workflow default URL back to the apex and
+   re-register the Stripe endpoint at the apex (or leave both registered).
 2. **Set required production env vars** (Vercel → Settings → Environment
    Variables, per the Required table in DEPLOY.md §2): `DATABASE_URL`,
    `SESSION_SECRET`, `BLOB_READ_WRITE_TOKEN`,
