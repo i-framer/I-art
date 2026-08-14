@@ -261,6 +261,42 @@ describeIntegration(
     );
 
     it(
+      "exception path (Slack throws): iframerSlackPostFailed is left at the original seeded timestamp",
+      async () => {
+        // Seed with a known past timestamp so we can compare exactly.
+        const originalFailedAt = new Date(Date.now() - 60_000);
+        const tenantId = await createTenant({
+          iframerSlackPostFailed: originalFailedAt,
+          iframerSlackFailedPayload: makePayload("linked"),
+        });
+
+        // Simulate the Slack SDK throwing entirely rather than returning ok:false.
+        sendIframerAccountSlackNotificationMock.mockRejectedValueOnce(
+          new Error("ETIMEDOUT: Slack SDK network error"),
+        );
+
+        const result = await replayFailedIframerSlackAlerts();
+
+        expect(result.failed).toBeGreaterThanOrEqual(1);
+
+        const row = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, tenantId),
+        });
+
+        // The timestamp must not be null — the failure flag must still be set.
+        expect(row?.iframerSlackPostFailed).not.toBeNull();
+
+        // The timestamp must equal the original seeded value — it must not be
+        // reset to null or refreshed to a newer date when an exception is thrown,
+        // because the original timestamp is the most accurate signal to operators
+        // that the alert has been stuck since before the latest sweep.
+        expect(row!.iframerSlackPostFailed!.getTime()).toBe(
+          originalFailedAt.getTime(),
+        );
+      },
+    );
+
+    it(
       "tenant without a stored payload is counted as skipped, not failed",
       async () => {
         const tenantId = await createTenant({
