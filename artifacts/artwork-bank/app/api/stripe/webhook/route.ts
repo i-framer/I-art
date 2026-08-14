@@ -103,6 +103,8 @@ export async function POST(request: Request) {
       );
     } else if (event.type === "account.updated") {
       await handleAccountUpdated(event.data.object as Stripe.Account);
+    } else if (event.type === "charge.refunded") {
+      await handleChargeRefunded(event.data.object as Stripe.Charge);
     }
   } catch (err: any) {
     console.error("Webhook handler error:", err);
@@ -990,6 +992,113 @@ async function handleAccountUpdated(account: Stripe.Account) {
   console.log(
     `[webhook] account.updated — cached readiness for tenant ${updated[0]!.id}: ` +
       `charges_enabled=${account.charges_enabled} payouts_enabled=${account.payouts_enabled}`,
+  );
+}
+
+// ── External refund sync ──────────────────────────────────────────────────────
+
+/**
+ * Stripe fires `charge.refunded` whenever any refund is created against a
+ * charge — including refunds initiated directly from the Stripe dashboard.
+ * Without this handler, external refunds silently return 200 and the order's
+ * refundedAmountCents never updates.
+ *
+ * Design decisions:
+ * - We use charge.amount_refunded (cumulative Stripe total) to SET the DB
+ *   value, not a delta, so the result is always the authoritative Stripe total.
+ * - Idempotency + out-of-order guard: only update when the new Stripe total is
+ *   strictly greater than the current DB total.  This prevents a stale/duplicate
+ *   webhook from overwriting a more recent value.
+ * - Full refund (charge.refunded = true) also sets status = 'CANCELLED' and
+ *   queues the buyer status-update email (picked up by the email sweep).
+ * - Partial refunds update refundedAmountCents; buyer notification is not
+ *   queued here because the sweep only sends status-change emails.  Operators
+ *   should configure Stripe to send their own refund receipts for partials, or
+ *   issue partial refunds via the admin UI which handles notification directly.
+ */
+async function handleChargeRefunded(charge: Stripe.Charge) {
+  const paymentIntentId =
+    typeof charge.payment_intent === "string"
+      ? charge.payment_intent
+      : (charge.payment_intent as Stripe.PaymentIntent | null)?.id ?? null;
+
+  if (!paymentIntentId) {
+    console.warn(
+      `[webhook] charge.refunded — charge ${charge.id} has no payment_intent, skipping`,
+    );
+    return;
+  }
+
+  const order = await db.query.ordersTable.findFirst({
+    where: eq(ordersTable.stripePaymentIntentId, paymentIntentId),
+    columns: {
+      id: true,
+      tenantId: true,
+      status: true,
+      totalCents: true,
+      refundedAmountCents: true,
+    },
+  });
+
+  if (!order) {
+    // No order matches this payment intent — may be a subscription charge
+    // or a charge on a connected account we don't track.  200 is correct so
+    // Stripe does not keep retrying.
+    console.warn(
+      `[webhook] charge.refunded — no order for payment_intent=${paymentIntentId}, charge=${charge.id}`,
+    );
+    return;
+  }
+
+  const amountRefunded = charge.amount_refunded;
+  const isFullRefund = charge.refunded;
+  // Latest refund is first in the list (Stripe returns newest-first).
+  const latestRefundId = charge.refunds?.data?.[0]?.id ?? null;
+
+  // Idempotency + out-of-order guard: only write when the Stripe cumulative
+  // total is strictly greater than what we have.  Covers:
+  //   - Duplicate delivery of the same event → skip (same value)
+  //   - Out-of-order partial-refund events → skip (lower total)
+  const [updated] = await db
+    .update(ordersTable)
+    .set({
+      refundedAmountCents: amountRefunded,
+      // Preserve an existing refundedAt; set to now only on first refund.
+      refundedAt: sql`coalesce(${ordersTable.refundedAt}, now())`,
+      ...(latestRefundId ? { stripeRefundId: latestRefundId } : {}),
+      ...(isFullRefund ? { status: "CANCELLED" } : {}),
+    })
+    .where(
+      and(
+        eq(ordersTable.id, order.id),
+        sql`(${ordersTable.refundedAmountCents} IS NULL OR ${ordersTable.refundedAmountCents} < ${amountRefunded})`,
+      ),
+    )
+    .returning({ id: ordersTable.id });
+
+  if (!updated) {
+    console.log(
+      `[webhook] charge.refunded — order ${order.id}: already recorded >= ${amountRefunded}c, skip`,
+    );
+    return;
+  }
+
+  // Queue the buyer status-update email for full refunds.  The email sweep
+  // reads statusEmailQueuedAt and sends the message on the next pass.
+  if (isFullRefund) {
+    await db
+      .update(ordersTable)
+      .set({
+        statusEmailQueuedAt: new Date(),
+        statusEmailError: null,
+        statusEmailAttempts: 0,
+      })
+      .where(eq(ordersTable.id, order.id));
+  }
+
+  console.log(
+    `[webhook] charge.refunded — order ${order.id}: ` +
+      `refundedAmountCents=${amountRefunded}, full=${isFullRefund}, refundId=${latestRefundId}`,
   );
 }
 
