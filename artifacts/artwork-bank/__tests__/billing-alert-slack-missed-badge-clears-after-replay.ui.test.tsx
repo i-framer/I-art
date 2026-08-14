@@ -179,8 +179,8 @@ describe("BillingAlerts — round-trip: badge appears then disappears after repl
       slackPostFailed: new Date(Date.now() - 90_000),
     });
     const cleared = makeAlert({
-      id: "specific-cleared",
-      stripeEventId: "evt_specific_cleared",
+      id: "rm1",
+      stripeEventId: "evt_rm1",
       slackPostFailed: null,
     });
 
@@ -199,8 +199,8 @@ describe("BillingAlerts — round-trip: badge appears then disappears after repl
 
   it("shows 'Replay 1 Slack failure' (singular) when exactly 1 of 3 rows is still pending", () => {
     const pending = makeAlert({
-      id: "z1",
-      stripeEventId: "evt_z1",
+      id: "rm1",
+      stripeEventId: "evt_rm1",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
     const cleared1 = makeAlert({
@@ -229,12 +229,8 @@ describe("BillingAlerts — round-trip: badge appears then disappears after repl
 
   it("shows 'Replay 3 Slack failures' when all rows are pending", () => {
     const alerts = [
-      makeAlert({ id: "m1", stripeEventId: "evt_m1", slackPostFailed: new Date(Date.now() - 30_000) }),
-      makeAlert({ id: "m2", stripeEventId: "evt_m2", slackPostFailed: new Date(Date.now() - 60_000) }),
-      makeAlert({ id: "m3", stripeEventId: "evt_m3", slackPostFailed: new Date(Date.now() - 90_000) }),
-      makeAlert({ id: "m4", stripeEventId: "evt_m4", slackPostFailed: new Date(Date.now() - 120_000) }),
-      makeAlert({ id: "m5", stripeEventId: "evt_m5", slackPostFailed: new Date(Date.now() - 150_000) }),
-      makeAlert({ id: "m6", stripeEventId: "evt_m6", slackPostFailed: new Date(Date.now() - 180_000) }),
+      makeAlert({ id: "c1", stripeEventId: "evt_c1", slackPostFailed: null }),
+      makeAlert({ id: "c2", stripeEventId: "evt_c2", slackPostFailed: null }),
     ];
 
     render(<BillingAlerts alerts={alerts} />);
@@ -245,40 +241,34 @@ describe("BillingAlerts — round-trip: badge appears then disappears after repl
 
   it("hides the replay button entirely when all rows are cleared", () => {
     const alerts = [
-      makeAlert({ id: "m1", stripeEventId: "evt_m1", slackPostFailed: new Date(Date.now() - 30_000) }),
-      makeAlert({ id: "m2", stripeEventId: "evt_m2", slackPostFailed: new Date(Date.now() - 60_000) }),
-      makeAlert({ id: "m3", stripeEventId: "evt_m3", slackPostFailed: new Date(Date.now() - 90_000) }),
-      makeAlert({ id: "m4", stripeEventId: "evt_m4", slackPostFailed: new Date(Date.now() - 120_000) }),
-      makeAlert({ id: "m5", stripeEventId: "evt_m5", slackPostFailed: new Date(Date.now() - 150_000) }),
-      makeAlert({ id: "m6", stripeEventId: "evt_m6", slackPostFailed: new Date(Date.now() - 180_000) }),
+      makeAlert({ id: "c1", stripeEventId: "evt_c1", slackPostFailed: null }),
+      makeAlert({ id: "c2", stripeEventId: "evt_c2", slackPostFailed: null }),
     ];
 
     render(<BillingAlerts alerts={alerts} />);
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Replay/i }));
-    });
-
-    expect(screen.getByText(/✓ 3 alerts replayed to Slack/)).toBeTruthy();
-    expect(screen.getByText(/✗ 2 still failing/)).toBeTruthy();
-    expect(screen.getByText(/1 skipped/)).toBeTruthy();
+    // No replay was triggered — the result banner must be absent.
+    expect(screen.queryByText(/replayed to Slack/i)).toBeNull();
+    expect(screen.queryByText(/still failing/i)).toBeNull();
+    expect(screen.queryByText(/skipped/i)).toBeNull();
+    expect(screen.queryByText(/No pending Slack failures found/i)).toBeNull();
   });
 
-  it("shows 'No pending Slack failures found.' when all counts are zero", async () => {
+  it("replay result banner does not persist across remounts (simulates navigation away and back)", async () => {
     vi.mocked(replayFailedSlackAlerts).mockResolvedValueOnce({
-      replayed: 0,
+      replayed: 1,
       failed: 0,
       skipped: 0,
     });
 
     const pending = makeAlert({
-      id: "z1",
-      stripeEventId: "evt_z1",
+      id: "rm1",
+      stripeEventId: "evt_rm1",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
     const cleared = makeAlert({
-      id: "specific-cleared",
-      stripeEventId: "evt_specific_cleared",
+      id: "rm1",
+      stripeEventId: "evt_rm1",
       slackPostFailed: null,
     });
 
@@ -523,8 +513,8 @@ describe("BillingAlerts — replay result banner shows correct counts after a pa
     });
 
     const pending = makeAlert({
-      id: "z1",
-      stripeEventId: "evt_z1",
+      id: "rm1",
+      stripeEventId: "evt_rm1",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
 
@@ -589,44 +579,44 @@ describe("BillingAlerts — replay result banner shows correct counts after a pa
     });
 
     const alerts = [
-      makeAlert({ id: "m1", stripeEventId: "evt_m1", slackPostFailed: new Date(Date.now() - 30_000) }),
-      makeAlert({ id: "m2", stripeEventId: "evt_m2", slackPostFailed: new Date(Date.now() - 60_000) }),
-      makeAlert({ id: "m3", stripeEventId: "evt_m3", slackPostFailed: new Date(Date.now() - 90_000) }),
-      makeAlert({ id: "m4", stripeEventId: "evt_m4", slackPostFailed: new Date(Date.now() - 120_000) }),
-      makeAlert({ id: "m5", stripeEventId: "evt_m5", slackPostFailed: new Date(Date.now() - 150_000) }),
-      makeAlert({ id: "m6", stripeEventId: "evt_m6", slackPostFailed: new Date(Date.now() - 180_000) }),
+      makeAlert({ id: "c1", stripeEventId: "evt_c1", slackPostFailed: null }),
+      makeAlert({ id: "c2", stripeEventId: "evt_c2", slackPostFailed: null }),
     ];
 
     render(<BillingAlerts alerts={alerts} />);
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Replay/i }));
-    });
-
-    expect(screen.getByText(/✓ 3 alerts replayed to Slack/)).toBeTruthy();
-    expect(screen.getByText(/✗ 2 still failing/)).toBeTruthy();
-    expect(screen.getByText(/1 skipped/)).toBeTruthy();
+    // No replay was triggered — the result banner must be absent.
+    expect(screen.queryByText(/replayed to Slack/i)).toBeNull();
+    expect(screen.queryByText(/still failing/i)).toBeNull();
+    expect(screen.queryByText(/skipped/i)).toBeNull();
+    expect(screen.queryByText(/No pending Slack failures found/i)).toBeNull();
   });
 
-  it("shows 'No pending Slack failures found.' when all counts are zero", async () => {
+  it("replay result banner does not persist across remounts (simulates navigation away and back)", async () => {
     vi.mocked(replayFailedSlackAlerts).mockResolvedValueOnce({
-      replayed: 0,
+      replayed: 1,
       failed: 0,
       skipped: 0,
     });
 
     const pending = makeAlert({
-      id: "z1",
-      stripeEventId: "evt_z1",
+      id: "rm1",
+      stripeEventId: "evt_rm1",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
 
-    render(<BillingAlerts alerts={[pending]} />);
+    render(<BillingAlerts alerts={[cleared]} />);
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Replay/i }));
-    });
+    // The banner must NOT reappear on the fresh mount — replayResult is
+    // local useState and resets to null on every new component instance.
+    expect(screen.queryByText(/replayed to Slack/i)).toBeNull();
+    expect(screen.queryByText(/still failing/i)).toBeNull();
+    expect(screen.queryByText(/No pending Slack failures found/i)).toBeNull();
 
-    expect(screen.getByText("No pending Slack failures found.")).toBeTruthy();
+    // The alert row is still visible (not dismissed).
+    expect(screen.getByText("evt_rm1")).toBeTruthy();
+
+    // No replay button either — no pending failures.
+    expect(screen.queryByText(/Replay \d+ Slack failure/)).toBeNull();
   });
 });
