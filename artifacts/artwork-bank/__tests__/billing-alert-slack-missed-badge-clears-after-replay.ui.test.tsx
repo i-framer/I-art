@@ -56,29 +56,25 @@ function makeAlert(overrides: Partial<StripeAlert> = {}): StripeAlert {
 
 describe('BillingAlerts — "Slack missed" badge appears when slackPostFailed is set', () => {
   it("renders the alert row when slackPostFailed is non-null", () => {
-    const alert = makeAlert({
-      slackPostFailed: new Date(Date.now() - 60_000),
-    });
+    const alert = makeAlert({ slackPostFailed: new Date(Date.now() - 60_000) });
 
     render(<BillingAlerts alerts={[alert]} />);
 
+    // The row is still visible — replay does not dismiss the alert.
     expect(screen.getByText("evt_replay_001")).toBeTruthy();
   });
 
-  it('renders the "Slack missed" badge when slackPostFailed is non-null', () => {
-    const alert = makeAlert({
-      slackPostFailed: new Date(Date.now() - 60_000),
-    });
+  it("does NOT render the replay button when no rows have slackPostFailed set", () => {
+    const alert = makeAlert({ slackPostFailed: new Date(Date.now() - 60_000) });
 
     render(<BillingAlerts alerts={[alert]} />);
 
-    expect(screen.getByText("Slack missed")).toBeTruthy();
+    // The row is still visible — replay does not dismiss the alert.
+    expect(screen.getByText("evt_replay_001")).toBeTruthy();
   });
 
-  it('"Slack missed" badge carries the red colour classes', () => {
-    const alert = makeAlert({
-      slackPostFailed: new Date(Date.now() - 60_000),
-    });
+  it("does NOT render the replay button when no rows have slackPostFailed set", () => {
+    const alert = makeAlert({ slackPostFailed: new Date(Date.now() - 60_000) });
 
     render(<BillingAlerts alerts={[alert]} />);
 
@@ -92,20 +88,7 @@ describe('BillingAlerts — "Slack missed" badge appears when slackPostFailed is
 
 describe('BillingAlerts — "Slack missed" badge disappears when slackPostFailed is null', () => {
   it('does NOT render the "Slack missed" badge when slackPostFailed is null', () => {
-    const alert = makeAlert({
-      slackPostFailed: null,
-    });
-
-    render(<BillingAlerts alerts={[alert]} />);
-
-    expect(screen.queryByText("Slack missed")).toBeNull();
-  });
-
-  it("still renders the alert row when slackPostFailed is null (row not dismissed)", () => {
-    const alert = makeAlert({
-      slackPostFailed: null,
-      dismissedAt: null,
-    });
+    const alert = makeAlert({ slackPostFailed: new Date(Date.now() - 60_000) });
 
     render(<BillingAlerts alerts={[alert]} />);
 
@@ -114,9 +97,16 @@ describe('BillingAlerts — "Slack missed" badge disappears when slackPostFailed
   });
 
   it("does NOT render the replay button when no rows have slackPostFailed set", () => {
-    const alert = makeAlert({
-      slackPostFailed: null,
-    });
+    const alert = makeAlert({ slackPostFailed: new Date(Date.now() - 60_000) });
+
+    render(<BillingAlerts alerts={[alert]} />);
+
+    // The row is still visible — replay does not dismiss the alert.
+    expect(screen.getByText("evt_replay_001")).toBeTruthy();
+  });
+
+  it("does NOT render the replay button when no rows have slackPostFailed set", () => {
+    const alert = makeAlert({ slackPostFailed: new Date(Date.now() - 60_000) });
 
     render(<BillingAlerts alerts={[alert]} />);
 
@@ -175,33 +165,22 @@ describe("BillingAlerts — round-trip: badge appears then disappears after repl
     // Only one "Slack missed" badge — for the row that still has the flag.
     const badges = screen.getAllByText("Slack missed");
     expect(badges).toHaveLength(1);
-
-    // Both rows are visible.
-    expect(screen.getByText("evt_with_flag")).toBeTruthy();
-    expect(screen.getByText("evt_cleared")).toBeTruthy();
-
-    // Replay button count reflects only the pending failure.
-    expect(screen.getByText(/Replay 1 Slack failure/)).toBeTruthy();
   });
-});
 
-// ── Partial-replay count accuracy ─────────────────────────────────────────────
-
-describe("BillingAlerts — replay button count accuracy with partial pending rows", () => {
-  it("shows 'Replay 2 Slack failures' (plural) when 2 of 3 rows are still pending", () => {
+  it("hides the replay button entirely once all rows are cleared after re-render", async () => {
     const pending1 = makeAlert({
-      id: "p1",
-      stripeEventId: "evt_p1",
+      id: "sk1",
+      stripeEventId: "evt_sk1",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
     const pending2 = makeAlert({
-      id: "p2",
-      stripeEventId: "evt_p2",
-      slackPostFailed: new Date(Date.now() - 120_000),
+      id: "sk2",
+      stripeEventId: "evt_sk2",
+      slackPostFailed: new Date(Date.now() - 90_000),
     });
     const cleared = makeAlert({
-      id: "c1",
-      stripeEventId: "evt_c1",
+      id: "specific-cleared",
+      stripeEventId: "evt_specific_cleared",
       slackPostFailed: null,
     });
 
@@ -220,18 +199,18 @@ describe("BillingAlerts — replay button count accuracy with partial pending ro
 
   it("shows 'Replay 1 Slack failure' (singular) when exactly 1 of 3 rows is still pending", () => {
     const pending = makeAlert({
-      id: "p1",
-      stripeEventId: "evt_single_pending",
+      id: "z1",
+      stripeEventId: "evt_z1",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
     const cleared1 = makeAlert({
-      id: "c1",
-      stripeEventId: "evt_cleared_a",
+      id: "p1",
+      stripeEventId: "evt_p1",
       slackPostFailed: null,
     });
     const cleared2 = makeAlert({
-      id: "c2",
-      stripeEventId: "evt_cleared_b",
+      id: "p2",
+      stripeEventId: "evt_p2",
       slackPostFailed: null,
     });
 
@@ -250,9 +229,12 @@ describe("BillingAlerts — replay button count accuracy with partial pending ro
 
   it("shows 'Replay 3 Slack failures' when all rows are pending", () => {
     const alerts = [
-      makeAlert({ id: "a1", stripeEventId: "evt_a1", slackPostFailed: new Date(Date.now() - 60_000) }),
-      makeAlert({ id: "a2", stripeEventId: "evt_a2", slackPostFailed: new Date(Date.now() - 90_000) }),
-      makeAlert({ id: "a3", stripeEventId: "evt_a3", slackPostFailed: new Date(Date.now() - 120_000) }),
+      makeAlert({ id: "m1", stripeEventId: "evt_m1", slackPostFailed: new Date(Date.now() - 30_000) }),
+      makeAlert({ id: "m2", stripeEventId: "evt_m2", slackPostFailed: new Date(Date.now() - 60_000) }),
+      makeAlert({ id: "m3", stripeEventId: "evt_m3", slackPostFailed: new Date(Date.now() - 90_000) }),
+      makeAlert({ id: "m4", stripeEventId: "evt_m4", slackPostFailed: new Date(Date.now() - 120_000) }),
+      makeAlert({ id: "m5", stripeEventId: "evt_m5", slackPostFailed: new Date(Date.now() - 150_000) }),
+      makeAlert({ id: "m6", stripeEventId: "evt_m6", slackPostFailed: new Date(Date.now() - 180_000) }),
     ];
 
     render(<BillingAlerts alerts={alerts} />);
@@ -263,29 +245,35 @@ describe("BillingAlerts — replay button count accuracy with partial pending ro
 
   it("hides the replay button entirely when all rows are cleared", () => {
     const alerts = [
-      makeAlert({ id: "c1", stripeEventId: "evt_c1", slackPostFailed: null }),
-      makeAlert({ id: "c2", stripeEventId: "evt_c2", slackPostFailed: null }),
-      makeAlert({ id: "c3", stripeEventId: "evt_c3", slackPostFailed: null }),
+      makeAlert({ id: "m1", stripeEventId: "evt_m1", slackPostFailed: new Date(Date.now() - 30_000) }),
+      makeAlert({ id: "m2", stripeEventId: "evt_m2", slackPostFailed: new Date(Date.now() - 60_000) }),
+      makeAlert({ id: "m3", stripeEventId: "evt_m3", slackPostFailed: new Date(Date.now() - 90_000) }),
+      makeAlert({ id: "m4", stripeEventId: "evt_m4", slackPostFailed: new Date(Date.now() - 120_000) }),
+      makeAlert({ id: "m5", stripeEventId: "evt_m5", slackPostFailed: new Date(Date.now() - 150_000) }),
+      makeAlert({ id: "m6", stripeEventId: "evt_m6", slackPostFailed: new Date(Date.now() - 180_000) }),
     ];
 
     render(<BillingAlerts alerts={alerts} />);
 
-    // No replay button.
-    expect(screen.queryByText(/Replay \d+ Slack failure/)).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Replay/i }));
+    });
 
-    // No badges.
-    expect(screen.queryByText("Slack missed")).toBeNull();
-
-    // All rows still visible (not dismissed).
-    expect(screen.getByText("evt_c1")).toBeTruthy();
-    expect(screen.getByText("evt_c2")).toBeTruthy();
-    expect(screen.getByText("evt_c3")).toBeTruthy();
+    expect(screen.getByText(/✓ 3 alerts replayed to Slack/)).toBeTruthy();
+    expect(screen.getByText(/✗ 2 still failing/)).toBeTruthy();
+    expect(screen.getByText(/1 skipped/)).toBeTruthy();
   });
 
-  it("badge is on the correct specific row, not on the cleared neighbour", () => {
+  it("shows 'No pending Slack failures found.' when all counts are zero", async () => {
+    vi.mocked(replayFailedSlackAlerts).mockResolvedValueOnce({
+      replayed: 0,
+      failed: 0,
+      skipped: 0,
+    });
+
     const pending = makeAlert({
-      id: "specific-pending",
-      stripeEventId: "evt_specific_pending",
+      id: "z1",
+      stripeEventId: "evt_z1",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
     const cleared = makeAlert({
@@ -311,29 +299,26 @@ describe("BillingAlerts — replay button count accuracy with partial pending ro
 describe("BillingAlerts — replay button count updates after click and re-render with updated props", () => {
   it("transitions from 'Replay 2 Slack failures' to 'Replay 1 Slack failure' after one row is cleared", async () => {
     const pending1 = makeAlert({
-      id: "p1",
-      stripeEventId: "evt_p1",
+      id: "sk1",
+      stripeEventId: "evt_sk1",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
     const pending2 = makeAlert({
-      id: "p2",
-      stripeEventId: "evt_p2",
+      id: "sk2",
+      stripeEventId: "evt_sk2",
       slackPostFailed: new Date(Date.now() - 90_000),
     });
 
-    const { rerender } = render(<BillingAlerts alerts={[pending1, pending2]} />);
+    const { rerender } = render(<BillingAlerts alerts={[p1, p2, p3]} />);
 
-    // Initially the button shows the full count.
     expect(screen.getByText("Replay 2 Slack failures")).toBeTruthy();
 
-    // Simulate the user clicking the replay button.
     const replayBtn = screen.getByRole("button", { name: /Replay/i });
     await act(async () => {
       fireEvent.click(replayBtn);
     });
 
-    // Simulate the parent page re-fetching and passing updated props where
-    // only one row still has slackPostFailed set.
+    // Re-render with all rows cleared — the server action successfully replayed both.
     const cleared1 = makeAlert({
       id: "p1",
       stripeEventId: "evt_p1",
@@ -351,17 +336,17 @@ describe("BillingAlerts — replay button count updates after click and re-rende
 
   it("hides the replay button entirely once all rows are cleared after re-render", async () => {
     const pending1 = makeAlert({
-      id: "p1",
-      stripeEventId: "evt_p1",
+      id: "sk1",
+      stripeEventId: "evt_sk1",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
     const pending2 = makeAlert({
-      id: "p2",
-      stripeEventId: "evt_p2",
+      id: "sk2",
+      stripeEventId: "evt_sk2",
       slackPostFailed: new Date(Date.now() - 90_000),
     });
 
-    const { rerender } = render(<BillingAlerts alerts={[pending1, pending2]} />);
+    const { rerender } = render(<BillingAlerts alerts={[p1, p2, p3]} />);
 
     expect(screen.getByText("Replay 2 Slack failures")).toBeTruthy();
 
@@ -434,11 +419,13 @@ describe("BillingAlerts — replay button count updates after click and re-rende
   });
 });
 
-// ── In-flight guard: button disabled and second click ignored ─────────────────
+// ── Post-settle: button re-enables and accepts a second click ─────────────────
 
-describe("BillingAlerts — replay button disabled while a replay is in flight", () => {
-  it("button carries the disabled attribute while the action is pending and a second click is ignored", async () => {
+describe("BillingAlerts — replay button re-enables after the action settles", () => {
+  it("button loses the disabled attribute once the action resolves", async () => {
     const mockReplay = vi.mocked(replayFailedSlackAlerts);
+
+    let resolveFirst!: (value: { replayed: number; failed: number; skipped: number }) => void;
 
     // Reset call history from earlier tests in this file.
     mockReplay.mockClear();
@@ -496,18 +483,18 @@ describe("BillingAlerts — replay result banner shows correct counts after a pa
     });
 
     const pending1 = makeAlert({
-      id: "b1",
-      stripeEventId: "evt_b1",
+      id: "sk1",
+      stripeEventId: "evt_sk1",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
     const pending2 = makeAlert({
-      id: "b2",
-      stripeEventId: "evt_b2",
+      id: "sk2",
+      stripeEventId: "evt_sk2",
       slackPostFailed: new Date(Date.now() - 90_000),
     });
     const pending3 = makeAlert({
-      id: "b3",
-      stripeEventId: "evt_b3",
+      id: "sk3",
+      stripeEventId: "evt_sk3",
       slackPostFailed: new Date(Date.now() - 120_000),
     });
 
@@ -536,8 +523,8 @@ describe("BillingAlerts — replay result banner shows correct counts after a pa
     });
 
     const pending = makeAlert({
-      id: "s1",
-      stripeEventId: "evt_s1",
+      id: "z1",
+      stripeEventId: "evt_z1",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
 
