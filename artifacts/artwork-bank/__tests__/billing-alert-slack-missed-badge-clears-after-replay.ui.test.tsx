@@ -484,3 +484,162 @@ describe("BillingAlerts — replay button disabled while a replay is in flight",
     });
   });
 });
+
+// ── Replay result banner: partial-replay counts ───────────────────────────────
+
+describe("BillingAlerts — replay result banner shows correct counts after a partial replay", () => {
+  it("shows '✓ 2 alerts replayed to Slack' and '✗ 1 still failing' when result is { replayed: 2, failed: 1, skipped: 0 }", async () => {
+    vi.mocked(replayFailedSlackAlerts).mockResolvedValueOnce({
+      replayed: 2,
+      failed: 1,
+      skipped: 0,
+    });
+
+    const pending1 = makeAlert({
+      id: "b1",
+      stripeEventId: "evt_b1",
+      slackPostFailed: new Date(Date.now() - 60_000),
+    });
+    const pending2 = makeAlert({
+      id: "b2",
+      stripeEventId: "evt_b2",
+      slackPostFailed: new Date(Date.now() - 90_000),
+    });
+    const pending3 = makeAlert({
+      id: "b3",
+      stripeEventId: "evt_b3",
+      slackPostFailed: new Date(Date.now() - 120_000),
+    });
+
+    render(<BillingAlerts alerts={[pending1, pending2, pending3]} />);
+
+    // Click the replay button so the server action runs and the banner appears.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Replay/i }));
+    });
+
+    // The "replayed" part of the banner must show the exact count.
+    expect(screen.getByText(/✓ 2 alerts replayed to Slack/)).toBeTruthy();
+
+    // The "failed" part of the banner must show the exact count.
+    expect(screen.getByText(/✗ 1 still failing/)).toBeTruthy();
+
+    // No skipped text should appear (skipped === 0).
+    expect(screen.queryByText(/skipped/i)).toBeNull();
+  });
+
+  it("shows singular '✓ 1 alert replayed to Slack' when replayed is 1", async () => {
+    vi.mocked(replayFailedSlackAlerts).mockResolvedValueOnce({
+      replayed: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    const pending = makeAlert({
+      id: "s1",
+      stripeEventId: "evt_s1",
+      slackPostFailed: new Date(Date.now() - 60_000),
+    });
+
+    render(<BillingAlerts alerts={[pending]} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Replay/i }));
+    });
+
+    // Singular form: "alert" not "alerts".
+    expect(screen.getByText(/✓ 1 alert replayed to Slack/)).toBeTruthy();
+
+    // No failed or skipped lines.
+    expect(screen.queryByText(/still failing/i)).toBeNull();
+    expect(screen.queryByText(/skipped/i)).toBeNull();
+  });
+
+  it("shows skipped count when skipped > 0", async () => {
+    vi.mocked(replayFailedSlackAlerts).mockResolvedValueOnce({
+      replayed: 1,
+      failed: 0,
+      skipped: 2,
+    });
+
+    const pending1 = makeAlert({
+      id: "sk1",
+      stripeEventId: "evt_sk1",
+      slackPostFailed: new Date(Date.now() - 60_000),
+    });
+    const pending2 = makeAlert({
+      id: "sk2",
+      stripeEventId: "evt_sk2",
+      slackPostFailed: new Date(Date.now() - 90_000),
+    });
+    const pending3 = makeAlert({
+      id: "sk3",
+      stripeEventId: "evt_sk3",
+      slackPostFailed: new Date(Date.now() - 120_000),
+    });
+
+    render(<BillingAlerts alerts={[pending1, pending2, pending3]} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Replay/i }));
+    });
+
+    // The replayed count must be present.
+    expect(screen.getByText(/✓ 1 alert replayed to Slack/)).toBeTruthy();
+
+    // The skipped count must appear in the banner.
+    expect(screen.getByText(/2 skipped/)).toBeTruthy();
+
+    // No failed line.
+    expect(screen.queryByText(/still failing/i)).toBeNull();
+  });
+
+  it("shows all three lines when replayed, failed, and skipped are all > 0", async () => {
+    vi.mocked(replayFailedSlackAlerts).mockResolvedValueOnce({
+      replayed: 3,
+      failed: 2,
+      skipped: 1,
+    });
+
+    const alerts = [
+      makeAlert({ id: "m1", stripeEventId: "evt_m1", slackPostFailed: new Date(Date.now() - 30_000) }),
+      makeAlert({ id: "m2", stripeEventId: "evt_m2", slackPostFailed: new Date(Date.now() - 60_000) }),
+      makeAlert({ id: "m3", stripeEventId: "evt_m3", slackPostFailed: new Date(Date.now() - 90_000) }),
+      makeAlert({ id: "m4", stripeEventId: "evt_m4", slackPostFailed: new Date(Date.now() - 120_000) }),
+      makeAlert({ id: "m5", stripeEventId: "evt_m5", slackPostFailed: new Date(Date.now() - 150_000) }),
+      makeAlert({ id: "m6", stripeEventId: "evt_m6", slackPostFailed: new Date(Date.now() - 180_000) }),
+    ];
+
+    render(<BillingAlerts alerts={alerts} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Replay/i }));
+    });
+
+    expect(screen.getByText(/✓ 3 alerts replayed to Slack/)).toBeTruthy();
+    expect(screen.getByText(/✗ 2 still failing/)).toBeTruthy();
+    expect(screen.getByText(/1 skipped/)).toBeTruthy();
+  });
+
+  it("shows 'No pending Slack failures found.' when all counts are zero", async () => {
+    vi.mocked(replayFailedSlackAlerts).mockResolvedValueOnce({
+      replayed: 0,
+      failed: 0,
+      skipped: 0,
+    });
+
+    const pending = makeAlert({
+      id: "z1",
+      stripeEventId: "evt_z1",
+      slackPostFailed: new Date(Date.now() - 60_000),
+    });
+
+    render(<BillingAlerts alerts={[pending]} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Replay/i }));
+    });
+
+    expect(screen.getByText("No pending Slack failures found.")).toBeTruthy();
+  });
+});
