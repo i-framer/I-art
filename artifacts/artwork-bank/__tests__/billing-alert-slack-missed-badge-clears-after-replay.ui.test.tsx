@@ -14,7 +14,7 @@
  *     — real-DB confirmation that replayFailedSlackAlerts clears the field
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, act } from "@testing-library/react";
 import React from "react";
 
 // ── Mock server actions imported by BillingAlerts ─────────────────────────────
@@ -302,5 +302,133 @@ describe("BillingAlerts — replay button count accuracy with partial pending ro
     expect(li).not.toBeNull();
     expect(li!.textContent).toContain("evt_specific_pending");
     expect(li!.textContent).not.toContain("evt_specific_cleared");
+  });
+});
+
+// ── Interactive replay: click → server action resolves → re-render with new props ─
+
+describe("BillingAlerts — replay button count updates after click and re-render with updated props", () => {
+  it("transitions from 'Replay 2 Slack failures' to 'Replay 1 Slack failure' after one row is cleared", async () => {
+    const pending1 = makeAlert({
+      id: "p1",
+      stripeEventId: "evt_p1",
+      slackPostFailed: new Date(Date.now() - 60_000),
+    });
+    const pending2 = makeAlert({
+      id: "p2",
+      stripeEventId: "evt_p2",
+      slackPostFailed: new Date(Date.now() - 90_000),
+    });
+
+    const { rerender } = render(<BillingAlerts alerts={[pending1, pending2]} />);
+
+    // Initially the button shows the full count.
+    expect(screen.getByText("Replay 2 Slack failures")).toBeTruthy();
+
+    // Simulate the user clicking the replay button.
+    const replayBtn = screen.getByRole("button", { name: /Replay/i });
+    await act(async () => {
+      fireEvent.click(replayBtn);
+    });
+
+    // Simulate the parent page re-fetching and passing updated props where
+    // only one row still has slackPostFailed set.
+    const cleared1 = makeAlert({
+      id: "p1",
+      stripeEventId: "evt_p1",
+      slackPostFailed: null,
+    });
+    rerender(<BillingAlerts alerts={[cleared1, pending2]} />);
+
+    // Label must switch to singular form reflecting the reduced count.
+    expect(screen.getByText("Replay 1 Slack failure")).toBeTruthy();
+
+    // The "Slack missed" badge must be gone from the cleared row.
+    const badges = screen.getAllByText("Slack missed");
+    expect(badges).toHaveLength(1);
+  });
+
+  it("hides the replay button entirely once all rows are cleared after re-render", async () => {
+    const pending1 = makeAlert({
+      id: "p1",
+      stripeEventId: "evt_p1",
+      slackPostFailed: new Date(Date.now() - 60_000),
+    });
+    const pending2 = makeAlert({
+      id: "p2",
+      stripeEventId: "evt_p2",
+      slackPostFailed: new Date(Date.now() - 90_000),
+    });
+
+    const { rerender } = render(<BillingAlerts alerts={[pending1, pending2]} />);
+
+    expect(screen.getByText("Replay 2 Slack failures")).toBeTruthy();
+
+    const replayBtn = screen.getByRole("button", { name: /Replay/i });
+    await act(async () => {
+      fireEvent.click(replayBtn);
+    });
+
+    // Re-render with all rows cleared — the server action successfully replayed both.
+    const cleared1 = makeAlert({
+      id: "p1",
+      stripeEventId: "evt_p1",
+      slackPostFailed: null,
+    });
+    const cleared2 = makeAlert({
+      id: "p2",
+      stripeEventId: "evt_p2",
+      slackPostFailed: null,
+    });
+    rerender(<BillingAlerts alerts={[cleared1, cleared2]} />);
+
+    // Replay button must have disappeared entirely.
+    expect(screen.queryByText(/Replay \d+ Slack failure/)).toBeNull();
+
+    // No "Slack missed" badges remain.
+    expect(screen.queryByText("Slack missed")).toBeNull();
+
+    // Both alert rows are still visible (replay does not dismiss rows).
+    expect(screen.getByText("evt_p1")).toBeTruthy();
+    expect(screen.getByText("evt_p2")).toBeTruthy();
+  });
+
+  it("steps through 3 → 2 → 1 → hidden as rows are progressively cleared via re-renders", async () => {
+    const p1 = makeAlert({ id: "p1", stripeEventId: "evt_p1", slackPostFailed: new Date(Date.now() - 30_000) });
+    const p2 = makeAlert({ id: "p2", stripeEventId: "evt_p2", slackPostFailed: new Date(Date.now() - 60_000) });
+    const p3 = makeAlert({ id: "p3", stripeEventId: "evt_p3", slackPostFailed: new Date(Date.now() - 90_000) });
+
+    const { rerender } = render(<BillingAlerts alerts={[p1, p2, p3]} />);
+    expect(screen.getByText("Replay 3 Slack failures")).toBeTruthy();
+
+    // First replay click.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Replay/i }));
+    });
+
+    // Parent re-fetches: one row cleared.
+    const c1 = makeAlert({ id: "p1", stripeEventId: "evt_p1", slackPostFailed: null });
+    rerender(<BillingAlerts alerts={[c1, p2, p3]} />);
+    expect(screen.getByText("Replay 2 Slack failures")).toBeTruthy();
+
+    // Second replay click.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Replay/i }));
+    });
+
+    // Parent re-fetches: two rows cleared.
+    const c2 = makeAlert({ id: "p2", stripeEventId: "evt_p2", slackPostFailed: null });
+    rerender(<BillingAlerts alerts={[c1, c2, p3]} />);
+    expect(screen.getByText("Replay 1 Slack failure")).toBeTruthy();
+
+    // Third replay click.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Replay/i }));
+    });
+
+    // Parent re-fetches: all rows cleared.
+    const c3 = makeAlert({ id: "p3", stripeEventId: "evt_p3", slackPostFailed: null });
+    rerender(<BillingAlerts alerts={[c1, c2, c3]} />);
+    expect(screen.queryByText(/Replay \d+ Slack failure/)).toBeNull();
   });
 });
