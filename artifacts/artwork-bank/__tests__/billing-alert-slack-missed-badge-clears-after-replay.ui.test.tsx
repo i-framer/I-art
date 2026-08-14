@@ -28,6 +28,7 @@ vi.mock("@/app/platform/actions", () => ({
 }));
 
 import { BillingAlerts } from "@/app/platform/_components/BillingAlerts";
+import { replayFailedSlackAlerts } from "@/app/platform/actions";
 import type { StripeAlert } from "@workspace/db";
 
 afterEach(() => {
@@ -430,5 +431,56 @@ describe("BillingAlerts — replay button count updates after click and re-rende
     const c3 = makeAlert({ id: "p3", stripeEventId: "evt_p3", slackPostFailed: null });
     rerender(<BillingAlerts alerts={[c1, c2, c3]} />);
     expect(screen.queryByText(/Replay \d+ Slack failure/)).toBeNull();
+  });
+});
+
+// ── In-flight guard: button disabled and second click ignored ─────────────────
+
+describe("BillingAlerts — replay button disabled while a replay is in flight", () => {
+  it("button carries the disabled attribute while the action is pending and a second click is ignored", async () => {
+    const mockReplay = vi.mocked(replayFailedSlackAlerts);
+
+    // Reset call history from earlier tests in this file.
+    mockReplay.mockClear();
+
+    // Replace the default instant-resolve mock with a never-settling promise so
+    // we can inspect the button state while the action is still in flight.
+    let resolveReplay!: (value: { replayed: number; failed: number; skipped: number }) => void;
+    mockReplay.mockImplementationOnce(
+      () =>
+        new Promise<{ replayed: number; failed: number; skipped: number }>(
+          (resolve) => {
+            resolveReplay = resolve;
+          },
+        ),
+    );
+
+    const alert = makeAlert({ slackPostFailed: new Date(Date.now() - 60_000) });
+    render(<BillingAlerts alerts={[alert]} />);
+
+    const replayBtn = screen.getByRole("button", { name: /Replay/i });
+
+    // First click — starts the in-flight transition.
+    fireEvent.click(replayBtn);
+
+    // The useTransition hook sets replayPending=true synchronously from React's
+    // perspective once the transition starts, so the disabled attribute should
+    // appear before the promise resolves.
+    await vi.waitFor(() => {
+      expect(replayBtn.hasAttribute("disabled")).toBe(true);
+    });
+
+    // Second click while the action is still in flight — the button is disabled
+    // so the onClick handler must not fire a second time.
+    fireEvent.click(replayBtn);
+
+    // Only one server-action call should have been made despite two clicks.
+    expect(mockReplay).toHaveBeenCalledTimes(1);
+
+    // Settle the pending promise so React can finish the transition cleanly
+    // before the test teardown runs.
+    await act(async () => {
+      resolveReplay({ replayed: 1, failed: 0, skipped: 0 });
+    });
   });
 });
