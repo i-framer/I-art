@@ -233,6 +233,34 @@ describeIntegration(
     );
 
     it(
+      "exception path (Slack throws): iframerSlackFailedPayload is left intact for the next retry",
+      async () => {
+        const originalPayload = makePayload("linked");
+        const tenantId = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 60_000),
+          iframerSlackFailedPayload: originalPayload,
+        });
+
+        // Simulate the Slack SDK throwing entirely rather than returning ok:false.
+        sendIframerAccountSlackNotificationMock.mockRejectedValueOnce(
+          new Error("ETIMEDOUT: Slack SDK network error"),
+        );
+
+        const result = await replayFailedIframerSlackAlerts();
+
+        expect(result.failed).toBeGreaterThanOrEqual(1);
+
+        const row = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, tenantId),
+        });
+
+        // The payload must still equal the original seeded value so the next
+        // retry attempt can forward it to Slack.
+        expect(row?.iframerSlackFailedPayload).toBe(originalPayload);
+      },
+    );
+
+    it(
       "tenant without a stored payload is counted as skipped, not failed",
       async () => {
         const tenantId = await createTenant({
