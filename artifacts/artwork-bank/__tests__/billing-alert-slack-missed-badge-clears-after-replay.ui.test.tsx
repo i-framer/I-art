@@ -106,7 +106,8 @@ describe('BillingAlerts — "Slack missed" badge disappears when slackPostFailed
   });
 
   it("does NOT render the replay button when no rows have slackPostFailed set", () => {
-    const alert = makeAlert({ slackPostFailed: new Date(Date.now() - 60_000) });
+    // Alert with slackPostFailed cleared — no pending Slack failures means no replay button.
+    const alert = makeAlert({ slackPostFailed: null });
 
     render(<BillingAlerts alerts={[alert]} />);
 
@@ -194,7 +195,7 @@ describe("BillingAlerts — round-trip: badge appears then disappears after repl
     expect(badges).toHaveLength(2);
 
     // Cleared row must NOT have a badge.
-    expect(screen.getByText("evt_c1")).toBeTruthy();
+    expect(screen.getByText("evt_rm1")).toBeTruthy();
   });
 
   it("shows 'Replay 1 Slack failure' (singular) when exactly 1 of 3 rows is still pending", () => {
@@ -229,8 +230,9 @@ describe("BillingAlerts — round-trip: badge appears then disappears after repl
 
   it("shows 'Replay 3 Slack failures' when all rows are pending", () => {
     const alerts = [
-      makeAlert({ id: "c1", stripeEventId: "evt_c1", slackPostFailed: null }),
-      makeAlert({ id: "c2", stripeEventId: "evt_c2", slackPostFailed: null }),
+      makeAlert({ id: "c1", stripeEventId: "evt_c1", slackPostFailed: new Date(Date.now() - 60_000) }),
+      makeAlert({ id: "c2", stripeEventId: "evt_c2", slackPostFailed: new Date(Date.now() - 90_000) }),
+      makeAlert({ id: "c3", stripeEventId: "evt_c3", slackPostFailed: new Date(Date.now() - 120_000) }),
     ];
 
     render(<BillingAlerts alerts={alerts} />);
@@ -262,13 +264,13 @@ describe("BillingAlerts — round-trip: badge appears then disappears after repl
     });
 
     const pending = makeAlert({
-      id: "rm1",
-      stripeEventId: "evt_rm1",
+      id: "rm-pending",
+      stripeEventId: "evt_rm_pending",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
     const cleared = makeAlert({
-      id: "rm1",
-      stripeEventId: "evt_rm1",
+      id: "rm-cleared",
+      stripeEventId: "evt_rm_cleared",
       slackPostFailed: null,
     });
 
@@ -279,8 +281,8 @@ describe("BillingAlerts — round-trip: badge appears then disappears after repl
     // The badge's closest list-item ancestor must contain the pending event ID text.
     const li = badge.closest("li");
     expect(li).not.toBeNull();
-    expect(li!.textContent).toContain("evt_specific_pending");
-    expect(li!.textContent).not.toContain("evt_specific_cleared");
+    expect(li!.textContent).toContain("evt_rm_pending");
+    expect(li!.textContent).not.toContain("evt_rm_cleared");
   });
 });
 
