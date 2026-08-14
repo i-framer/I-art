@@ -624,6 +624,40 @@ describeIntegration(
     );
 
     it(
+      "ok:false Slack response with successful DB update: sendIframerReplayDbFailureSlackNotification is NOT called",
+      async () => {
+        // Seed a tenant with a stored failure payload so the action processes it.
+        const tenantId = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 60_000),
+          iframerSlackFailedPayload: makePayload("linked"),
+        });
+
+        // Slack returns ok:false — the refresh-timestamp update path is taken.
+        sendIframerAccountSlackNotificationMock.mockResolvedValueOnce({
+          ok: false,
+        });
+
+        // dbUpdateCtrl.shouldThrow is false (default) — the DB update succeeds.
+        // The DB-failure Slack helper must NOT be called because the catch block
+        // that fires it is only reached when db.update throws, not on ok:false alone.
+        const result = await replayFailedIframerSlackAlerts();
+
+        expect(result.failed).toBeGreaterThanOrEqual(1);
+
+        // The critical assertion: no spurious DB-failure Slack alert must fire.
+        expect(
+          sendIframerReplayDbFailureSlackNotificationMock,
+        ).not.toHaveBeenCalled();
+
+        // Sanity: confirm the row's failure flag was refreshed (DB write did land).
+        const row = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, tenantId),
+        });
+        expect(row?.iframerSlackPostFailed).not.toBeNull();
+      },
+    );
+
+    it(
       "DB update failure after ok:false Slack response: console.error is emitted with tenantId and refresh-failure message",
       async () => {
         // Seed a tenant so the action has a row to process.
