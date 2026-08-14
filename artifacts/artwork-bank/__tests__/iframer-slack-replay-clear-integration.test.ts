@@ -404,6 +404,9 @@ describeIntegration(
           expect(row.iframerSlackPostFailed!.getTime()).toBe(
             originalFailedAt[idx].getTime(),
           );
+
+          // Payload must also be preserved — the exception path must not clear it.
+          expect(row.iframerSlackFailedPayload).toBe(makePayload("linked"));
         }
 
         // Restore the default mock implementation so subsequent tests are unaffected.
