@@ -906,5 +906,74 @@ describeIntegration(
         expect(matchingCall).toBeDefined();
       },
     );
+
+    it(
+      "concurrent sweep race: ok:true tenant's row is fully cleared after both sweeps settle",
+      async () => {
+        // Seed a single tenant with both failure columns set.  Two sweeps will
+        // race to process this row; the test confirms that after both settle:
+        //   1. The row is fully cleared — neither column is left non-null.
+        //   2. No partial clear occurred — both columns are always written in a
+        //      single .set() call, so they must either both commit or both fail.
+        //   3. The Slack notification was delivered at least once — confirming
+        //      the concurrent race did not silently swallow both deliveries.
+        //
+        // Note: because the SELECT in each sweep reads all rows before either
+        // sweep's clear commits (Node.js interleaves at each await), both sweeps
+        // may independently send the Slack notification and independently clear
+        // the row.  This is expected behaviour for a non-transactional loop; the
+        // test guards against a regression where the second clear leaves the row
+        // in a *partially* cleared state (e.g. one column null, the other not).
+        const originalPayload = makePayload("linked");
+        const tenantId = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 60_000),
+          iframerSlackFailedPayload: originalPayload,
+        });
+
+        // Both sweeps run concurrently — neither waits for the other.
+        // Slack mock returns ok:true (default) so both sweeps will attempt the
+        // clear step if they each read the row before the first clear commits.
+        const [result1, result2] = await Promise.all([
+          replayFailedIframerSlackAlerts(),
+          replayFailedIframerSlackAlerts(),
+        ]);
+
+        // Between the two sweeps, the tenant must have been counted as replayed
+        // at least once — confirming the Slack message was delivered.
+        expect(result1.replayed + result2.replayed).toBeGreaterThanOrEqual(1);
+
+        // Neither sweep should have counted this tenant as failed.
+        expect(result1.failed + result2.failed).toBe(0);
+
+        // ── Key DB-state assertion ─────────────────────────────────────────────
+        // Re-query the row after BOTH sweeps have settled.
+        const row = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, tenantId),
+        });
+
+        // iframerSlackPostFailed must be null — the row must be fully cleared.
+        // A partial commit that zeroed only one column would leave the other
+        // non-null and surface here.
+        expect(row?.iframerSlackPostFailed).toBeNull();
+
+        // iframerSlackFailedPayload must also be null — both columns are written
+        // in a single .set() call, so a race that leaves this non-null while
+        // iframerSlackPostFailed is null would indicate a split write regression.
+        expect(row?.iframerSlackFailedPayload).toBeNull();
+
+        // ── Duplicate-send boundary ────────────────────────────────────────────
+        // In a true concurrent race both sweeps may read the row before the first
+        // clear commits, so up to 2 Slack calls are expected.  The assertion
+        // confirms at least 1 delivery occurred and no spurious third call (which
+        // would indicate a retry loop regression rather than a simple race).
+        const slackCallCount =
+          sendIframerAccountSlackNotificationMock.mock.calls.filter(
+            (args) =>
+              (args[0] as { tenantSlug?: string }).tenantSlug === tenantId,
+          ).length;
+        expect(slackCallCount).toBeGreaterThanOrEqual(1);
+        expect(slackCallCount).toBeLessThanOrEqual(2);
+      },
+    );
   },
 );
