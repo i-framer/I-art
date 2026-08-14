@@ -9,6 +9,7 @@
 import {
   sweepUnsentConfirmationEmails,
   sweepUnsentStatusEmails,
+  sweepUnsentInquiryEmails,
 } from "@/lib/email-sweep";
 import { sweepStaleReservations } from "@/lib/reservation-sweep";
 
@@ -45,6 +46,16 @@ export function ensureEmailSweepScheduler(): void {
       }
     } catch (err: any) {
       console.error("Status email sweep run failed:", err?.message ?? err);
+    }
+    try {
+      const result = await sweepUnsentInquiryEmails();
+      if (result.sent || result.failed) {
+        console.log(
+          `Inquiry email sweep: sent=${result.sent} failed=${result.failed} skipped=${result.skipped} scanned=${result.scanned}`,
+        );
+      }
+    } catch (err: any) {
+      console.error("Inquiry email sweep run failed:", err?.message ?? err);
     }
     // Safety net: release artworks stuck RESERVED when Stripe's
     // checkout.session.expired webhook was never delivered.

@@ -30,11 +30,15 @@ const sweepUnsentGalleryAlerts = vi.hoisted(() =>
 const sweepUnsentStatusEmails = vi.hoisted(() =>
   vi.fn().mockResolvedValue({ scanned: 0, sent: 0, failed: 0, skipped: 0 })
 );
+const sweepUnsentInquiryEmails = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ scanned: 0, sent: 0, failed: 0, skipped: 0 })
+);
 
 vi.mock("@/lib/email-sweep", () => ({
   sweepUnsentConfirmationEmails,
   sweepUnsentGalleryAlerts,
   sweepUnsentStatusEmails,
+  sweepUnsentInquiryEmails,
 }));
 
 // ── Import the route handlers after mocks are in place ────────────────────────

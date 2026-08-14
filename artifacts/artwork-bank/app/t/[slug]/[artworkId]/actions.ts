@@ -136,7 +136,11 @@ export async function submitInquiry(
       try {
         await db
           .update(inquiriesTable)
-          .set({ emailError: "Email delivery failed" })
+          .set({
+            emailError: "Email delivery failed",
+            emailAttempts: 1,
+            emailLastAttemptAt: new Date(),
+          })
           .where(eq(inquiriesTable.id, inquiryId));
       } catch (err) {
         console.error("Failed to record inquiry email error", err);

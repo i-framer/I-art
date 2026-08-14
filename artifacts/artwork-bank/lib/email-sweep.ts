@@ -5,12 +5,20 @@
  * Retries are capped (MAX_EMAIL_ATTEMPTS) and exponentially backed off based
  * on emailLastAttemptAt so a permanently bad address doesn't retry forever.
  */
-import { db, ordersTable, orderItemsTable, tenantsTable } from "@workspace/db";
+import {
+  db,
+  ordersTable,
+  orderItemsTable,
+  tenantsTable,
+  inquiriesTable,
+  artworksTable,
+} from "@workspace/db";
 import { and, eq, gte, isNull, isNotNull, lt, ne } from "drizzle-orm";
 import {
   sendOrderConfirmation,
   sendOrderStatusUpdate,
   sendConfirmationFailureNotice,
+  sendArtworkInquiry,
 } from "@/lib/email";
 import { getTenantUrl } from "@/lib/base-url";
 
@@ -382,6 +390,142 @@ export async function sweepUnsentStatusEmails(
       } catch (dbErr) {
         console.error(
           `Email sweep: could not persist status-email failure state for order ${order.id}:`,
+          (dbErr as any)?.message ?? String(dbErr),
+        );
+      }
+      result.failed++;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Find inquiries whose notification email to the gallery was never delivered
+ * (emailError IS NOT NULL) and retry sending with exponential back-off.
+ *
+ * Mirrors sweepUnsentConfirmationEmails:
+ *  – capped at MAX_EMAIL_ATTEMPTS total attempts
+ *  – exponential backoff based on emailLastAttemptAt
+ *  – atomic optimistic-lock claim to guard against concurrent sweeps sending
+ *    the same notification twice
+ */
+export async function sweepUnsentInquiryEmails(
+  now: Date = new Date(),
+): Promise<SweepResult> {
+  const candidates = await db.query.inquiriesTable.findMany({
+    where: and(
+      isNotNull(inquiriesTable.emailError),
+      lt(inquiriesTable.emailAttempts, MAX_EMAIL_ATTEMPTS),
+    ),
+    limit: 50,
+  });
+
+  const result: SweepResult = {
+    scanned: candidates.length,
+    sent: 0,
+    failed: 0,
+    skipped: 0,
+  };
+
+  for (const inquiry of candidates) {
+    // Respect exponential backoff since the last attempt.
+    if (
+      inquiry.emailLastAttemptAt &&
+      now.getTime() - inquiry.emailLastAttemptAt.getTime() <
+        backoffMs(inquiry.emailAttempts)
+    ) {
+      result.skipped++;
+      continue;
+    }
+
+    // True compare-and-swap claim: stamp emailLastAttemptAt to `now` only
+    // if the DB still shows the exact snapshot value we read.  Because the
+    // stamp changes emailLastAttemptAt, a second concurrent sweep reading the
+    // same row will find a different value in the DB and get 0 rows back,
+    // preventing it from proceeding to delivery.
+    const [claimed] = await db
+      .update(inquiriesTable)
+      .set({ emailLastAttemptAt: now })
+      .where(
+        and(
+          eq(inquiriesTable.id, inquiry.id),
+          isNotNull(inquiriesTable.emailError),
+          // CAS pivot: the prior emailLastAttemptAt must still match.
+          inquiry.emailLastAttemptAt
+            ? eq(inquiriesTable.emailLastAttemptAt, inquiry.emailLastAttemptAt)
+            : isNull(inquiriesTable.emailLastAttemptAt),
+        ),
+      )
+      .returning({ id: inquiriesTable.id });
+    if (!claimed) {
+      result.skipped++;
+      continue;
+    }
+
+    const [artwork, tenant] = await Promise.all([
+      db.query.artworksTable.findFirst({
+        where: eq(artworksTable.id, inquiry.artworkId),
+      }),
+      db.query.tenantsTable.findFirst({
+        where: eq(tenantsTable.id, inquiry.tenantId),
+      }),
+    ]);
+
+    if (!artwork || !tenant?.contactEmail) {
+      result.skipped++;
+      continue;
+    }
+
+    const artworkUrl =
+      getTenantUrl(tenant, `/${inquiry.artworkId}`) ??
+      `/t/${tenant.slug}/${inquiry.artworkId}`;
+
+    try {
+      const sent = await sendArtworkInquiry({
+        galleryEmail: tenant.contactEmail,
+        buyerName: inquiry.buyerName,
+        buyerEmail: inquiry.buyerEmail,
+        message: inquiry.message,
+        artworkTitle: inquiry.artworkTitle,
+        artworkSku: artwork.sku,
+        artworkUrl,
+        tenantName: tenant.businessName,
+      });
+
+      if (!sent) {
+        throw new Error("Email transport returned false");
+      }
+
+      await db
+        .update(inquiriesTable)
+        .set({
+          emailError: null,
+          emailAttempts: inquiry.emailAttempts + 1,
+          emailLastAttemptAt: now,
+        })
+        .where(eq(inquiriesTable.id, inquiry.id));
+      result.sent++;
+    } catch (err) {
+      const message = (err as any)?.message ?? String(err);
+      console.error(
+        `Inquiry email sweep: failed for inquiry ${inquiry.id} (attempt ${inquiry.emailAttempts + 1}/${MAX_EMAIL_ATTEMPTS}):`,
+        message,
+      );
+      // Guard the bookkeeping write independently — a DB outage must not
+      // crash the whole sweep; the inquiry stays re-selectable for the next run.
+      try {
+        await db
+          .update(inquiriesTable)
+          .set({
+            emailError: message,
+            emailAttempts: inquiry.emailAttempts + 1,
+            emailLastAttemptAt: now,
+          })
+          .where(eq(inquiriesTable.id, inquiry.id));
+      } catch (dbErr) {
+        console.error(
+          `Inquiry email sweep: could not persist failure state for inquiry ${inquiry.id}:`,
           (dbErr as any)?.message ?? String(dbErr),
         );
       }

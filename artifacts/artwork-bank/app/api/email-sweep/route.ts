@@ -15,6 +15,7 @@ import {
   sweepUnsentConfirmationEmails,
   sweepUnsentGalleryAlerts,
   sweepUnsentStatusEmails,
+  sweepUnsentInquiryEmails,
 } from "@/lib/email-sweep";
 
 export const dynamic = "force-dynamic";
@@ -60,17 +61,18 @@ async function runSweep(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const [confirmResult, galleryResult, statusResult] = await Promise.all([
+    const [confirmResult, galleryResult, statusResult, inquiryResult] = await Promise.all([
       sweepUnsentConfirmationEmails(),
       sweepUnsentGalleryAlerts(),
       sweepUnsentStatusEmails(),
+      sweepUnsentInquiryEmails(),
     ]);
     // Top-level totals kept for backward compatibility (monitoring scripts).
-    const scanned = confirmResult.scanned + galleryResult.scanned + statusResult.scanned;
-    const sent    = confirmResult.sent    + galleryResult.sent    + statusResult.sent;
-    const failed  = confirmResult.failed  + galleryResult.failed  + statusResult.failed;
-    const skipped = confirmResult.skipped + galleryResult.skipped + statusResult.skipped;
-    const body = { scanned, sent, failed, skipped, confirmResult, galleryResult, statusResult };
+    const scanned = confirmResult.scanned + galleryResult.scanned + statusResult.scanned + inquiryResult.scanned;
+    const sent    = confirmResult.sent    + galleryResult.sent    + statusResult.sent    + inquiryResult.sent;
+    const failed  = confirmResult.failed  + galleryResult.failed  + statusResult.failed  + inquiryResult.failed;
+    const skipped = confirmResult.skipped + galleryResult.skipped + statusResult.skipped + inquiryResult.skipped;
+    const body = { scanned, sent, failed, skipped, confirmResult, galleryResult, statusResult, inquiryResult };
     console.log("[email-sweep] completed:", body);
     // 207 Multi-Status when any pass had per-row failures.
     return NextResponse.json(body, { status: failed > 0 ? 207 : 200 });
