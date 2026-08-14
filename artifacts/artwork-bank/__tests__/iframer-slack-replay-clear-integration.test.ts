@@ -297,6 +297,68 @@ describeIntegration(
     );
 
     it(
+      "exception path (mixed sweep): throwing tenant keeps original timestamp while successful tenant is cleared",
+      async () => {
+        // Seed a tenant whose Slack call will throw (exception path).
+        // createTenant sets slug === id, so we know the slug before querying.
+        const originalFailedAt = new Date(Date.now() - 90_000);
+        const throwingTenantId = await createTenant({
+          iframerSlackPostFailed: originalFailedAt,
+          iframerSlackFailedPayload: makePayload("linked"),
+        });
+        const throwingSlug = throwingTenantId; // slug === id by convention in createTenant
+
+        // Seed a second tenant whose Slack call will succeed.
+        const successTenantId = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 45_000),
+          iframerSlackFailedPayload: makePayload("unlinked"),
+        });
+
+        // Route by tenantSlug so the result is independent of SQL row order and
+        // unaffected by any other pending rows already in the integration DB.
+        // Use rest-args to satisfy the 0-arg inferred mock type while still
+        // inspecting the tenantSlug the action passes.
+        sendIframerAccountSlackNotificationMock.mockImplementation(
+          async (...args: unknown[]) => {
+            const { tenantSlug } = args[0] as { tenantSlug: string };
+            if (tenantSlug === throwingSlug) {
+              throw new Error("ETIMEDOUT: Slack SDK network error");
+            }
+            return { ok: true as const };
+          },
+        );
+
+        const result = await replayFailedIframerSlackAlerts();
+
+        // At least one succeeded and at least one failed.
+        expect(result.replayed).toBeGreaterThanOrEqual(1);
+        expect(result.failed).toBeGreaterThanOrEqual(1);
+
+        // The successful tenant's flags must both be cleared.
+        const successRow = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, successTenantId),
+        });
+        expect(successRow?.iframerSlackPostFailed).toBeNull();
+        expect(successRow?.iframerSlackFailedPayload).toBeNull();
+
+        // The throwing tenant's timestamp must still equal the original seeded value —
+        // the successful tenant's commit must not have touched it as a side-effect.
+        const throwingRow = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, throwingTenantId),
+        });
+        expect(throwingRow?.iframerSlackPostFailed).not.toBeNull();
+        expect(throwingRow!.iframerSlackPostFailed!.getTime()).toBe(
+          originalFailedAt.getTime(),
+        );
+
+        // Restore the default mock implementation so subsequent tests are unaffected.
+        sendIframerAccountSlackNotificationMock.mockImplementation(
+          async () => ({ ok: true as const }),
+        );
+      },
+    );
+
+    it(
       "tenant without a stored payload is counted as skipped, not failed",
       async () => {
         const tenantId = await createTenant({
