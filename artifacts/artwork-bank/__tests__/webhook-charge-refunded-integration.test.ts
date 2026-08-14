@@ -13,7 +13,8 @@
  *  3. No matching order (unknown payment_intent) → 200, no DB write.
  *  4. Duplicate event (same amount already recorded) → idempotent, no update.
  *  5. Out-of-order event (lower amount arrives after higher) → skipped, preserves higher total.
- *  6. Full refund on already-CANCELLED order → refundedAmountCents updated; status unchanged.
+ *  6. Full refund on already-CANCELLED order (no prior notification) → refundedAmountCents updated; email queued.
+ *  7. Full refund on already-CANCELLED order with a sent notification → email NOT re-queued (no duplicate).
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -86,11 +87,15 @@ async function createPaidOrder({
   totalCents = 10_000,
   status = "PAID" as "PAID" | "FULFILLED" | "CANCELLED",
   refundedAmountCents = null as number | null,
+  statusEmailAttempts = 0,
+  statusEmailQueuedAt = null as Date | null,
 }: {
   tenantId: string;
   totalCents?: number;
   status?: "PAID" | "FULFILLED" | "CANCELLED";
   refundedAmountCents?: number | null;
+  statusEmailAttempts?: number;
+  statusEmailQueuedAt?: Date | null;
 }) {
   const orderId = uid();
   const artworkId = await createArtwork(tenantId);
@@ -104,6 +109,8 @@ async function createPaidOrder({
     fulfillmentType: "PICKUP",
     totalCents,
     refundedAmountCents,
+    statusEmailAttempts,
+    statusEmailQueuedAt,
     buyerEmail: "buyer@example.com",
     buyerName: "Test Buyer",
   } as any);
@@ -295,13 +302,17 @@ describeIntegration("Stripe webhook — charge.refunded — real-DB integration"
     expect(row?.refundedAmountCents).toBe(7_000); // preserved
   });
 
-  it("full refund on already-CANCELLED order: updates refundedAmountCents only (status unchanged)", async () => {
+  it("full refund on already-CANCELLED order (no prior notification): refundedAmountCents updated; email queued", async () => {
+    // Order was cancelled (e.g. by an earlier webhook) but the buyer was never
+    // notified. The handler should still queue the status email.
     const tenantId = await createTenant();
     const { orderId, paymentIntentId } = await createPaidOrder({
       tenantId,
       totalCents: 10_000,
       status: "CANCELLED",
       refundedAmountCents: null,
+      statusEmailAttempts: 0,
+      statusEmailQueuedAt: null,
     });
 
     const res = await POST(makeRequest(chargeRefundedEvent(paymentIntentId, {
@@ -314,11 +325,51 @@ describeIntegration("Stripe webhook — charge.refunded — real-DB integration"
 
     const row = await db.query.ordersTable.findFirst({
       where: eq(ordersTable.id, orderId),
-      columns: { refundedAmountCents: true, status: true },
+      columns: { refundedAmountCents: true, status: true, statusEmailQueuedAt: true, statusEmailAttempts: true },
     });
     expect(row?.refundedAmountCents).toBe(10_000);
-    // Status was already CANCELLED; the SET includes status='CANCELLED' which is
-    // a no-op on an already-cancelled order — status should remain CANCELLED.
     expect(row?.status).toBe("CANCELLED");
+    // No prior notification → handler should queue the email.
+    expect(row?.statusEmailQueuedAt).not.toBeNull();
+    expect(row?.statusEmailAttempts).toBe(0);
+  });
+
+  it("full refund on already-CANCELLED order with sent notification: does NOT re-queue buyer email", async () => {
+    // Regression for the duplicate-email bug:
+    // Admin flow: markCancelled → notifyBuyerOfUpdate (email sent, statusEmailAttempts=1,
+    // statusEmailQueuedAt=null) → refundOrder → Stripe fires charge.refunded.
+    // The webhook must NOT reset statusEmailQueuedAt — that would cause the sweep
+    // to deliver a second identical cancellation email to the buyer.
+    const tenantId = await createTenant();
+    const { orderId, paymentIntentId } = await createPaidOrder({
+      tenantId,
+      totalCents: 10_000,
+      status: "CANCELLED",
+      refundedAmountCents: null,
+      statusEmailAttempts: 1,   // simulates: admin already sent cancellation notification
+      statusEmailQueuedAt: null, // cleared after successful send
+    });
+
+    const res = await POST(makeRequest(chargeRefundedEvent(paymentIntentId, {
+      amountRefunded: 10_000,
+      fullyRefunded: true,
+      refundId: "re_no_dup_email",
+    })));
+
+    expect(res.status).toBe(200);
+
+    const row = await db.query.ordersTable.findFirst({
+      where: eq(ordersTable.id, orderId),
+      columns: {
+        refundedAmountCents: true, status: true,
+        statusEmailQueuedAt: true, statusEmailAttempts: true,
+      },
+    });
+    expect(row?.refundedAmountCents).toBe(10_000);
+    expect(row?.status).toBe("CANCELLED");
+    // Notification was already sent — handler must NOT re-queue the email.
+    expect(row?.statusEmailQueuedAt).toBeNull();
+    // Attempt count must not be reset to 0 (that would re-enable the sweep).
+    expect(row?.statusEmailAttempts).toBe(1);
   });
 });

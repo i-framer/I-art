@@ -1037,6 +1037,9 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
       status: true,
       totalCents: true,
       refundedAmountCents: true,
+      // Needed for the duplicate-notification guard below.
+      statusEmailQueuedAt: true,
+      statusEmailAttempts: true,
     },
   });
 
@@ -1085,7 +1088,21 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
 
   // Queue the buyer status-update email for full refunds.  The email sweep
   // reads statusEmailQueuedAt and sends the message on the next pass.
-  if (isFullRefund) {
+  //
+  // Guard: skip if a status notification has already been sent or is already
+  // pending in the sweep queue.  Without this guard, a charge.refunded event
+  // fired AFTER the admin used markCancelled (which calls notifyBuyerOfUpdate
+  // and clears statusEmailQueuedAt on success) would reset the queue and cause
+  // the sweep to send a duplicate cancellation email to the buyer.
+  //
+  //   Already sent  (queuedAt = null, attempts >= 1): skip — buyer notified ✓
+  //   Already queued (queuedAt != null):               skip — sweep handles it ✓
+  //   Never notified (queuedAt = null, attempts = 0):  queue — buyer needs notif ✓
+  const alreadySentOrPending =
+    order.statusEmailQueuedAt !== null ||
+    (order.statusEmailAttempts ?? 0) > 0;
+
+  if (isFullRefund && !alreadySentOrPending) {
     await db
       .update(ordersTable)
       .set({
