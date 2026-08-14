@@ -445,6 +445,9 @@ export async function resendConfirmationEmail(
       fulfillmentType: order.fulfillmentType,
       orderRef: order.id.slice(0, 8).toUpperCase(),
       tenantName: tenant.businessName,
+      // Include the order-lookup deep-link so the buyer can check status
+      // without an account — matches what the webhook sends on first delivery.
+      orderLookupUrl: getTenantUrl(tenant, "/orders"),
     });
     await db
       .update(ordersTable)
