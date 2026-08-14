@@ -351,6 +351,13 @@ describeIntegration(
           originalFailedAt.getTime(),
         );
 
+        // The throwing tenant's payload must also be preserved — the exception
+        // path must not clear or overwrite iframerSlackFailedPayload even when
+        // the other tenant's transaction commits successfully.
+        expect(throwingRow?.iframerSlackFailedPayload).toBe(
+          makePayload("linked"),
+        );
+
         // Restore the default mock implementation so subsequent tests are unaffected.
         sendIframerAccountSlackNotificationMock.mockImplementation(
           async () => ({ ok: true as const }),
