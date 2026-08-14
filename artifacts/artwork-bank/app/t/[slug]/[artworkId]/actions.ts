@@ -9,6 +9,7 @@ import { getTenantBySlug } from "@/lib/tenant-cache";
 import { sendArtworkInquiry } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getTenantUrl } from "@/lib/base-url";
+import { sendInquiryEmailFailureSlackNotification } from "@/lib/slack";
 
 export type InquiryState = {
   status: "idle" | "sent" | "error";
@@ -140,6 +141,19 @@ export async function submitInquiry(
       } catch (err) {
         console.error("Failed to record inquiry email error", err);
       }
+      // Fire-and-forget Slack alert so the operator can notify the gallery
+      // owner before they next log in. Never throws — a Slack failure must
+      // not affect the buyer's experience.
+      sendInquiryEmailFailureSlackNotification({
+        tenantName: tenant.businessName,
+        tenantSlug: slug,
+        buyerName: parsed.data.name,
+        buyerEmail: parsed.data.email,
+        artworkTitle: artwork.title,
+        inquiryId,
+      }).catch((err) => {
+        console.error("Failed to post inquiry email-failure Slack alert", err);
+      });
     }
   }
 

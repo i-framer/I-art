@@ -450,6 +450,77 @@ export async function sendIframerReplayDbFailureSlackNotification({
 }
 
 /**
+ * Post an alert to the configured Slack channel when the inquiry notification
+ * email to a gallery owner fails to deliver. Lets the operator notify the
+ * gallery out-of-band so the lead is not missed.
+ *
+ * Uses SLACK_BILLING_ALERTS_CHANNEL. If no channel is configured the call is
+ * a no-op. Failures are logged but never re-thrown — this is fire-and-forget.
+ */
+export async function sendInquiryEmailFailureSlackNotification({
+  tenantName,
+  tenantSlug,
+  buyerName,
+  buyerEmail,
+  artworkTitle,
+  inquiryId,
+}: {
+  tenantName: string;
+  tenantSlug: string;
+  buyerName: string;
+  buyerEmail: string;
+  artworkTitle: string;
+  inquiryId: string;
+}): Promise<SlackNotificationResult> {
+  const channel = process.env.SLACK_BILLING_ALERTS_CHANNEL?.trim();
+
+  if (!channel) {
+    console.log(
+      "[Inquiry email-failure Slack skipped — SLACK_BILLING_ALERTS_CHANNEL not configured]",
+      { inquiryId, tenantSlug },
+    );
+    return { ok: true };
+  }
+
+  const text =
+    `:mailbox_with_no_mail: *Inquiry email delivery failed*\n` +
+    `*Gallery:* ${tenantName} (\`${tenantSlug}\`)\n` +
+    `*Buyer:* ${buyerName} <${buyerEmail}>\n` +
+    `*Artwork:* ${artworkTitle}\n` +
+    `*Inquiry ID:* \`${inquiryId}\`\n` +
+    `The inquiry was saved but the notification email to the gallery could not be delivered. ` +
+    `Check the Inquiries panel and contact the gallery directly if needed.`;
+
+  try {
+    const connectors = new ReplitConnectors();
+    const response = await connectors.proxy("slack", "/chat.postMessage", {
+      method: "POST",
+      body: JSON.stringify({ channel, text }),
+    });
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok || (body && !body.ok)) {
+      const errorDetail = body?.error ?? `HTTP ${response.status}`;
+      console.error(
+        `[Inquiry email-failure Slack] Post failed (HTTP ${response.status}):`,
+        body?.error ?? "(no error field)",
+        { inquiryId, tenantSlug },
+      );
+      return { ok: false, error: errorDetail };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    const errorMessage = (err as any)?.message ?? String(err);
+    console.error(
+      `[Inquiry email-failure Slack] Failed to post message: ${errorMessage}`,
+      { inquiryId, tenantSlug },
+    );
+    return { ok: false, error: errorMessage };
+  }
+}
+
+/**
  * Post a synthetic [TEST] Stripe-webhook-redirect alert to the configured
  * Slack channel. Used by the /api/slack-smoke endpoint to confirm that the
  * notify-webhook-redirect.ts delivery path (Replit Connectors → Slack) is
