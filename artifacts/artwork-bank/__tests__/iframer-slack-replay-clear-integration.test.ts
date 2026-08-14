@@ -359,6 +359,61 @@ describeIntegration(
     );
 
     it(
+      "exception path (all-throw sweep): iframerSlackPostFailed unchanged for every tenant when all throw",
+      async () => {
+        // Seed three tenants, each with a distinct known past timestamp.
+        const originalFailedAt = [
+          new Date(Date.now() - 120_000),
+          new Date(Date.now() - 90_000),
+          new Date(Date.now() - 60_000),
+        ];
+
+        const tenantIds = await Promise.all(
+          originalFailedAt.map((ts) =>
+            createTenant({
+              iframerSlackPostFailed: ts,
+              iframerSlackFailedPayload: makePayload("linked"),
+            }),
+          ),
+        );
+
+        // Every Slack call throws — simulate total transport failure.
+        sendIframerAccountSlackNotificationMock.mockImplementation(async () => {
+          throw new Error("ETIMEDOUT: Slack SDK network error");
+        });
+
+        const result = await replayFailedIframerSlackAlerts();
+
+        // No tenant succeeded.
+        expect(result.replayed).toBe(0);
+        // At least as many failures as tenants seeded.
+        expect(result.failed).toBeGreaterThanOrEqual(tenantIds.length);
+
+        // Re-query every seeded row and assert neither column was touched.
+        const rows = await db.query.tenantsTable.findMany({
+          where: (t, { inArray: inArr }) => inArr(t.id, tenantIds),
+        });
+
+        expect(rows).toHaveLength(tenantIds.length);
+        for (const row of rows) {
+          // Flag must still be set (not cleared).
+          expect(row.iframerSlackPostFailed).not.toBeNull();
+
+          // Timestamp must equal the original seeded value — no refresh.
+          const idx = tenantIds.indexOf(row.id);
+          expect(row.iframerSlackPostFailed!.getTime()).toBe(
+            originalFailedAt[idx].getTime(),
+          );
+        }
+
+        // Restore the default mock implementation so subsequent tests are unaffected.
+        sendIframerAccountSlackNotificationMock.mockImplementation(
+          async () => ({ ok: true as const }),
+        );
+      },
+    );
+
+    it(
       "tenant without a stored payload is counted as skipped, not failed",
       async () => {
         const tenantId = await createTenant({
