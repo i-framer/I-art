@@ -49,6 +49,41 @@ vi.mock("@/lib/slack", async (importOriginal) => {
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
+// ── db.update intercept — lets individual tests force the clear step to throw ──
+//
+// db is exported as a lazyProxy (Proxy over {}).  vi.spyOn installs the spy on
+// the proxy's empty target, but the proxy's get-trap reads from the real drizzle
+// instance, so the spy is invisible to the action.
+//
+// Fix: a module-level vi.mock wraps db in a new Proxy that routes "update"
+// through a hoisted vi.fn.  A mutable flag object (also hoisted) controls
+// whether the spy forwards to the real drizzle update or throws.  Tests toggle
+// the flag; afterEach resets it so no bleed-through occurs.
+//
+const dbUpdateCtrl = vi.hoisted(() => ({ shouldThrow: false }));
+vi.mock("@workspace/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@workspace/db")>();
+  return {
+    ...actual,
+    // Wrap db in a proxy that intercepts only "update".
+    db: new Proxy(actual.db as object, {
+      get(target, prop) {
+        if (prop === "update") {
+          // Return a function that either throws or delegates to the real update.
+          return (...args: unknown[]) => {
+            if (dbUpdateCtrl.shouldThrow) {
+              throw new Error("simulated DB write failure on clear");
+            }
+            return (actual.db as { update: (...a: unknown[]) => unknown }).update(...args);
+          };
+        }
+        const val = Reflect.get(target, prop);
+        return typeof val === "function" ? val.bind(target) : val;
+      },
+    }) as typeof actual.db,
+  };
+});
+
 // Ensure the channel env var is present so the action doesn't skip all rows.
 process.env.SLACK_BILLING_ALERTS_CHANNEL = "#test-billing-alerts";
 
@@ -100,6 +135,9 @@ async function cleanup() {
 
 afterEach(async () => {
   sendIframerAccountSlackNotificationMock.mockClear();
+  // Safety-net: always reset the throw flag so a failing test can't bleed
+  // into the next one.
+  dbUpdateCtrl.shouldThrow = false;
   await cleanup();
 });
 afterAll(cleanup);
@@ -442,6 +480,53 @@ describeIntegration(
           where: eq(tenantsTable.id, tenantId),
         });
         expect(row?.iframerSlackPostFailed).not.toBeNull();
+      },
+    );
+
+    it(
+      "DB write failure after successful Slack delivery: both columns remain non-null (no silent data loss)",
+      async () => {
+        // Seed a tenant with both failure columns set.
+        const originalPayload = makePayload("linked");
+        const originalFailedAt = new Date(Date.now() - 60_000);
+        const tenantId = await createTenant({
+          iframerSlackPostFailed: originalFailedAt,
+          iframerSlackFailedPayload: originalPayload,
+        });
+
+        // Slack succeeds (default mock returns { ok: true }).
+        // Force ALL db.update calls to throw for the duration of the sweep so
+        // the clear step is guaranteed to fail regardless of how many pending
+        // rows exist in the integration DB at the time of the run.
+        dbUpdateCtrl.shouldThrow = true;
+        let result: Awaited<ReturnType<typeof replayFailedIframerSlackAlerts>>;
+        try {
+          result = await replayFailedIframerSlackAlerts();
+        } finally {
+          // Always restore so the assertions and afterEach cleanup use the
+          // real db.update path.
+          dbUpdateCtrl.shouldThrow = false;
+        }
+
+        // The action counts a successful Slack delivery even when the DB
+        // clear fails — replayed is still incremented because the message
+        // was delivered (Slack returned ok: true).
+        expect(result!.replayed).toBeGreaterThanOrEqual(1);
+
+        // Re-query the row using the now-restored real db and verify neither
+        // column was silently cleared by the failed update.
+        const row = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, tenantId),
+        });
+
+        // iframerSlackPostFailed must still be set — the DB write failure
+        // must not have partially committed only the timestamp column.
+        expect(row?.iframerSlackPostFailed).not.toBeNull();
+
+        // iframerSlackFailedPayload must also still be set — both columns are
+        // written in a single .set() call so they either both clear or neither
+        // does (the action's try/catch swallows the error and leaves them intact).
+        expect(row?.iframerSlackFailedPayload).toBe(originalPayload);
       },
     );
   },
