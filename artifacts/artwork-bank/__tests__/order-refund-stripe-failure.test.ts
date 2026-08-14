@@ -49,7 +49,11 @@ vi.mock("@workspace/db", () => ({
     update: vi.fn(() => ({
       set: (vals: any) => {
         state.updates.push({ vals });
-        return { where: () => Promise.resolve() };
+        return {
+          where: (_condition: unknown) => ({
+            returning: async (_cols?: unknown) => [{ id: "mocked-order-id" }] as { id: string }[],
+          }),
+        };
       },
     })),
   },

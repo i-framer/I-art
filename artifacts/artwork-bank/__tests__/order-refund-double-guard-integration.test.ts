@@ -166,6 +166,8 @@ describeIntegration("Double-refund guard — real DB", () => {
   }
 
   // ── Scenario 1: existing succeeded refund is reused ─────────────────────────
+  // 15 s: this scenario runs insertTenant() for the first time (cold connection
+  // to Neon) which adds several seconds of latency on top of the test itself.
   it("reuses an existing unrecorded succeeded refund — stripe.refunds.create is never called", async () => {
     await ensureTenant();
     const orderId = oid("s1");
@@ -191,7 +193,7 @@ describeIntegration("Double-refund guard — real DB", () => {
     expect(row?.stripeRefundId).toBe("re_existing");
     expect(row?.refundedAmountCents).toBe(10_000);
     expect(row?.status).toBe("CANCELLED");
-  });
+  }, 15_000);
 
   // ── Scenario 2: pending (in-flight) refund is also treated as existing ───────
   it("reuses a pending (in-flight) refund — no duplicate create", async () => {

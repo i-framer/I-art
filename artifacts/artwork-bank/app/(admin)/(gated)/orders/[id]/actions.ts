@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@workspace/db";
 import { ordersTable } from "@workspace/db";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { getSession } from "@/lib/auth";
 import { orderItemsTable, tenantsTable } from "@workspace/db";
 import { sendOrderConfirmation, sendOrderStatusUpdate, sendPartialRefundNotification } from "@/lib/email";
@@ -350,7 +350,12 @@ export async function refundOrder(formData: FormData): Promise<void> {
   const isFullRefund = newTotalRefunded >= order.totalCents;
 
   try {
-    await db
+    // Optimistic-lock guard: the WHERE re-checks that refundedAmountCents still
+    // equals the value we read before calling Stripe.  If a concurrent refund
+    // has already changed it, 0 rows are updated — we throw so the catch block
+    // alerts the operator with the Stripe refund ID, preventing silent
+    // last-write-wins corruption of the running total.
+    const [updated] = await db
       .update(ordersTable)
       .set({
         refundedAmountCents: newTotalRefunded,
@@ -358,7 +363,20 @@ export async function refundOrder(formData: FormData): Promise<void> {
         stripeRefundId,
         ...(isFullRefund ? { status: "CANCELLED" } : {}),
       })
-      .where(eq(ordersTable.id, orderId));
+      .where(
+        and(
+          eq(ordersTable.id, orderId),
+          sql`coalesce(${ordersTable.refundedAmountCents}, 0) = ${alreadyRefunded}`,
+        ),
+      )
+      .returning({ id: ordersTable.id });
+    if (!updated) {
+      throw new Error(
+        `Concurrent refund conflict: Stripe refund ${stripeRefundId} was created but the ` +
+          `DB row was already modified by another request. The Stripe refund has been charged — ` +
+          `do NOT retry without verifying the refund total in Stripe first.`,
+      );
+    }
   } catch (dbErr) {
     // Stripe accepted the refund but we couldn't persist it. Surface the Stripe
     // refund id so the operator can verify the refund and avoid a double-refund.

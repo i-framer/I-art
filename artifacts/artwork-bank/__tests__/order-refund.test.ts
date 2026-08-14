@@ -18,6 +18,9 @@ const state = vi.hoisted(() => ({
   updates: [] as { vals: any }[],
   order: null as any,
   dbUpdateShouldFail: false,
+  // Set to true to simulate a concurrent refund that already changed
+  // refundedAmountCents between our pre-Stripe read and the atomic UPDATE.
+  concurrentConflict: false,
 }));
 
 const tables = vi.hoisted(() => ({
@@ -45,10 +48,15 @@ vi.mock("@workspace/db", () => ({
       set: (vals: any) => {
         state.updates.push({ vals });
         return {
-          where: () =>
-            state.dbUpdateShouldFail
-              ? Promise.reject(new Error("DB connection lost"))
-              : Promise.resolve(),
+          where: (_condition: unknown) => ({
+            returning: state.dbUpdateShouldFail
+              ? async (_cols?: unknown) => {
+                  throw new Error("DB connection lost");
+                }
+              : state.concurrentConflict
+                ? async (_cols?: unknown) => [] as { id: string }[]
+                : async (_cols?: unknown) => [{ id: "mocked-order-id" }] as { id: string }[],
+          }),
         };
       },
     })),
@@ -123,6 +131,7 @@ beforeEach(() => {
   state.updates.length = 0;
   state.order = baseOrder();
   state.dbUpdateShouldFail = false;
+  state.concurrentConflict = false;
   orderFindFirst.mockImplementation(async () => state.order);
   itemFindFirst.mockResolvedValue({ artworkTitle: "Sunset" });
   tenantFindFirst.mockResolvedValue({ id: "t1", businessName: "Gallery" });
@@ -489,5 +498,44 @@ describe("reconciliation — reuse existing Stripe refund", () => {
     // Verify the idempotency key was passed: key encodes orderId-alreadyRefunded-refundCents.
     const [, opts] = stripeRefundCreate.mock.calls[0] as [any, any];
     expect(opts?.idempotencyKey).toBe("refund-order-1-5000-3000");
+  });
+});
+
+// ── Optimistic-lock / concurrent refund guard ─────────────────────────────────
+//
+// When two concurrent requests read the same refundedAmountCents value and both
+// call Stripe with different amounts, the first DB write succeeds.  The second
+// write's conditional WHERE (coalesce(refundedAmountCents,0) = alreadyRefunded)
+// matches 0 rows — we route to the DB-failure handler so the operator sees the
+// Stripe refund ID and can reconcile rather than silently losing money.
+
+describe("concurrent refund guard (optimistic lock)", () => {
+  it("routes to the DB-failure error path when the optimistic WHERE matches 0 rows (concurrent modification detected)", async () => {
+    // Stripe creates the refund — money leaves the account.
+    stripeRefundCreate.mockResolvedValueOnce({ id: "re_concurrent" });
+    // The DB UPDATE returns 0 rows (another concurrent write already changed the row).
+    state.concurrentConflict = true;
+
+    await expect(
+      refundOrder(formData({ orderId: "order-1", refundAmountDollars: "30.00" })),
+    ).rejects.toThrow(
+      `REDIRECT:/orders/order-1?refund_error=${encodeURIComponent(
+        "Stripe refund re_concurrent was accepted but the order record could not be updated. Do NOT retry — check Stripe for refund re_concurrent before proceeding.",
+      )}`,
+    );
+
+    // Stripe was called — money left the account.
+    expect(stripeRefundCreate).toHaveBeenCalledOnce();
+
+    // Slack alert must fire so the operator can reconcile manually.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sendRefundDbFailureSlackNotification).toHaveBeenCalledWith({
+      stripeRefundId: "re_concurrent",
+      orderId: "order-1",
+      tenantId: "t1",
+    });
+
+    // Buyer notification must NOT have been sent — the refund was not recorded.
+    expect(sendPartialRefundNotification).not.toHaveBeenCalled();
   });
 });
