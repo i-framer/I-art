@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { fetchObject, StorageNotConfiguredError } from "@/lib/object-storage";
 import { BlobError, BlobNotFoundError } from "@vercel/blob";
+import { db, artworkImagesTable } from "@workspace/db";
+import { and, eq } from "drizzle-orm";
 
 /**
  * Content types that can execute script when opened as a document in the
@@ -28,10 +30,43 @@ export async function GET(request: NextRequest) {
   if (!session.userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
   const objectPath = request.nextUrl.searchParams.get("path");
   if (!objectPath || !objectPath.startsWith("/objects/")) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
+
+  // ── Tenant-ownership guard ──────────────────────────────────────────────────
+  // The route is only ever called from admin UI image <img> tags where src is
+  // constructed from artworkImagesTable.objectPath.  All such rows are created
+  // by the addArtworkImage server action which enforces tenantId at write time.
+  //
+  // Without this check any authenticated gallery-admin session (even from a
+  // different gallery) could read another tenant's artwork images by supplying
+  // a known-or-guessed object path.
+  //
+  // We require the path to exist in artworkImagesTable AND belong to the
+  // session's own tenant.  A mismatch (wrong tenant) and a missing row (path
+  // not yet associated with an image row) both return 403 so callers cannot
+  // distinguish "wrong tenant" from "path does not exist."
+  if (!session.tenantId) {
+    // Logged-in users without a tenant context (e.g. super-admins with no
+    // gallery affiliation) cannot use this endpoint.
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const imageRow = await db.query.artworkImagesTable.findFirst({
+    where: and(
+      eq(artworkImagesTable.objectPath, objectPath),
+      eq(artworkImagesTable.tenantId, session.tenantId),
+    ),
+    columns: { id: true },
+  });
+
+  if (!imageRow) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   try {
     const upstream = await fetchObject(objectPath);
     const contentType =

@@ -70,10 +70,31 @@ vi.mock("@/lib/object-storage", () => {
   return { putObject, fetchObject, deleteObject, StorageNotConfiguredError };
 });
 
+// ── DB mock — ownership check always grants access for this test suite ─────────
+// The e2e tests verify upload→serve→delete mechanics, not cross-tenant access
+// (that is covered by storage-serve-route-integration.test.ts).  Stubbing the
+// DB avoids FK setup (tenant + artwork rows) while keeping the grant path open.
+
+vi.mock("@workspace/db", () => ({
+  db: {
+    query: {
+      artworkImagesTable: {
+        findFirst: vi.fn().mockResolvedValue({ id: "img-stub" }),
+      },
+    },
+  },
+  artworkImagesTable: { objectPath: "objectPath", tenantId: "tenantId" },
+}));
+
+vi.mock("drizzle-orm", () => ({
+  and: vi.fn((...args: any[]) => args),
+  eq: vi.fn((...args: any[]) => args),
+}));
+
 // ── Session mock ──────────────────────────────────────────────────────────────
 
-const mockSession: { value: { userId: string | null } } = {
-  value: { userId: null },
+const mockSession: { value: { userId: string | null; tenantId: string | null } } = {
+  value: { userId: null, tenantId: null },
 };
 vi.mock("@/lib/auth", () => ({
   getSession: vi.fn(async () => mockSession.value),
@@ -144,7 +165,7 @@ function makeServeRequest(objectPath: string) {
 // ── Cleanup ───────────────────────────────────────────────────────────────────
 
 afterEach(() => {
-  mockSession.value = { userId: null };
+  mockSession.value = { userId: null, tenantId: null };
   fakeStore.clear();
 });
 
@@ -158,7 +179,7 @@ describeIntegration(
         "delete makes serve return 404",
       async () => {
         const userId = `user-${uid()}`;
-        mockSession.value = { userId };
+        mockSession.value = { userId, tenantId: "tenant-e2e" };
 
         // ── Step 1: upload a small test image ────────────────────────────────
         const uploadReq = makeUploadRequest({
@@ -193,7 +214,7 @@ describeIntegration(
     );
 
     it("upload without session → 401, object is never stored", async () => {
-      mockSession.value = { userId: null };
+      mockSession.value = { userId: null, tenantId: null };
 
       const uploadReq = makeUploadRequest({
         contentType: "image/png",
@@ -206,7 +227,7 @@ describeIntegration(
     });
 
     it("serve without session → 401", async () => {
-      mockSession.value = { userId: null };
+      mockSession.value = { userId: null, tenantId: null };
 
       const serveRes = await serveGET(
         makeServeRequest("/objects/uploads/some-uuid"),
@@ -216,7 +237,9 @@ describeIntegration(
     });
 
     it("serve with valid session but no object at that path → 404", async () => {
-      mockSession.value = { userId: `user-${uid()}` };
+      // The DB mock (above) grants ownership; fakeStore is empty so fetchObject
+      // throws BlobNotFoundError → 404.
+      mockSession.value = { userId: `user-${uid()}`, tenantId: "tenant-e2e" };
       // fakeStore is empty; nothing was uploaded.
 
       const serveRes = await serveGET(
@@ -227,7 +250,7 @@ describeIntegration(
     });
 
     it("two consecutive uploads produce distinct objectPaths", async () => {
-      mockSession.value = { userId: `user-${uid()}` };
+      mockSession.value = { userId: `user-${uid()}`, tenantId: "tenant-e2e" };
 
       const [res1, res2] = await Promise.all([
         uploadPOST(
