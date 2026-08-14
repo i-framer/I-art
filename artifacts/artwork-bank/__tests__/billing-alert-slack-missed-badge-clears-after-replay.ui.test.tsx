@@ -299,7 +299,7 @@ describe("BillingAlerts — replay button count updates after click and re-rende
       slackPostFailed: new Date(Date.now() - 90_000),
     });
 
-    const { rerender } = render(<BillingAlerts alerts={[p1, p2, p3]} />);
+    const { rerender } = render(<BillingAlerts alerts={[pending1, pending2]} />);
 
     expect(screen.getByText("Replay 2 Slack failures")).toBeTruthy();
 
@@ -336,7 +336,7 @@ describe("BillingAlerts — replay button count updates after click and re-rende
       slackPostFailed: new Date(Date.now() - 90_000),
     });
 
-    const { rerender } = render(<BillingAlerts alerts={[p1, p2, p3]} />);
+    const { rerender } = render(<BillingAlerts alerts={[pending1, pending2]} />);
 
     expect(screen.getByText("Replay 2 Slack failures")).toBeTruthy();
 
@@ -415,10 +415,6 @@ describe("BillingAlerts — replay button re-enables after the action settles", 
   it("button loses the disabled attribute once the action resolves", async () => {
     const mockReplay = vi.mocked(replayFailedSlackAlerts);
 
-    let rejectFirst!: (reason: Error) => void;
-
-    let resolveFirst!: (value: { replayed: number; failed: number; skipped: number }) => void;
-
     // Reset call history from earlier tests in this file.
     mockReplay.mockClear();
 
@@ -447,12 +443,12 @@ describe("BillingAlerts — replay button re-enables after the action settles", 
       expect(replayBtn.hasAttribute("disabled")).toBe(true);
     });
 
-    // Reject the first promise so React can finish the transition.
+    // Resolve the in-flight promise so React can finish the transition.
     await act(async () => {
-      rejectFirst(new Error("Network error"));
+      resolveReplay({ replayed: 0, failed: 0, skipped: 0 });
     });
 
-    // After the rejection settles, useTransition must clear replayPending,
+    // After the action settles, useTransition must clear replayPending,
     // so the button must no longer be disabled.
     await vi.waitFor(() => {
       expect(replayBtn.hasAttribute("disabled")).toBe(false);
@@ -613,6 +609,13 @@ describe("BillingAlerts — replay result banner shows correct counts after a pa
       stripeEventId: "evt_rm1",
       slackPostFailed: new Date(Date.now() - 60_000),
     });
+    // Same row after a successful replay — slackPostFailed cleared to null.
+    const cleared = makeAlert({
+      id: "rm1",
+      stripeEventId: "evt_rm1",
+      slackPostFailed: null,
+    });
+    void pending; // defined for documentation; the fresh mount uses the cleared version
 
     render(<BillingAlerts alerts={[cleared]} />);
 

@@ -10,7 +10,7 @@
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
-import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
+import { db, stripeAlertsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 

@@ -967,7 +967,7 @@ describeIntegration(
         // confirms at least 1 delivery occurred and no spurious third call (which
         // would indicate a retry loop regression rather than a simple race).
         const slackCallCount =
-          sendIframerAccountSlackNotificationMock.mock.calls.filter(
+          (sendIframerAccountSlackNotificationMock.mock.calls as unknown[][]).filter(
             (args) =>
               (args[0] as { tenantSlug?: string }).tenantSlug === tenantId,
           ).length;
