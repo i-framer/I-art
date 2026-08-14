@@ -172,6 +172,40 @@ describeIntegration(
     );
 
     it(
+      "failure path (Slack ok:false): iframerSlackPostFailed is refreshed to the current time",
+      async () => {
+        // Seed a tenant with a failure timestamp well in the past.
+        const pastDate = new Date(Date.now() - 5 * 60_000); // 5 minutes ago
+        const tenantId = await createTenant({
+          iframerSlackPostFailed: pastDate,
+          iframerSlackFailedPayload: makePayload("linked"),
+        });
+
+        sendIframerAccountSlackNotificationMock.mockResolvedValueOnce({
+          ok: false,
+        });
+
+        const sweepStartedAt = new Date();
+        const result = await replayFailedIframerSlackAlerts();
+
+        expect(result.failed).toBeGreaterThanOrEqual(1);
+
+        const row = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, tenantId),
+        });
+
+        // The timestamp must be non-null (still failing)...
+        expect(row?.iframerSlackPostFailed).not.toBeNull();
+
+        // ...AND it must have been refreshed to at or after the sweep start,
+        // proving the action wrote a new value rather than leaving the stale one.
+        expect(row!.iframerSlackPostFailed!.getTime()).toBeGreaterThanOrEqual(
+          sweepStartedAt.getTime(),
+        );
+      },
+    );
+
+    it(
       "tenant without a stored payload is counted as skipped, not failed",
       async () => {
         const tenantId = await createTenant({
