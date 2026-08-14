@@ -12,6 +12,8 @@
  *  4. Wrong artworkId (cross-tenant) returns error — no row inserted.
  *  5. Missing required fields (blank name) returns validation error.
  *  6. Honeypot field set → action returns sent without inserting a row.
+ *  7. Email failure → Slack alert fires with correct tenant/buyer/artwork args.
+ *  8. Email success → Slack alert is NOT called.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -47,6 +49,14 @@ vi.mock("@/lib/email", async (importOriginal) => {
     sendInquiryConfirmation: vi.fn(async () => {}),
   };
 });
+
+// ── Slack — spy on the inquiry email-failure alert. Returns ok:true by default.
+const sendInquiryEmailFailureSlackNotification = vi.hoisted(() =>
+  vi.fn(async () => ({ ok: true as const })),
+);
+vi.mock("@/lib/slack", () => ({
+  sendInquiryEmailFailureSlackNotification,
+}));
 
 import { submitInquiry } from "@/app/t/[slug]/[artworkId]/actions";
 
@@ -96,7 +106,13 @@ async function cleanup() {
   }
 }
 
-afterEach(cleanup);
+afterEach(async () => {
+  sendArtworkInquiry.mockReset();
+  sendArtworkInquiry.mockResolvedValue(true);
+  sendInquiryEmailFailureSlackNotification.mockReset();
+  sendInquiryEmailFailureSlackNotification.mockResolvedValue({ ok: true });
+  await cleanup();
+});
 afterAll(cleanup);
 
 function fd(fields: Record<string, string>) {
@@ -240,5 +256,75 @@ describeIntegration("submitInquiry (public storefront) — real-DB integration",
       where: eq(inquiriesTable.artworkId, artworkId),
     });
     expect(row).toBeUndefined();
+  });
+
+  it("email failure → Slack alert fires with correct tenant/buyer/artwork args", async () => {
+    const { tenantId, slug } = await createTenant("gallery@example.com");
+    const artworkId = await createArtwork(tenantId);
+
+    // Force email delivery to fail.
+    sendArtworkInquiry.mockResolvedValueOnce(false);
+
+    const result = await submitInquiry(
+      slug,
+      artworkId,
+      { status: "idle", error: "" },
+      fd({ name: "Alice Collector", email: "alice@collector.com", message: "Is it available?", website: "" }),
+    );
+
+    // Submission should still return "sent" so the buyer is not alarmed.
+    expect(result.status).toBe("sent");
+
+    // Allow the fire-and-forget Slack promise to settle.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    // The Slack alert must have been called exactly once with correct args.
+    expect(sendInquiryEmailFailureSlackNotification).toHaveBeenCalledTimes(1);
+    expect(sendInquiryEmailFailureSlackNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantName: "Submit Inquiry Test Gallery",
+        tenantSlug: slug,
+        buyerName: "Alice Collector",
+        buyerEmail: "alice@collector.com",
+        artworkTitle: "Test Artwork",
+        // inquiryId is the real DB-assigned UUID — just verify it is a non-empty string.
+        inquiryId: expect.any(String),
+      }),
+    );
+
+    // Clean up the persisted inquiry row.
+    const row = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.artworkId, artworkId),
+    });
+    if (row?.id) createdInquiryIds.push(row.id);
+  });
+
+  it("email success → Slack alert is NOT called", async () => {
+    const { tenantId, slug } = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+
+    // Email succeeds (default mock behaviour).
+    sendArtworkInquiry.mockResolvedValueOnce(true);
+
+    const result = await submitInquiry(
+      slug,
+      artworkId,
+      { status: "idle", error: "" },
+      fd({ name: "Bob Buyer", email: "bob@buyer.com", message: "Interested!", website: "" }),
+    );
+
+    expect(result.status).toBe("sent");
+
+    // Allow any fire-and-forget promises to settle.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    // When email succeeds the Slack alert must not fire.
+    expect(sendInquiryEmailFailureSlackNotification).not.toHaveBeenCalled();
+
+    // Clean up the persisted inquiry row.
+    const row = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.artworkId, artworkId),
+    });
+    if (row?.id) createdInquiryIds.push(row.id);
   });
 });
