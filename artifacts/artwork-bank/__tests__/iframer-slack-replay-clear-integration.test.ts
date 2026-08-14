@@ -335,6 +335,8 @@ describeIntegration(
         expect(result.failed).toBeGreaterThanOrEqual(1);
 
         // The successful tenant's flags must both be cleared.
+        // (Atomicity — both columns in one .set() call — is enforced by the
+        // unit test in iframer-slack-replay-atomic-clear.test.ts.)
         const successRow = await db.query.tenantsTable.findFirst({
           where: eq(tenantsTable.id, successTenantId),
         });
