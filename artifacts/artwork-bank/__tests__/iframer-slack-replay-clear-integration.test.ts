@@ -975,5 +975,76 @@ describeIntegration(
         expect(slackCallCount).toBeLessThanOrEqual(2);
       },
     );
+
+    it(
+      "sequential sweeps: second sweep sends no Slack when first sweep already committed the DB clear",
+      async () => {
+        // This test covers the scenario where the first sweep's UPDATE commits
+        // *before* the second sweep's SELECT executes — i.e. the sweeps run
+        // strictly in sequence rather than concurrently interleaved.
+        //
+        // In this scenario PostgreSQL guarantees that the second sweep's SELECT
+        // reads committed data and therefore finds zero pending rows.  The second
+        // sweep must process nothing and send no Slack notification.
+        //
+        // This is the happy-path guard for the at-most-twice duplicate window
+        // documented in the concurrent-race test above: when the two sweeps are
+        // fully serialised (first await resolves before second begins), no
+        // duplicate delivery can occur.
+        const originalPayload = makePayload("linked");
+        const tenantId = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 60_000),
+          iframerSlackFailedPayload: originalPayload,
+        });
+
+        // ── First sweep: runs to completion (Slack ok:true, row is cleared) ────
+        const result1 = await replayFailedIframerSlackAlerts();
+
+        // The first sweep must have processed our seeded tenant.
+        expect(result1.replayed).toBeGreaterThanOrEqual(1);
+        expect(result1.failed).toBe(0);
+
+        // Confirm the row is cleared before the second sweep starts — this is
+        // the pre-condition that makes the second sweep's SELECT see nothing.
+        const clearedRow = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, tenantId),
+        });
+        expect(clearedRow?.iframerSlackPostFailed).toBeNull();
+        expect(clearedRow?.iframerSlackFailedPayload).toBeNull();
+
+        // Reset the Slack call counter so we can distinguish first-sweep calls
+        // from any second-sweep calls.
+        sendIframerAccountSlackNotificationMock.mockClear();
+
+        // ── Second sweep: starts only after first sweep's UPDATE has committed ──
+        const result2 = await replayFailedIframerSlackAlerts();
+
+        // The second sweep may process other pending rows in the integration DB,
+        // but it must not have replayed or failed for our specific tenant.
+        // We assert this by checking the Slack mock was NOT called with our
+        // tenant's slug — the cleared row must be invisible to the SELECT.
+        const slackCallsForOurTenant = (
+          sendIframerAccountSlackNotificationMock.mock.calls as unknown[][]
+        ).filter(
+          (args) =>
+            (args[0] as { tenantSlug?: string } | undefined)?.tenantSlug ===
+            tenantId,
+        );
+        expect(slackCallsForOurTenant).toHaveLength(0);
+
+        // The row must remain fully cleared after the second sweep settles —
+        // a regression that re-sets either column would surface here.
+        const rowAfterSecondSweep = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, tenantId),
+        });
+        expect(rowAfterSecondSweep?.iframerSlackPostFailed).toBeNull();
+        expect(rowAfterSecondSweep?.iframerSlackFailedPayload).toBeNull();
+
+        // Silence the unused-variable lint warning — result2 is intentionally
+        // not constrained beyond the per-tenant Slack assertions above, because
+        // other integration-DB rows are outside this test's control.
+        void result2;
+      },
+    );
   },
 );
