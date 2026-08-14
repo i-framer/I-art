@@ -579,5 +579,56 @@ describeIntegration(
         expect(row?.iframerSlackFailedPayload).toBe(originalPayload);
       },
     );
+
+    it(
+      "DB update failure after ok:false Slack response: console.error is emitted with tenantId and refresh-failure message",
+      async () => {
+        // Seed a tenant so the action has a row to process.
+        const originalPayload = makePayload("linked");
+        const tenantId = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 60_000),
+          iframerSlackFailedPayload: originalPayload,
+        });
+
+        // Slack returns ok:false — the refresh-timestamp update path is taken.
+        sendIframerAccountSlackNotificationMock.mockResolvedValueOnce({
+          ok: false,
+        });
+
+        // Spy on console.error before forcing the DB throw so we capture only
+        // the log emitted during this test (restored in the spy's own cleanup).
+        const errorSpy = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => {});
+
+        // Force db.update to throw so the catch block runs and logs.
+        dbUpdateCtrl.shouldThrow = true;
+        try {
+          await replayFailedIframerSlackAlerts();
+        } finally {
+          dbUpdateCtrl.shouldThrow = false;
+        }
+
+        // Capture calls before restoring (mockRestore clears recorded calls).
+        const calls = errorSpy.mock.calls.slice();
+        errorSpy.mockRestore();
+
+        // console.error must have been called at least once.
+        expect(calls.length).toBeGreaterThan(0);
+
+        // At least one call must reference both the tenantId and the
+        // refresh-failure concept so operators can identify the stuck row.
+        const matchingCall = calls.find(
+          (args) =>
+            args.some(
+              (a) =>
+                typeof a === "string" &&
+                a.includes(tenantId) &&
+                a.toLowerCase().includes("refresh"),
+            ),
+        );
+        expect(matchingCall).toBeDefined();
+      },
+    );
   },
 );
