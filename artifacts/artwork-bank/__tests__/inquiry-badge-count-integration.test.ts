@@ -1,16 +1,26 @@
 /**
- * getNewInquiryCount — real-DB integration.
+ * getNewInquiryCount / getEmailFailCount — real-DB integration.
  *
  * Task #36: "New-inquiry badge without refresh."
+ * Task #834: "Failed-email warning banner disappears after inquiry is archived."
  *
- * The badge component polls this action every 30s.  This suite verifies the
- * count query against real PostgreSQL:
+ * The badge component polls getNewInquiryCount every 30s.  The warning banner
+ * on the Inquiries page uses getEmailFailCount.  This suite verifies both
+ * count queries against real PostgreSQL:
  *
+ * getNewInquiryCount:
  *  1. Only NEW + unarchived inquiries for the session tenant are counted.
  *  2. HANDLED inquiries are not counted.
  *  3. Archived (archivedAt non-null) inquiries are not counted.
  *  4. Inquiries from another tenant are not counted.
  *  5. Unauthenticated session returns 0.
+ *
+ * getEmailFailCount:
+ *  6. Only non-archived inquiries with emailError set are counted.
+ *  7. Archived inquiries with emailError are excluded (banner disappears).
+ *  8. Non-archived inquiries without emailError are excluded.
+ *  9. Inquiries from another tenant are not counted.
+ * 10. Unauthenticated session returns 0.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -32,7 +42,10 @@ vi.mock("@/lib/auth", () => ({
   getSession: vi.fn(async () => ({ ...mockSession })),
 }));
 
-import { getNewInquiryCount } from "@/app/(admin)/_actions/inquiry-count";
+import {
+  getNewInquiryCount,
+  getEmailFailCount,
+} from "@/app/(admin)/_actions/inquiry-count";
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -69,7 +82,7 @@ async function createArtwork(tenantId: string) {
 async function createInquiry(
   tenantId: string,
   artworkId: string,
-  opts: { status?: string; archivedAt?: Date | null } = {},
+  opts: { status?: string; archivedAt?: Date | null; emailError?: string | null } = {},
 ) {
   const id = uid();
   await db.insert(inquiriesTable).values({
@@ -79,6 +92,7 @@ async function createInquiry(
     message: "Available?",
     status: opts.status ?? "NEW",
     archivedAt: opts.archivedAt ?? null,
+    emailError: opts.emailError ?? null,
   } as any);
   createdInquiryIds.push(id);
   return id;
@@ -181,5 +195,92 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
     mockSession.userId = "u-badge-owner";
 
     expect(count).toBe(0);
+  });
+
+  // ── getEmailFailCount ────────────────────────────────────────────────────────
+
+  it("counts only non-archived inquiries with emailError set", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+
+    // 2 qualifying: emailError set, not archived
+    await createInquiry(tenantId, artworkId, { emailError: "SMTP timeout", archivedAt: null });
+    await createInquiry(tenantId, artworkId, { emailError: "550 rejected", archivedAt: null });
+    // Not counted: no emailError
+    await createInquiry(tenantId, artworkId, { emailError: null, archivedAt: null });
+    // Not counted: archived (even though emailError is set)
+    await createInquiry(tenantId, artworkId, { emailError: "SMTP timeout", archivedAt: new Date() });
+
+    const failCount = await getEmailFailCount();
+
+    expect(failCount).toBe(2);
+  });
+
+  it("archived inquiry with emailError is excluded — banner disappears after archiving", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+
+    // The inquiry had a failed email but has since been archived (lead resolved).
+    await createInquiry(tenantId, artworkId, {
+      emailError: "Connection refused",
+      archivedAt: new Date(Date.now() - 1000),
+    });
+
+    const failCount = await getEmailFailCount();
+
+    expect(failCount).toBe(0);
+  });
+
+  it("non-archived inquiries without emailError are not counted", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+
+    await createInquiry(tenantId, artworkId, { emailError: null, archivedAt: null });
+    await createInquiry(tenantId, artworkId, { emailError: null, archivedAt: null });
+
+    const failCount = await getEmailFailCount();
+
+    expect(failCount).toBe(0);
+  });
+
+  it("getEmailFailCount does not count another tenant's failed-email inquiries", async () => {
+    const ownTenantId = await createTenant();
+    const ownArtworkId = await createArtwork(ownTenantId);
+    // 1 own failing inquiry
+    await createInquiry(ownTenantId, ownArtworkId, { emailError: "SMTP timeout", archivedAt: null });
+
+    // Foreign tenant with its own failing inquiries
+    const foreignTenantId = uid();
+    await db.insert(tenantsTable).values({
+      id: foreignTenantId, slug: foreignTenantId,
+      businessName: "Foreign Gallery", type: "ARTIST",
+    } as any);
+    createdTenantIds.push(foreignTenantId);
+    const foreignArtworkId = uid();
+    await db.insert(artworksTable).values({
+      id: foreignArtworkId, tenantId: foreignTenantId,
+      title: "Foreign", sku: `sku-${foreignArtworkId}`, status: "AVAILABLE",
+    } as any);
+    createdArtworkIds.push(foreignArtworkId);
+    await createInquiry(foreignTenantId, foreignArtworkId, { emailError: "550 rejected", archivedAt: null });
+    await createInquiry(foreignTenantId, foreignArtworkId, { emailError: "550 rejected", archivedAt: null });
+
+    // Session remains on ownTenantId
+    mockSession.tenantId = ownTenantId;
+    const failCount = await getEmailFailCount();
+
+    expect(failCount).toBe(1);
+  });
+
+  it("getEmailFailCount returns 0 for unauthenticated session", async () => {
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+    await createInquiry(tenantId, artworkId, { emailError: "SMTP timeout", archivedAt: null });
+
+    mockSession.userId = null;
+    const failCount = await getEmailFailCount();
+    mockSession.userId = "u-badge-owner";
+
+    expect(failCount).toBe(0);
   });
 });

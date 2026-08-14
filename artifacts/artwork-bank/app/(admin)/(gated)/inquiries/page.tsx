@@ -10,7 +10,9 @@ import {
   usersTable,
 } from "@workspace/db";
 import { eq, desc, count, and, inArray, asc, isNull, isNotNull } from "drizzle-orm";
+// isNotNull kept for the archived-filter query (isNotNull(inquiriesTable.archivedAt))
 import { setInquiryStatus, setInquiryArchived } from "./actions";
+import { getEmailFailCount } from "@/app/(admin)/_actions/inquiry-count";
 import { ReplyForm } from "./reply-form";
 import {
   BulkSelectionProvider,
@@ -81,7 +83,7 @@ export default async function InquiriesPage({
             eq(inquiriesTable.status, filter === "new" ? "NEW" : "HANDLED"),
           );
 
-  const [rows, [countRow], [newCountRow], [emailFailCountRow], tenant] = await Promise.all([
+  const [rows, [countRow], [newCountRow], emailFailCount, tenant] = await Promise.all([
     db
       .select()
       .from(inquiriesTable)
@@ -100,16 +102,7 @@ export default async function InquiriesPage({
           isNull(inquiriesTable.archivedAt),
         ),
       ),
-    db
-      .select({ count: count() })
-      .from(inquiriesTable)
-      .where(
-        and(
-          tenantWhere,
-          isNotNull(inquiriesTable.emailError),
-          isNull(inquiriesTable.archivedAt),
-        ),
-      ),
+    getEmailFailCount(),
     db.query.tenantsTable.findFirst({
       where: eq(tenantsTable.id, session.tenantId),
     }),
@@ -150,7 +143,6 @@ export default async function InquiriesPage({
 
   const total = countRow?.count ?? 0;
   const newCount = newCountRow?.count ?? 0;
-  const emailFailCount = emailFailCountRow?.count ?? 0;
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const slug = tenant?.slug;
 
