@@ -9,6 +9,7 @@ import {
   resolveSlackChannel,
   sendBillingAlertSlackNotification,
   sendIframerAccountSlackNotification,
+  sendIframerReplayDbFailureSlackNotification,
 } from "@/lib/slack";
 import type { SlackNotificationResult } from "@/lib/slack";
 
@@ -305,6 +306,9 @@ export async function replayFailedIframerSlackAlerts(): Promise<{
           `[i-Framer Slack replay] Failed to refresh iframerSlackPostFailed for tenantId=${tenant.id}:`,
           (updateErr as any)?.message ?? String(updateErr),
         );
+        // Fire a Slack alert so operators watching the billing channel notice
+        // the stuck retry — console.error alone is invisible to Slack watchers.
+        await sendIframerReplayDbFailureSlackNotification({ tenantId: tenant.id });
       }
       failed++;
     }

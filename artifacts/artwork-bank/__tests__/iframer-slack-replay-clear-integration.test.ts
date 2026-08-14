@@ -31,6 +31,9 @@ vi.mock("@/lib/auth", () => ({
 const sendIframerAccountSlackNotificationMock = vi.hoisted(() =>
   vi.fn(async () => ({ ok: true })),
 );
+const sendIframerReplayDbFailureSlackNotificationMock = vi.hoisted(() =>
+  vi.fn(async () => ({ ok: true as const })),
+);
 vi.mock("@/lib/slack", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/slack")>();
   return {
@@ -44,6 +47,12 @@ vi.mock("@/lib/slack", async (importOriginal) => {
       ),
     sendBillingAlertSlackNotification: vi.fn(async () => ({ ok: true })),
     sendRefundDbFailureSlackNotification: vi.fn(async () => {}),
+    sendIframerReplayDbFailureSlackNotification: (
+      ...a: unknown[]
+    ) =>
+      sendIframerReplayDbFailureSlackNotificationMock(
+        ...(a as Parameters<typeof sendIframerReplayDbFailureSlackNotificationMock>),
+      ),
   };
 });
 
@@ -135,6 +144,7 @@ async function cleanup() {
 
 afterEach(async () => {
   sendIframerAccountSlackNotificationMock.mockClear();
+  sendIframerReplayDbFailureSlackNotificationMock.mockClear();
   // Safety-net: always reset the throw flag so a failing test can't bleed
   // into the next one.
   dbUpdateCtrl.shouldThrow = false;
@@ -577,6 +587,39 @@ describeIntegration(
         // The payload must also be untouched — the ok:false path only touches
         // iframerSlackPostFailed, so iframerSlackFailedPayload must survive.
         expect(row?.iframerSlackFailedPayload).toBe(originalPayload);
+      },
+    );
+
+    it(
+      "DB update failure after ok:false Slack response: sendIframerReplayDbFailureSlackNotification is called with the correct tenantId",
+      async () => {
+        // Seed a tenant so the action has a row to process.
+        const originalPayload = makePayload("linked");
+        const tenantId = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 60_000),
+          iframerSlackFailedPayload: originalPayload,
+        });
+
+        // Slack returns ok:false — the refresh-timestamp update path is taken.
+        sendIframerAccountSlackNotificationMock.mockResolvedValueOnce({
+          ok: false,
+        });
+
+        // Force db.update to throw so the catch block fires the Slack alert.
+        dbUpdateCtrl.shouldThrow = true;
+        try {
+          await replayFailedIframerSlackAlerts();
+        } finally {
+          dbUpdateCtrl.shouldThrow = false;
+        }
+
+        // The DB-failure Slack helper must have been called at least once
+        // for the affected tenant so operators see the stuck retry in Slack.
+        expect(
+          sendIframerReplayDbFailureSlackNotificationMock,
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({ tenantId }),
+        );
       },
     );
 

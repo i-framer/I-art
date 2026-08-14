@@ -387,6 +387,69 @@ export async function sendBillingAlertSlackNotification({
 }
 
 /**
+ * Post an alert to the configured Slack channel when the i-Framer Slack
+ * replay sweep encounters a database write failure while trying to refresh
+ * the `iframerSlackPostFailed` timestamp after a Slack delivery returned
+ * ok:false.
+ *
+ * Without this alert, an operator watching Slack (not server logs) would have
+ * no visibility into the stuck retry state.
+ *
+ * Uses SLACK_BILLING_ALERTS_CHANNEL. If no channel is configured the call is
+ * a no-op. Failures are logged but never re-thrown.
+ */
+export async function sendIframerReplayDbFailureSlackNotification({
+  tenantId,
+}: {
+  tenantId: string;
+}): Promise<SlackNotificationResult> {
+  const channel = process.env.SLACK_BILLING_ALERTS_CHANNEL?.trim();
+
+  if (!channel) {
+    console.log(
+      "[i-Framer replay DB-failure Slack skipped — SLACK_BILLING_ALERTS_CHANNEL not configured]",
+      { tenantId },
+    );
+    return { ok: true };
+  }
+
+  const text =
+    `:warning: *i-Framer Slack replay — DB update failed after ok:false*\n` +
+    `*Tenant ID:* \`${tenantId}\`\n` +
+    `The retry sweep attempted to refresh the \`iframerSlackPostFailed\` timestamp ` +
+    `but the database write failed. The tenant's failure record is stuck and will ` +
+    `not show an updated retry time. Check the database connection and re-run the sweep.`;
+
+  try {
+    const connectors = new ReplitConnectors();
+    const response = await connectors.proxy("slack", "/chat.postMessage", {
+      method: "POST",
+      body: JSON.stringify({ channel, text }),
+    });
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok || (body && !body.ok)) {
+      const errorDetail = body?.error ?? `HTTP ${response.status}`;
+      console.error(
+        `[i-Framer replay DB-failure Slack] Post failed (HTTP ${response.status}):`,
+        body?.error ?? "(no error field)",
+        { tenantId },
+      );
+      return { ok: false, error: errorDetail };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    const errorMessage = (err as any)?.message ?? String(err);
+    console.error(
+      `[i-Framer replay DB-failure Slack] Failed to post message: ${errorMessage}`,
+      { tenantId },
+    );
+    return { ok: false, error: errorMessage };
+  }
+}
+
+/**
  * Post a synthetic [TEST] Stripe-webhook-redirect alert to the configured
  * Slack channel. Used by the /api/slack-smoke endpoint to confirm that the
  * notify-webhook-redirect.ts delivery path (Replit Connectors → Slack) is
