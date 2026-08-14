@@ -41,8 +41,21 @@ vi.mock("@workspace/db", () => ({
     },
     update: vi.fn(() => ({
       set: (vals: any) => {
-        state.updates.push(vals);
-        return { where: () => Promise.resolve() };
+        // Claim steps write only emailLastAttemptAt / statusEmailLastAttemptAt
+        // (single-field).  Skip those from tracking so assertion tests remain
+        // clean — they verify the finalization writes, not the claim stamp.
+        const onlyStamp =
+          Object.keys(vals).length === 1 &&
+          ("emailLastAttemptAt" in vals || "statusEmailLastAttemptAt" in vals);
+        if (!onlyStamp) state.updates.push(vals);
+        // Return a where() result that both (a) is awaitable and (b) supports
+        // .returning() for the atomic-claim code path.
+        return {
+          where: () =>
+            Object.assign(Promise.resolve(undefined), {
+              returning: () => Promise.resolve([{ id: "order-1" }]),
+            }),
+        };
       },
     })),
   },
@@ -263,12 +276,22 @@ describe("sweepUnsentConfirmationEmails", () => {
     state.candidates = [order()];
     sendOrderConfirmation.mockResolvedValueOnce(undefined);
 
-    // Make the first db.update call (emailSentAt write) reject.
-    vi.mocked(db.update).mockImplementationOnce(() => ({
-      set: (_vals: any) => ({
-        where: () => Promise.reject(new Error("DB connection lost")),
-      }),
-    }) as any);
+    // Call 1 → claim step succeeds (returns [{id}] from .returning()).
+    // Call 2 → finalization (emailSentAt write) rejects.
+    vi.mocked(db.update)
+      .mockImplementationOnce(() => ({
+        set: (_vals: any) => ({
+          where: () =>
+            Object.assign(Promise.resolve(undefined), {
+              returning: () => Promise.resolve([{ id: "order-1" }]),
+            }),
+        }),
+      }) as any)
+      .mockImplementationOnce(() => ({
+        set: (_vals: any) => ({
+          where: () => Promise.reject(new Error("DB connection lost")),
+        }),
+      }) as any);
 
     // Sweep must not throw even though the DB write failed after email send.
     await expect(sweepUnsentConfirmationEmails(NOW)).resolves.toBeDefined();
@@ -279,8 +302,18 @@ describe("sweepUnsentConfirmationEmails", () => {
     state.candidates = [order()];
     sendOrderConfirmation.mockResolvedValueOnce(undefined);
 
-    // First update (emailSentAt) fails; second update (error bookkeeping) succeeds.
+    // Call 1 → claim step succeeds.
+    // Call 2 → finalization (emailSentAt write) rejects.
+    // Call 3 → error bookkeeping write succeeds (falls back to default mock).
     vi.mocked(db.update)
+      .mockImplementationOnce(() => ({
+        set: (_vals: any) => ({
+          where: () =>
+            Object.assign(Promise.resolve(undefined), {
+              returning: () => Promise.resolve([{ id: "order-1" }]),
+            }),
+        }),
+      }) as any)
       .mockImplementationOnce(() => ({
         set: (_vals: any) => ({
           where: () => Promise.reject(new Error("DB connection lost")),
@@ -310,11 +343,22 @@ describe("sweepUnsentConfirmationEmails", () => {
     state.candidates = [order()];
     sendOrderConfirmation.mockResolvedValue(undefined);
 
-    // First sweep: email send succeeds but BOTH subsequent DB updates fail
-    // (the emailSentAt write AND the fallback error-bookkeeping write).
-    // Using mockImplementationOnce so the mock auto-restores to the default
-    // after these two calls — no persistent leak.
+    // Call 1 → claim step succeeds.
+    // Call 2 → finalization (emailSentAt write) rejects.
+    // Call 3 → error bookkeeping write also rejects.
+    // mockImplementationOnce exhausts after 3 calls; default mock resumes.
     vi.mocked(db.update)
+      .mockImplementationOnce(
+        () =>
+          ({
+            set: (_vals: any) => ({
+              where: () =>
+                Object.assign(Promise.resolve(undefined), {
+                  returning: () => Promise.resolve([{ id: "order-1" }]),
+                }),
+            }),
+          }) as any,
+      )
       .mockImplementationOnce(
         () =>
           ({

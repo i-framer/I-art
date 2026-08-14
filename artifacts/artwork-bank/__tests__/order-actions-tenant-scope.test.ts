@@ -49,7 +49,9 @@ vi.mock("@workspace/db", () => ({
       set: (vals: any) => ({
         where: (where: any) => {
           state.updates.push({ vals, where });
-          return Promise.resolve();
+          return Object.assign(Promise.resolve(undefined), {
+            returning: () => Promise.resolve([{ id: "order-1" }]),
+          });
         },
       }),
     })),

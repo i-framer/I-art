@@ -41,8 +41,14 @@ vi.mock("@workspace/db", () => ({
     update: vi.fn(() => ({
       set: (vals: any) => ({
         where: (id: any) => {
-          state.statusUpdates.push({ id, vals });
-          return Promise.resolve();
+          // Claim steps write only statusEmailLastAttemptAt (single field); skip
+          // those from tracking so finalization assertions stay uncluttered.
+          const onlyStamp =
+            Object.keys(vals).length === 1 && "statusEmailLastAttemptAt" in vals;
+          if (!onlyStamp) state.statusUpdates.push({ id, vals });
+          return Object.assign(Promise.resolve(undefined), {
+            returning: () => Promise.resolve([{ id: "order-1" }]),
+          });
         },
       }),
     })),

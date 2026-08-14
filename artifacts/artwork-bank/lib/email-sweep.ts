@@ -68,6 +68,27 @@ export async function sweepUnsentConfirmationEmails(
       continue;
     }
 
+    // Atomic claim: stamp emailLastAttemptAt while verifying that our snapshot
+    // of emailAttempts is still current.  If two concurrent sweeps both read
+    // the same row (emailAttempts=N, emailSentAt=null), only one UPDATE wins;
+    // the other gets 0 rows and skips, preventing duplicate confirmation sends.
+    const [claimed] = await db
+      .update(ordersTable)
+      .set({ emailLastAttemptAt: now })
+      .where(
+        and(
+          eq(ordersTable.id, order.id),
+          eq(ordersTable.emailAttempts, order.emailAttempts),
+          isNull(ordersTable.emailSentAt),
+        ),
+      )
+      .returning({ id: ordersTable.id });
+    if (!claimed) {
+      // Another sweep instance claimed this row — skip without double-sending.
+      result.skipped++;
+      continue;
+    }
+
     const [item, tenant] = await Promise.all([
       db.query.orderItemsTable.findFirst({
         where: eq(orderItemsTable.orderId, order.id),
@@ -171,6 +192,15 @@ export async function sweepUnsentConfirmationEmails(
  *
  * This runs every sweep cycle. Once the alert is delivered successfully,
  * emailFailureNotifiedAt is set and the order is never re-selected.
+ *
+ * Concurrency note: unlike the confirmation and status sweeps this function
+ * does not add an atomic claim step.  emailFailureNotifiedAt is the only
+ * available completion marker (there is no per-attempt counter to use as an
+ * optimistic lock), and temporarily setting it to a sentinel would mark the
+ * row "done" before the email actually lands.  The worst-case duplicate here
+ * is the gallery receiving two "buyer confirmation failed" notices for the
+ * same order, which is benign — it cannot result in a buyer receiving a
+ * duplicate email, and the alert rate is very low.
  */
 export async function sweepUnsentGalleryAlerts(
   now: Date = new Date(),
@@ -273,6 +303,26 @@ export async function sweepUnsentStatusEmails(
       now.getTime() - order.statusEmailLastAttemptAt.getTime() <
         backoffMs(order.statusEmailAttempts)
     ) {
+      result.skipped++;
+      continue;
+    }
+
+    // Atomic claim: same pattern as the confirmation sweep.  Stamps
+    // statusEmailLastAttemptAt while verifying statusEmailAttempts is
+    // unchanged.  A second concurrent sweep will get 0 rows and skip,
+    // preventing duplicate status-update emails to the buyer.
+    const [claimed] = await db
+      .update(ordersTable)
+      .set({ statusEmailLastAttemptAt: now })
+      .where(
+        and(
+          eq(ordersTable.id, order.id),
+          eq(ordersTable.statusEmailAttempts, order.statusEmailAttempts),
+          isNotNull(ordersTable.statusEmailQueuedAt),
+        ),
+      )
+      .returning({ id: ordersTable.id });
+    if (!claimed) {
       result.skipped++;
       continue;
     }
