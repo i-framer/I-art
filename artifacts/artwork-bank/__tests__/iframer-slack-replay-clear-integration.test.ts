@@ -624,6 +624,56 @@ describeIntegration(
     );
 
     it(
+      "DB update failure for two ok:false tenants: sendIframerReplayDbFailureSlackNotification fires exactly once per tenant with distinct tenantIds",
+      async () => {
+        // Seed two tenants, each with a stored failure payload.
+        const tenantIdA = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 120_000),
+          iframerSlackFailedPayload: makePayload("linked"),
+        });
+        const tenantIdB = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 60_000),
+          iframerSlackFailedPayload: makePayload("unlinked"),
+        });
+
+        // Both Slack calls return ok:false (the refresh-timestamp update path is taken).
+        sendIframerAccountSlackNotificationMock.mockResolvedValue({
+          ok: false,
+        });
+
+        // Force db.update to throw for both tenants so the catch block fires
+        // sendIframerReplayDbFailureSlackNotification for each one.
+        dbUpdateCtrl.shouldThrow = true;
+        try {
+          await replayFailedIframerSlackAlerts();
+        } finally {
+          // Always restore so assertions and afterEach cleanup use the real path.
+          dbUpdateCtrl.shouldThrow = false;
+          // Reset the Slack mock back to the default success implementation.
+          sendIframerAccountSlackNotificationMock.mockResolvedValue({
+            ok: true as const,
+          });
+        }
+
+        // The DB-failure Slack helper must have been called exactly once per
+        // affected tenant — not zero times (silent failure) and not more than
+        // once per tenant (duplicate from a regression in the catch block).
+        expect(
+          sendIframerReplayDbFailureSlackNotificationMock,
+        ).toHaveBeenCalledTimes(2);
+
+        // Each call must reference a distinct tenantId so operators can identify
+        // which rows are stuck.
+        const calledWithIds = sendIframerReplayDbFailureSlackNotificationMock.mock.calls.map(
+          (args) => (args[0] as { tenantId: string }).tenantId,
+        );
+        expect(calledWithIds).toContain(tenantIdA);
+        expect(calledWithIds).toContain(tenantIdB);
+        expect(new Set(calledWithIds).size).toBe(2);
+      },
+    );
+
+    it(
       "ok:false Slack response with successful DB update: sendIframerReplayDbFailureSlackNotification is NOT called",
       async () => {
         // Seed a tenant with a stored failure payload so the action processes it.
