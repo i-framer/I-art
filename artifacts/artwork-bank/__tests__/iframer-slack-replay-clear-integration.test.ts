@@ -32,7 +32,7 @@ const sendIframerAccountSlackNotificationMock = vi.hoisted(() =>
   vi.fn(async () => ({ ok: true })),
 );
 const sendIframerReplayDbFailureSlackNotificationMock = vi.hoisted(() =>
-  vi.fn(async () => ({ ok: true as const })),
+  vi.fn(async (_arg: { tenantId: string }) => ({ ok: true as const })),
 );
 vi.mock("@/lib/slack", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/slack")>();
@@ -670,6 +670,74 @@ describeIntegration(
         expect(calledWithIds).toContain(tenantIdA);
         expect(calledWithIds).toContain(tenantIdB);
         expect(new Set(calledWithIds).size).toBe(2);
+      },
+    );
+
+    it(
+      "DB update failure with mixed tenants: sendIframerReplayDbFailureSlackNotification fires exactly twice even when one tenant's Slack call succeeds",
+      async () => {
+        // Seed two tenants whose Slack calls will return ok:false — these are the
+        // rows where a DB write failure should fire the DB-failure Slack alert.
+        const tenantIdA = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 120_000),
+          iframerSlackFailedPayload: makePayload("linked"),
+        });
+        const tenantIdB = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 60_000),
+          iframerSlackFailedPayload: makePayload("unlinked"),
+        });
+
+        // Seed one tenant whose Slack call will succeed (ok:true path).  When
+        // db.update throws on the clear step for this tenant, the catch block
+        // only logs — it must NOT call sendIframerReplayDbFailureSlackNotification
+        // because that helper is wired to the ok:false refresh branch only.
+        const okTenantId = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 30_000),
+          iframerSlackFailedPayload: makePayload("linked"),
+        });
+        const okSlug = okTenantId; // slug === id by convention in createTenant
+
+        // Route by tenantSlug: the ok tenant gets ok:true; the other two get ok:false.
+        sendIframerAccountSlackNotificationMock.mockImplementation(
+          async (...args: unknown[]) => {
+            const { tenantSlug } = args[0] as { tenantSlug: string };
+            if (tenantSlug === okSlug) {
+              return { ok: true as const };
+            }
+            return { ok: false as const };
+          },
+        );
+
+        // Force db.update to throw for every tenant so:
+        //   ok:true tenant  → clear step throws → catch logs only, no Slack alert
+        //   ok:false tenantA → refresh step throws → catch fires Slack alert
+        //   ok:false tenantB → refresh step throws → catch fires Slack alert
+        dbUpdateCtrl.shouldThrow = true;
+        try {
+          await replayFailedIframerSlackAlerts();
+        } finally {
+          dbUpdateCtrl.shouldThrow = false;
+          // Restore default success implementation so subsequent tests are unaffected.
+          sendIframerAccountSlackNotificationMock.mockImplementation(
+            async () => ({ ok: true as const }),
+          );
+        }
+
+        // The DB-failure Slack helper must have been called exactly twice — once
+        // per ok:false tenant — confirming the guard does not fire for the ok:true
+        // tenant and does not fire more than once per failing tenant even when the
+        // in-flight row set contains an unrelated succeeding row.
+        expect(
+          sendIframerReplayDbFailureSlackNotificationMock,
+        ).toHaveBeenCalledTimes(2);
+
+        const calledWithIds =
+          sendIframerReplayDbFailureSlackNotificationMock.mock.calls.map(
+            (args) => (args[0] as { tenantId: string }).tenantId,
+          );
+        expect(calledWithIds).toContain(tenantIdA);
+        expect(calledWithIds).toContain(tenantIdB);
+        expect(calledWithIds).not.toContain(okTenantId);
       },
     );
 
