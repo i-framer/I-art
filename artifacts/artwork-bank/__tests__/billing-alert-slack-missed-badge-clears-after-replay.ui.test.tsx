@@ -183,3 +183,124 @@ describe("BillingAlerts — round-trip: badge appears then disappears after repl
     expect(screen.getByText(/Replay 1 Slack failure/)).toBeTruthy();
   });
 });
+
+// ── Partial-replay count accuracy ─────────────────────────────────────────────
+
+describe("BillingAlerts — replay button count accuracy with partial pending rows", () => {
+  it("shows 'Replay 2 Slack failures' (plural) when 2 of 3 rows are still pending", () => {
+    const pending1 = makeAlert({
+      id: "p1",
+      stripeEventId: "evt_p1",
+      slackPostFailed: new Date(Date.now() - 60_000),
+    });
+    const pending2 = makeAlert({
+      id: "p2",
+      stripeEventId: "evt_p2",
+      slackPostFailed: new Date(Date.now() - 120_000),
+    });
+    const cleared = makeAlert({
+      id: "c1",
+      stripeEventId: "evt_c1",
+      slackPostFailed: null,
+    });
+
+    render(<BillingAlerts alerts={[pending1, pending2, cleared]} />);
+
+    // Button must show the exact count of still-pending rows.
+    expect(screen.getByText("Replay 2 Slack failures")).toBeTruthy();
+
+    // Two badges, one per pending row.
+    const badges = screen.getAllByText("Slack missed");
+    expect(badges).toHaveLength(2);
+
+    // Cleared row must NOT have a badge.
+    expect(screen.getByText("evt_c1")).toBeTruthy();
+  });
+
+  it("shows 'Replay 1 Slack failure' (singular) when exactly 1 of 3 rows is still pending", () => {
+    const pending = makeAlert({
+      id: "p1",
+      stripeEventId: "evt_single_pending",
+      slackPostFailed: new Date(Date.now() - 60_000),
+    });
+    const cleared1 = makeAlert({
+      id: "c1",
+      stripeEventId: "evt_cleared_a",
+      slackPostFailed: null,
+    });
+    const cleared2 = makeAlert({
+      id: "c2",
+      stripeEventId: "evt_cleared_b",
+      slackPostFailed: null,
+    });
+
+    render(<BillingAlerts alerts={[cleared1, pending, cleared2]} />);
+
+    // Singular label when count is 1.
+    expect(screen.getByText("Replay 1 Slack failure")).toBeTruthy();
+
+    // Only one badge.
+    const badges = screen.getAllByText("Slack missed");
+    expect(badges).toHaveLength(1);
+
+    // Cleared rows have no badge.
+    expect(screen.queryAllByText("Slack missed")).toHaveLength(1);
+  });
+
+  it("shows 'Replay 3 Slack failures' when all rows are pending", () => {
+    const alerts = [
+      makeAlert({ id: "a1", stripeEventId: "evt_a1", slackPostFailed: new Date(Date.now() - 60_000) }),
+      makeAlert({ id: "a2", stripeEventId: "evt_a2", slackPostFailed: new Date(Date.now() - 90_000) }),
+      makeAlert({ id: "a3", stripeEventId: "evt_a3", slackPostFailed: new Date(Date.now() - 120_000) }),
+    ];
+
+    render(<BillingAlerts alerts={alerts} />);
+
+    expect(screen.getByText("Replay 3 Slack failures")).toBeTruthy();
+    expect(screen.getAllByText("Slack missed")).toHaveLength(3);
+  });
+
+  it("hides the replay button entirely when all rows are cleared", () => {
+    const alerts = [
+      makeAlert({ id: "c1", stripeEventId: "evt_c1", slackPostFailed: null }),
+      makeAlert({ id: "c2", stripeEventId: "evt_c2", slackPostFailed: null }),
+      makeAlert({ id: "c3", stripeEventId: "evt_c3", slackPostFailed: null }),
+    ];
+
+    render(<BillingAlerts alerts={alerts} />);
+
+    // No replay button.
+    expect(screen.queryByText(/Replay \d+ Slack failure/)).toBeNull();
+
+    // No badges.
+    expect(screen.queryByText("Slack missed")).toBeNull();
+
+    // All rows still visible (not dismissed).
+    expect(screen.getByText("evt_c1")).toBeTruthy();
+    expect(screen.getByText("evt_c2")).toBeTruthy();
+    expect(screen.getByText("evt_c3")).toBeTruthy();
+  });
+
+  it("badge is on the correct specific row, not on the cleared neighbour", () => {
+    const pending = makeAlert({
+      id: "specific-pending",
+      stripeEventId: "evt_specific_pending",
+      slackPostFailed: new Date(Date.now() - 60_000),
+    });
+    const cleared = makeAlert({
+      id: "specific-cleared",
+      stripeEventId: "evt_specific_cleared",
+      slackPostFailed: null,
+    });
+
+    render(<BillingAlerts alerts={[pending, cleared]} />);
+
+    // Find the badge and verify it's co-located with the pending event ID.
+    const badge = screen.getByText("Slack missed");
+    // The badge's closest list-item ancestor must contain the pending event ID text.
+    const li = badge.closest("li");
+    expect(li).not.toBeNull();
+    expect(li!.textContent).toContain("evt_specific_pending");
+    expect(li!.textContent).not.toContain("evt_specific_cleared");
+  });
+});
