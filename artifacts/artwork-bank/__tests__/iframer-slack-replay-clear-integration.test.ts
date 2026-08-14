@@ -529,5 +529,55 @@ describeIntegration(
         expect(row?.iframerSlackFailedPayload).toBe(originalPayload);
       },
     );
+
+    it(
+      "DB update failure after ok:false Slack response: iframerSlackPostFailed retains the original seeded value",
+      async () => {
+        // Seed a tenant with a known past failure timestamp.
+        const originalPayload = makePayload("linked");
+        const originalFailedAt = new Date(Date.now() - 60_000);
+        const tenantId = await createTenant({
+          iframerSlackPostFailed: originalFailedAt,
+          iframerSlackFailedPayload: originalPayload,
+        });
+
+        // Slack returns ok:false — the refresh-timestamp update path is taken.
+        sendIframerAccountSlackNotificationMock.mockResolvedValueOnce({
+          ok: false,
+        });
+
+        // Force the db.update (refresh step) to throw so the update never lands.
+        dbUpdateCtrl.shouldThrow = true;
+        let result: Awaited<ReturnType<typeof replayFailedIframerSlackAlerts>>;
+        try {
+          result = await replayFailedIframerSlackAlerts();
+        } finally {
+          // Always restore so assertions and afterEach cleanup use the real path.
+          dbUpdateCtrl.shouldThrow = false;
+        }
+
+        // The action still counted this as a failure.
+        expect(result!.failed).toBeGreaterThanOrEqual(1);
+
+        // Re-query using the restored real db.
+        const row = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, tenantId),
+        });
+
+        // iframerSlackPostFailed must still be set — the failed DB write must
+        // not have partially committed or silently zeroed the column.
+        expect(row?.iframerSlackPostFailed).not.toBeNull();
+
+        // The timestamp must equal the original seeded value — the DB write
+        // failure means no refresh occurred, so the column is unchanged.
+        expect(row!.iframerSlackPostFailed!.getTime()).toBe(
+          originalFailedAt.getTime(),
+        );
+
+        // The payload must also be untouched — the ok:false path only touches
+        // iframerSlackPostFailed, so iframerSlackFailedPayload must survive.
+        expect(row?.iframerSlackFailedPayload).toBe(originalPayload);
+      },
+    );
   },
 );
