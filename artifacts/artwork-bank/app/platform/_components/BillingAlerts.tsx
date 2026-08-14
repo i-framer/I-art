@@ -28,8 +28,13 @@ export function BillingAlerts({ alerts }: Props) {
   const handleReplay = () => {
     setReplayResult(null);
     startReplayTransition(async () => {
-      const result = await replayFailedSlackAlerts();
-      setReplayResult(result);
+      try {
+        const result = await replayFailedSlackAlerts();
+        setReplayResult(result);
+      } catch {
+        // Swallow the error so useTransition clears replayPending and the
+        // button re-enables, allowing the operator to retry.
+      }
     });
   };
 
