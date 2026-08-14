@@ -6,6 +6,11 @@
  * markCancelled  — invalid from CANCELLED or FULFILLED; redirects with
  *                  action_error and must NOT update the DB.
  *
+ * Atomic stale-state guard — when the DB UPDATE's conditional WHERE matches
+ * 0 rows (another concurrent request changed the status between the
+ * requireOwnership() read and the UPDATE), the action redirects with an
+ * "in-flight" error instead of silently succeeding or double-dispatching.
+ *
  * Tenant isolation is covered separately in order-fulfillment-isolation.test.ts.
  * This suite focuses on the status-guard invariants.
  */
@@ -22,6 +27,13 @@ vi.mock("@/lib/billing", () => ({
 // ── DB ────────────────────────────────────────────────────────────────────────
 let orderRow: Record<string, unknown> | null = null;
 const dbUpdateSets: Record<string, unknown>[] = [];
+
+// Controls what the atomic UPDATE…RETURNING call returns.  Default is one row
+// (successful update).  Set to [] in a specific test to simulate a concurrent
+// write that changes status between requireOwnership() and the UPDATE.
+const mockUpdateState = vi.hoisted(() => ({
+  returningRows: [{ id: "mocked-order-id" }] as { id: string }[],
+}));
 
 vi.mock("@workspace/db", () => ({
   db: {
@@ -42,7 +54,14 @@ vi.mock("@workspace/db", () => ({
     update: () => ({
       set: (vals: Record<string, unknown>) => {
         dbUpdateSets.push(vals);
-        return { where: async () => undefined };
+        return {
+          where: (_condition: unknown) => ({
+            // Returns mockUpdateState.returningRows so individual tests can
+            // inject [] to simulate a concurrent status-change between the
+            // pre-read and the atomic UPDATE.
+            returning: async (_cols?: unknown) => mockUpdateState.returningRows,
+          }),
+        };
       },
     }),
   },
@@ -111,6 +130,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbUpdateSets.length = 0;
   orderRow = null;
+  mockUpdateState.returningRows = [{ id: "mocked-order-id" }];
   getSession.mockResolvedValue({ userId: "u1", tenantId: "tenant-A" });
 });
 
@@ -185,5 +205,44 @@ describe("markCancelled — status guard", () => {
     expect(decodeURIComponent(url)).toMatch(/fulfilled/i);
     const statusUpdate = dbUpdateSets.find((u) => u.status === "CANCELLED");
     expect(statusUpdate).toBeUndefined();
+  });
+});
+
+// ── Atomic stale-state guard ──────────────────────────────────────────────────
+//
+// These tests verify the second layer of protection: the conditional WHERE
+// clause on the UPDATE that fires when a concurrent request changes the order
+// status between the requireOwnership() read and the actual DB write.  We
+// simulate this by making the mock's returning() return an empty array (0 rows
+// affected) even though the pre-read guard saw PAID.
+
+describe("markFulfilled — atomic stale-state guard", () => {
+  it("redirects with an in-flight error when the atomic UPDATE affects 0 rows (status changed concurrently)", async () => {
+    orderRow = order("PAID"); // pre-read sees PAID — guard passes
+    mockUpdateState.returningRows = []; // simulate concurrent write: 0 rows matched
+    await expect(markFulfilled(fd("order-1"))).rejects.toThrow("REDIRECT:");
+    const url = redirectSpy.mock.calls[0]![0] as string;
+    expect(url).toContain("action_error=");
+    expect(decodeURIComponent(url)).toMatch(/in-flight/i);
+    // The status .set() was called (UPDATE was attempted), but buyer notification
+    // must NOT have been sent since the action aborted via redirect.
+    const statusUpdate = dbUpdateSets.find((u) => u.status === "FULFILLED");
+    expect(statusUpdate).toBeDefined(); // set() was called before returning detected 0 rows
+    // Only one redirect — no double-redirect.
+    expect(redirectSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("markCancelled — atomic stale-state guard", () => {
+  it("redirects with an in-flight error when the atomic UPDATE affects 0 rows (status changed concurrently)", async () => {
+    orderRow = order("PAID"); // pre-read sees PAID — guard passes
+    mockUpdateState.returningRows = []; // simulate concurrent write: 0 rows matched
+    await expect(markCancelled(fd("order-1"))).rejects.toThrow("REDIRECT:");
+    const url = redirectSpy.mock.calls[0]![0] as string;
+    expect(url).toContain("action_error=");
+    expect(decodeURIComponent(url)).toMatch(/in-flight/i);
+    const statusUpdate = dbUpdateSets.find((u) => u.status === "CANCELLED");
+    expect(statusUpdate).toBeDefined(); // set() was called; returning detected 0 rows
+    expect(redirectSpy).toHaveBeenCalledTimes(1);
   });
 });

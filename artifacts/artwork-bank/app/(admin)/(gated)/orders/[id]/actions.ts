@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@workspace/db";
 import { ordersTable } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { getSession } from "@/lib/auth";
 import { orderItemsTable, tenantsTable } from "@workspace/db";
 import { sendOrderConfirmation, sendOrderStatusUpdate, sendPartialRefundNotification } from "@/lib/email";
@@ -147,8 +147,8 @@ async function notifyBuyerOfPartialRefund(
 export async function markFulfilled(formData: FormData): Promise<void> {
   const orderId = formData.get("orderId") as string;
   const order = await requireOwnership(orderId);
-  // Only a PAID order can be marked fulfilled; anything else is a no-op guard
-  // that prevents accidental double-dispatch or status corruption.
+  // Pre-read guard: gives a clear error for the common case where the order
+  // is already in a terminal state before the form was submitted.
   if (order.status !== "PAID") {
     redirect(
       `/orders/${orderId}?action_error=${encodeURIComponent(
@@ -156,10 +156,22 @@ export async function markFulfilled(formData: FormData): Promise<void> {
       )}`,
     );
   }
-  await db
+  // Atomic guard: re-check status at write time so a concurrent fulfillment or
+  // cancellation arriving between requireOwnership() and this UPDATE cannot
+  // produce a double-dispatch, a duplicate buyer email, or a backward state
+  // transition.  returning() is empty when the WHERE matches 0 rows.
+  const [updated] = await db
     .update(ordersTable)
     .set({ status: "FULFILLED" })
-    .where(eq(ordersTable.id, orderId));
+    .where(and(eq(ordersTable.id, orderId), eq(ordersTable.status, "PAID")))
+    .returning({ id: ordersTable.id });
+  if (!updated) {
+    redirect(
+      `/orders/${orderId}?action_error=${encodeURIComponent(
+        "Order status changed while your request was in-flight — refresh the page to see the current state.",
+      )}`,
+    );
+  }
   await notifyBuyerOfUpdate(orderId);
   revalidatePath(`/orders/${orderId}`);
   revalidatePath("/orders");
@@ -168,8 +180,8 @@ export async function markFulfilled(formData: FormData): Promise<void> {
 export async function markCancelled(formData: FormData): Promise<void> {
   const orderId = formData.get("orderId") as string;
   const order = await requireOwnership(orderId);
-  // CANCELLED and FULFILLED orders cannot be cancelled again — guards against
-  // double-dispatch and prevents rolling back a completed fulfillment.
+  // Pre-read guard: gives a clear error for the common case where the order
+  // is already terminal before the form was submitted.
   if (order.status === "CANCELLED" || order.status === "FULFILLED") {
     redirect(
       `/orders/${orderId}?action_error=${encodeURIComponent(
@@ -177,10 +189,28 @@ export async function markCancelled(formData: FormData): Promise<void> {
       )}`,
     );
   }
-  await db
+  // Atomic guard: re-check status at write time so a concurrent fulfillment
+  // that arrived between requireOwnership() and this UPDATE cannot be silently
+  // overwritten, leaving the order cancelled in the DB while the gallery has
+  // already shipped the item.
+  const [updated] = await db
     .update(ordersTable)
     .set({ status: "CANCELLED" })
-    .where(eq(ordersTable.id, orderId));
+    .where(
+      and(
+        eq(ordersTable.id, orderId),
+        ne(ordersTable.status, "CANCELLED"),
+        ne(ordersTable.status, "FULFILLED"),
+      ),
+    )
+    .returning({ id: ordersTable.id });
+  if (!updated) {
+    redirect(
+      `/orders/${orderId}?action_error=${encodeURIComponent(
+        "Order status changed while your request was in-flight — refresh the page to see the current state.",
+      )}`,
+    );
+  }
   await notifyBuyerOfUpdate(orderId);
   revalidatePath(`/orders/${orderId}`);
   revalidatePath("/orders");

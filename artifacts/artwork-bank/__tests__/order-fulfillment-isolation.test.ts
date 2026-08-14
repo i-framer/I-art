@@ -49,7 +49,12 @@ vi.mock("@workspace/db", () => ({
     update: () => ({
       set: (vals: Record<string, unknown>) => {
         dbUpdateSets.push(vals);
-        return { where: async () => undefined };
+        return {
+          where: (_condition: unknown) => ({
+            returning: async (_cols?: unknown) =>
+              [{ id: "mocked-order-id" }] as { id: string }[],
+          }),
+        };
       },
     }),
   },
