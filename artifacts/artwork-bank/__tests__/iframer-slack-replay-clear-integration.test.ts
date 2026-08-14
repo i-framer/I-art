@@ -742,6 +742,87 @@ describeIntegration(
     );
 
     it(
+      "mixed sweep with DB write failure: ok:true tenant's iframerSlackPostFailed remains non-null when clear step throws",
+      async () => {
+        // Seed one tenant whose Slack call returns ok:true — this is the tenant
+        // whose clear step will throw because dbUpdateCtrl.shouldThrow = true.
+        // The catch block swallows the error, so without a DB-state assertion the
+        // silent no-op would never be detected.
+        const okOriginalFailedAt = new Date(Date.now() - 75_000);
+        const okOriginalPayload = makePayload("linked");
+        const okTenantId = await createTenant({
+          iframerSlackPostFailed: okOriginalFailedAt,
+          iframerSlackFailedPayload: okOriginalPayload,
+        });
+        const okSlug = okTenantId; // slug === id by convention in createTenant
+
+        // Seed a second tenant whose Slack call returns ok:false — it exercises
+        // the refresh branch, confirming the sweep still processes multiple tenants
+        // rather than short-circuiting after the first DB error.
+        const failingTenantId = await createTenant({
+          iframerSlackPostFailed: new Date(Date.now() - 45_000),
+          iframerSlackFailedPayload: makePayload("unlinked"),
+        });
+        const failingSlug = failingTenantId;
+
+        // Route by tenantSlug: the ok tenant gets ok:true; the failing tenant gets ok:false.
+        sendIframerAccountSlackNotificationMock.mockImplementation(
+          async (...args: unknown[]) => {
+            const { tenantSlug } = args[0] as { tenantSlug: string };
+            if (tenantSlug === okSlug) {
+              return { ok: true as const };
+            }
+            if (tenantSlug === failingSlug) {
+              return { ok: false as const };
+            }
+            return { ok: true as const };
+          },
+        );
+
+        // Force ALL db.update calls to throw so:
+        //   ok:true tenant  → clear step throws → catch swallows, flag NOT cleared
+        //   ok:false tenant → refresh step throws → catch fires Slack alert
+        dbUpdateCtrl.shouldThrow = true;
+        let result: Awaited<ReturnType<typeof replayFailedIframerSlackAlerts>>;
+        try {
+          result = await replayFailedIframerSlackAlerts();
+        } finally {
+          dbUpdateCtrl.shouldThrow = false;
+          // Restore default success implementation so subsequent tests are unaffected.
+          sendIframerAccountSlackNotificationMock.mockImplementation(
+            async () => ({ ok: true as const }),
+          );
+        }
+
+        // The action counts the ok:true tenant as replayed (Slack delivered the
+        // message) even though the flag clear failed.
+        expect(result!.replayed).toBeGreaterThanOrEqual(1);
+        // The ok:false tenant is counted as failed.
+        expect(result!.failed).toBeGreaterThanOrEqual(1);
+
+        // ── Key DB-state assertion ─────────────────────────────────────────────
+        // iframerSlackPostFailed must still be set on the ok:true tenant.
+        // The DB write threw so the clear never committed — the flag must not
+        // have been silently zeroed by the catch block.
+        const okRow = await db.query.tenantsTable.findFirst({
+          where: eq(tenantsTable.id, okTenantId),
+        });
+        expect(okRow?.iframerSlackPostFailed).not.toBeNull();
+
+        // The timestamp must equal the original seeded value — the failed clear
+        // must not have written a new value or partially committed.
+        expect(okRow!.iframerSlackPostFailed!.getTime()).toBe(
+          okOriginalFailedAt.getTime(),
+        );
+
+        // iframerSlackFailedPayload must also remain intact — both columns are
+        // written in a single .set() call, so if the update threw, neither column
+        // should have changed.
+        expect(okRow?.iframerSlackFailedPayload).toBe(okOriginalPayload);
+      },
+    );
+
+    it(
       "ok:false Slack response with successful DB update: sendIframerReplayDbFailureSlackNotification is NOT called",
       async () => {
         // Seed a tenant with a stored failure payload so the action processes it.
