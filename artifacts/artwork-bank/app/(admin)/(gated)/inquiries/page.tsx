@@ -13,6 +13,7 @@ import { eq, desc, count, and, inArray, asc, isNull, isNotNull } from "drizzle-o
 // isNotNull kept for the archived-filter query (isNotNull(inquiriesTable.archivedAt))
 import { setInquiryStatus, setInquiryArchived } from "./actions";
 import { getEmailFailCount } from "@/app/(admin)/_actions/inquiry-count";
+import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
 import { ReplyForm } from "./reply-form";
 import {
   BulkSelectionProvider,
@@ -186,15 +187,15 @@ export default async function InquiriesPage({
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-red-800">
               {emailFailCount === 1
-                ? "1 inquiry notification could not be delivered"
-                : `${emailFailCount} inquiry notifications could not be delivered`}
+                ? "1 inquiry notification permanently failed — all retries exhausted"
+                : `${emailFailCount} inquiry notifications permanently failed — all retries exhausted`}
             </p>
             <p className="mt-0.5 text-sm text-red-700">
-              The buyer&apos;s message was saved, but the email to your gallery
-              address failed.{" "}
+              The buyer&apos;s message was saved, but automated delivery attempts
+              have been exhausted.{" "}
               {emailFailCount === 1
-                ? "Look for the \u201cEmail delivery failed\u201d badge below to find the affected inquiry."
-                : "Look for \u201cEmail delivery failed\u201d badges below to find the affected inquiries."}{" "}
+                ? "Look for the \u201cNotification permanently failed\u201d badge below to find the affected inquiry."
+                : "Look for \u201cNotification permanently failed\u201d badges below to find the affected inquiries."}{" "}
               Contact the buyer directly via the email address shown.
             </p>
           </div>
@@ -279,11 +280,16 @@ export default async function InquiriesPage({
                   <p className="text-xs text-stone-500">
                     {formatDate(inq.createdAt)}
                   </p>
-                  {inq.emailError && (
-                    <span className="mt-1 inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">
-                      Email delivery failed
-                    </span>
-                  )}
+                  {inq.emailError &&
+                    (inq.emailAttempts >= MAX_EMAIL_ATTEMPTS ? (
+                      <span className="mt-1 inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">
+                        Notification permanently failed
+                      </span>
+                    ) : (
+                      <span className="mt-1 inline-flex rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-700">
+                        Email delivery failed — retrying
+                      </span>
+                    ))}
                 </div>
               </div>
               <p className="mt-3 whitespace-pre-wrap text-sm text-stone-700">
