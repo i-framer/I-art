@@ -299,6 +299,25 @@ describe("sweepUnsentInquiryEmails", () => {
     expect(sendArtworkInquiry).not.toHaveBeenCalled();
   });
 
+  it("skips the inquiry and does not call sendArtworkInquiry when both artwork and tenant are missing simultaneously", async () => {
+    // Simulate a cascade delete that removed both the tenant and all their
+    // artworks in one transaction — both lookups return undefined at once.
+    vi.mocked(db.query.artworksTable.findFirst).mockResolvedValueOnce(
+      undefined as any,
+    );
+    vi.mocked(db.query.tenantsTable.findFirst).mockResolvedValueOnce(
+      undefined as any,
+    );
+
+    sendArtworkInquiry.mockResolvedValue(true);
+    state.candidates = [inquiry()];
+
+    const result = await sweepUnsentInquiryEmails(NOW);
+
+    expect(result).toEqual({ scanned: 1, sent: 0, failed: 0, skipped: 1 });
+    expect(sendArtworkInquiry).not.toHaveBeenCalled();
+  });
+
   it("processes multiple candidates independently", async () => {
     sendArtworkInquiry
       .mockResolvedValueOnce(true)
