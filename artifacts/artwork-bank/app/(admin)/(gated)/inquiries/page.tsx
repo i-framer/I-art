@@ -12,7 +12,10 @@ import {
 import { eq, desc, count, and, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 // isNotNull kept for the archived-filter query (isNotNull(inquiriesTable.archivedAt))
 import { setInquiryStatus, setInquiryArchived } from "./actions";
-import { getEmailFailCount } from "@/app/(admin)/_actions/inquiry-count";
+import {
+  getEmailFailCount,
+  getNoContactEmailInquiryCount,
+} from "@/app/(admin)/_actions/inquiry-count";
 import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
 import { ReplyForm } from "./reply-form";
 import {
@@ -84,7 +87,7 @@ export default async function InquiriesPage({
             eq(inquiriesTable.status, filter === "new" ? "NEW" : "HANDLED"),
           );
 
-  const [rows, [countRow], [newCountRow], emailFailCount, tenant] = await Promise.all([
+  const [rows, [countRow], [newCountRow], emailFailCount, noContactEmailCount, tenant] = await Promise.all([
     db
       .select()
       .from(inquiriesTable)
@@ -104,6 +107,7 @@ export default async function InquiriesPage({
         ),
       ),
     getEmailFailCount(),
+    getNoContactEmailInquiryCount(),
     db.query.tenantsTable.findFirst({
       where: eq(tenantsTable.id, session.tenantId),
     }),
@@ -199,6 +203,44 @@ export default async function InquiriesPage({
               Contact the buyer directly via the email address shown.
             </p>
           </div>
+        </div>
+      )}
+
+      {!tenant?.contactEmail && noContactEmailCount > 0 && (
+        <div className="mb-6 flex items-start gap-4 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4">
+          <svg
+            className="mt-0.5 h-5 w-5 shrink-0 text-amber-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75"
+            />
+          </svg>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-amber-900">
+              {noContactEmailCount === 1
+                ? "1 inquiry is waiting — no contact email set"
+                : `${noContactEmailCount} inquiries are waiting — no contact email set`}
+            </p>
+            <p className="mt-0.5 text-sm text-amber-700">
+              Buyer{noContactEmailCount === 1 ? "" : "s"} have reached out but
+              notification emails cannot be delivered because your gallery has
+              no contact email configured. Add one in Settings and they will be
+              sent automatically.
+            </p>
+          </div>
+          <Link
+            href="/settings"
+            className="shrink-0 rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-700 transition-colors hover:bg-amber-200 whitespace-nowrap"
+          >
+            Add contact email
+          </Link>
         </div>
       )}
 
