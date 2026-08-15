@@ -461,7 +461,33 @@ export async function sweepUnsentInquiryEmails(
       }),
     ]);
 
-    if (!artwork || !tenant?.contactEmail) {
+    // When the artwork no longer exists (deleted after the inquiry was
+    // recorded) there is nothing useful to retry — the gallery email would
+    // always reference a phantom artwork.  Write a terminal error and bump
+    // emailAttempts to MAX_EMAIL_ATTEMPTS so the row is excluded from every
+    // future scan.  The CAS claim has NOT been taken yet, so we update
+    // unconditionally on the inquiry id.
+    if (!artwork) {
+      try {
+        await db
+          .update(inquiriesTable)
+          .set({
+            emailError: "artwork deleted",
+            emailAttempts: MAX_EMAIL_ATTEMPTS,
+            emailLastAttemptAt: now,
+          })
+          .where(eq(inquiriesTable.id, inquiry.id));
+      } catch (dbErr) {
+        console.error(
+          `Inquiry email sweep: could not persist artwork-deleted state for inquiry ${inquiry.id}:`,
+          (dbErr as any)?.message ?? String(dbErr),
+        );
+      }
+      result.skipped++;
+      continue;
+    }
+
+    if (!tenant?.contactEmail) {
       result.skipped++;
       continue;
     }

@@ -162,7 +162,7 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
 
   it("inquiries from another tenant are not counted", async () => {
     const ownTenantId = await createTenant();
-    const ownArtworkId = await createArtwork(ownTenantId);
+    const _ownArtworkId = await createArtwork(ownTenantId);
     // Foreign tenant with its own NEW inquiries
     const foreignTenantId = uid();
     await db.insert(tenantsTable).values({

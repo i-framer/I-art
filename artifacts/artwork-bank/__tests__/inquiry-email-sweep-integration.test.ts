@@ -330,12 +330,12 @@ describeIntegration(
       expect(row?.emailError).not.toBeNull();
     });
 
-    it("missing artwork causes the sweep to skip the inquiry without crashing", async () => {
+    it("missing artwork writes terminal state so the inquiry is never retried", async () => {
       // Use a real valid inquiry (satisfies FK) but make the artwork lookup
       // return undefined via a spy — simulating an artwork that was deleted
-      // after the inquiry was recorded.  Because the sweep now resolves artwork
-      // and tenant *before* claiming, the inquiry row is left completely
-      // untouched when the artwork is missing (no emailLastAttemptAt stamp).
+      // after the inquiry was recorded.  The sweep must write emailAttempts=MAX
+      // and emailError="artwork deleted" so the row is excluded from every
+      // future scan.
       const tenantId = await createTenant();
       const artworkId = await createArtwork(tenantId);
       const inquiryId = await createFailedInquiry(tenantId, artworkId, {
@@ -355,19 +355,55 @@ describeIntegration(
       }
 
       // The sweep sees the inquiry (scanned=1) but skips it because the artwork
-      // lookup returns nothing — no email is sent, no failure is recorded.
+      // lookup returns nothing — no email is sent.
       expect(result!).toEqual({ scanned: 1, sent: 0, failed: 0, skipped: 1 });
       expect(sendArtworkInquiry).not.toHaveBeenCalled();
 
-      // The inquiry row must be completely untouched — the skip happens before
-      // the CAS claim, so emailAttempts, emailError, and emailLastAttemptAt
-      // all remain at their original values.
+      // The inquiry row must be updated to the terminal state so that it is
+      // excluded from all future sweeps.
       const row = await db.query.inquiriesTable.findFirst({
         where: eq(inquiriesTable.id, inquiryId),
       });
-      expect(row?.emailAttempts).toBe(1);
-      expect(row?.emailError).not.toBeNull();
-      expect(row?.emailLastAttemptAt).toBeNull();
+      expect(row?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(row?.emailError).toBe("artwork deleted");
+      expect(row?.emailLastAttemptAt).toBeInstanceOf(Date);
+    });
+
+    it("inquiry with deleted artwork is not re-selected on a subsequent sweep run", async () => {
+      // First sweep: artwork spy returns nothing → terminal state is written.
+      // Second sweep (no spy): the row is now at MAX_EMAIL_ATTEMPTS and must
+      // not appear in the candidate set at all.
+      const tenantId = await createTenant();
+      const artworkId = await createArtwork(tenantId);
+      const inquiryId = await createFailedInquiry(tenantId, artworkId, {
+        emailAttempts: 1,
+        emailLastAttemptAt: null,
+      });
+
+      // First sweep — simulate deleted artwork.
+      const artworkSpy = vi
+        .spyOn(db.query.artworksTable, "findFirst")
+        .mockResolvedValueOnce(undefined as any);
+      try {
+        await sweepUnsentInquiryEmails(new Date(), tenantId);
+      } finally {
+        artworkSpy.mockRestore();
+      }
+
+      // Second sweep — artwork spy is gone; the row is at MAX_EMAIL_ATTEMPTS
+      // so the query must not select it.
+      sendArtworkInquiry.mockClear();
+      const result2 = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+      expect(result2).toEqual({ scanned: 0, sent: 0, failed: 0, skipped: 0 });
+      expect(sendArtworkInquiry).not.toHaveBeenCalled();
+
+      // Row remains at the terminal state written by the first sweep.
+      const row = await db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, inquiryId),
+      });
+      expect(row?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(row?.emailError).toBe("artwork deleted");
     });
   },
 );
