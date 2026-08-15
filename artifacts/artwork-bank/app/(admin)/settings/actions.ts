@@ -10,6 +10,7 @@ import {
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { getSession, generateToken } from "@/lib/auth";
+import { requeueNoContactEmailInquiries } from "@/lib/email-sweep";
 
 const settingsSchema = z.object({
   businessName: z.string().min(2),
@@ -46,6 +47,23 @@ export async function updateTenantSettings(formData: FormData) {
       contactEmail: parsed.data.contactEmail || null,
     })
     .where(eq(tenantsTable.id, session.tenantId));
+
+  // When the gallery owner adds a contact email, requeue ALL inquiries with
+  // emailError="no gallery contact email".  This resets emailAttempts to 0 so
+  // exhausted rows re-enter the sweep candidate set, and also invalidates any
+  // in-flight sweep's CAS snapshot so a concurrent no-contact bump cannot
+  // permanently exclude the row.  Logged on failure — the tenant's email was
+  // already saved so we do not roll back the settings update.
+  if (parsed.data.contactEmail) {
+    try {
+      await requeueNoContactEmailInquiries(session.tenantId);
+    } catch (err) {
+      console.error(
+        `Settings save: failed to requeue no-contact-email inquiries for tenant ${session.tenantId}:`,
+        (err as any)?.message ?? String(err),
+      );
+    }
+  }
 
   redirect("/settings?saved=1");
 }

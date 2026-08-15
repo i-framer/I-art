@@ -12,8 +12,11 @@
  *  5. Backoff window skips an inquiry whose last attempt was too recent.
  *  6. Inquiry is re-selected once the backoff window has passed.
  *  7. Atomic CAS claim prevents a second concurrent sweep from double-sending.
- *  8. Inquiry with no tenant contactEmail is skipped without crashing.
+ *  8. Inquiry with no tenant contactEmail records a distinct error and bumps attempts so it is not retried forever.
  *  9. Missing artwork causes the sweep to skip without touching the row.
+ * 10. No-email inquiry is not re-selected once it reaches MAX_EMAIL_ATTEMPTS.
+ * 11. requeueNoContactEmailInquiries resets exhausted rows → sweep delivers on next run.
+ * 12. Requeue at MAX-1 (near-exhaustion interleave) still lets the sweep deliver.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -23,7 +26,7 @@ import {
   artworksTable,
   inquiriesTable,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 // ── Controlled sendArtworkInquiry mock — succeeds by default ──────────────────
@@ -45,6 +48,7 @@ vi.mock("@/lib/base-url", () => ({
 
 import {
   sweepUnsentInquiryEmails,
+  requeueNoContactEmailInquiries,
   MAX_EMAIL_ATTEMPTS,
   BASE_BACKOFF_MS,
 } from "@/lib/email-sweep";
@@ -309,25 +313,48 @@ describeIntegration(
       expect(row?.emailError).toBeNull();
     });
 
-    it("inquiry with no tenant contactEmail is skipped without crashing", async () => {
-      // Tenant has a blank contactEmail — sweep must reach the skip branch without throwing.
+    it("inquiry with no tenant contactEmail records a distinct error and bumps attempts", async () => {
+      // Tenant has a blank contactEmail — the sweep must not leave the row
+      // completely untouched (which would cause it to be scanned indefinitely).
+      // Instead it writes emailError="no gallery contact email", increments
+      // emailAttempts, and sets emailLastAttemptAt so back-off applies.
       const tenantId = await createTenant(""); // blank contactEmail
       const artworkId = await createArtwork(tenantId);
       const inquiryId = await createFailedInquiry(tenantId, artworkId, {
         emailAttempts: 1,
       });
 
-      const result = await sweepUnsentInquiryEmails(new Date(), tenantId);
+      const now = new Date();
+      const result = await sweepUnsentInquiryEmails(now, tenantId);
 
       expect(result).toEqual({ scanned: 1, sent: 0, failed: 0, skipped: 1 });
       expect(sendArtworkInquiry).not.toHaveBeenCalled();
 
-      // Row untouched — skipped path does not write to the DB.
+      // Row must be updated with the distinct error so back-off applies and
+      // the inquiry is not scanned on every sweep run forever.
       const row = await db.query.inquiriesTable.findFirst({
         where: eq(inquiriesTable.id, inquiryId),
       });
-      expect(row?.emailAttempts).toBe(1);
-      expect(row?.emailError).not.toBeNull();
+      expect(row?.emailAttempts).toBe(2);
+      expect(row?.emailError).toBe("no gallery contact email");
+      expect(row?.emailLastAttemptAt).toBeInstanceOf(Date);
+    });
+
+    it("no-email inquiry is not re-selected once it reaches MAX_EMAIL_ATTEMPTS", async () => {
+      // When the inquiry has already been bumped to MAX_EMAIL_ATTEMPTS by
+      // repeated no-contact-email skips it must fall out of the candidate set
+      // entirely so the sweep never touches it again.
+      const tenantId = await createTenant(""); // blank contactEmail
+      const artworkId = await createArtwork(tenantId);
+      await createFailedInquiry(tenantId, artworkId, {
+        emailAttempts: MAX_EMAIL_ATTEMPTS,
+        emailError: "no gallery contact email",
+      });
+
+      const result = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+      expect(result).toEqual({ scanned: 0, sent: 0, failed: 0, skipped: 0 });
+      expect(sendArtworkInquiry).not.toHaveBeenCalled();
     });
 
     it("missing artwork writes terminal state so the inquiry is never retried", async () => {
@@ -456,6 +483,116 @@ describeIntegration(
       });
       expect(row?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
       expect(row?.emailError).toBe("artwork deleted");
+    });
+
+    it("requeueNoContactEmailInquiries resets exhausted rows so the sweep delivers on next run", async () => {
+      // Simulate the full exhaustion → gallery adds email → delivered cycle:
+      //  1. Tenant starts with no contactEmail.
+      //  2. Inquiry is bumped to MAX_EMAIL_ATTEMPTS with "no gallery contact email"
+      //     and is therefore excluded from the sweep candidate set.
+      //  3. Gallery owner saves a contact email — requeueNoContactEmailInquiries
+      //     resets emailAttempts to 0 (keeping emailError non-null).
+      //  4. Next sweep run re-selects the row and delivers the email.
+      const tenantId = await createTenant(""); // starts with no contactEmail
+      const artworkId = await createArtwork(tenantId);
+      const inquiryId = await createFailedInquiry(tenantId, artworkId, {
+        emailAttempts: MAX_EMAIL_ATTEMPTS,
+        emailError: "no gallery contact email",
+      });
+
+      // Step 2: confirm the row is excluded while email is still absent.
+      const beforeRequeue = await sweepUnsentInquiryEmails(new Date(), tenantId);
+      expect(beforeRequeue).toEqual({ scanned: 0, sent: 0, failed: 0, skipped: 0 });
+      expect(sendArtworkInquiry).not.toHaveBeenCalled();
+
+      // Step 3: gallery owner adds a contact email — update the tenant row and
+      // call the requeue helper (mirrors what updateTenantSettings does).
+      await db
+        .update(tenantsTable)
+        .set({ contactEmail: "gallery@test.com" } as any)
+        .where(eq(tenantsTable.id, tenantId));
+      await requeueNoContactEmailInquiries(tenantId);
+
+      // The inquiry row must be reset so the sweep re-selects it.
+      const afterRequeue = await db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, inquiryId),
+      });
+      expect(afterRequeue?.emailAttempts).toBe(0);
+      expect(afterRequeue?.emailError).toBe("no gallery contact email"); // still non-null → eligible
+      expect(afterRequeue?.emailLastAttemptAt).toBeNull();
+
+      // Step 4: next sweep run delivers the email.
+      const deliveryResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
+      expect(deliveryResult).toEqual({ scanned: 1, sent: 1, failed: 0, skipped: 0 });
+      expect(sendArtworkInquiry).toHaveBeenCalledOnce();
+
+      // Row is now marked as successfully delivered.
+      const delivered = await db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, inquiryId),
+      });
+      expect(delivered?.emailError).toBeNull();
+      expect(delivered?.emailAttempts).toBe(1);
+    });
+
+    it("requeue at MAX-1 invalidates the sweep CAS so the inquiry is still delivered", async () => {
+      // Models the race where a sweep reads the row at emailAttempts=MAX-1 with
+      // no contact email, then the gallery owner saves an email (requeue runs),
+      // and finally the sweep's stale CAS fires.
+      //
+      // requeueNoContactEmailInquiries resets emailAttempts → 0.  The sweep's
+      // CAS condition checks emailAttempts = MAX-1; after the reset that
+      // snapshot no longer matches, so the stale bump to MAX is a no-op.  The
+      // next sweep sees emailAttempts=0 < MAX, finds the contact email, and
+      // delivers.
+      const tenantId = await createTenant(""); // starts with no contactEmail
+      const artworkId = await createArtwork(tenantId);
+      const inquiryId = await createFailedInquiry(tenantId, artworkId, {
+        emailAttempts: MAX_EMAIL_ATTEMPTS - 1,
+        emailError: "no gallery contact email",
+      });
+
+      // Simulate settings save: add contact email and requeue (this runs
+      // before the in-flight sweep CAS, invalidating the snapshot).
+      await db
+        .update(tenantsTable)
+        .set({ contactEmail: "gallery@test.com" } as any)
+        .where(eq(tenantsTable.id, tenantId));
+      await requeueNoContactEmailInquiries(tenantId);
+
+      // Now simulate the stale sweep CAS firing: it tries to bump emailAttempts
+      // from MAX-1 → MAX, but the requeue already changed emailAttempts to 0,
+      // so the CAS where-clause (emailAttempts = MAX-1) matches nothing.
+      const { rowCount } = await db
+        .update(inquiriesTable)
+        .set({
+          emailError: "no gallery contact email",
+          emailAttempts: MAX_EMAIL_ATTEMPTS,
+          emailLastAttemptAt: new Date(),
+        })
+        .where(
+          and(
+            eq(inquiriesTable.id, inquiryId),
+            eq(inquiriesTable.emailAttempts, MAX_EMAIL_ATTEMPTS - 1),
+          ),
+        );
+      // CAS must find zero matching rows — the stale bump is a no-op.
+      expect(rowCount).toBe(0);
+
+      // Row is at emailAttempts=0 — eligible for the next sweep.
+      const afterStale = await db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, inquiryId),
+      });
+      expect(afterStale?.emailAttempts).toBe(0);
+
+      // Next sweep delivers the email now that the contact email is set.
+      const deliveryResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
+      expect(deliveryResult).toEqual({ scanned: 1, sent: 1, failed: 0, skipped: 0 });
+      expect(sendArtworkInquiry).toHaveBeenCalledOnce();
+
+      const delivered = await db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, inquiryId),
+      });
+      expect(delivered?.emailError).toBeNull();
     });
   },
 );

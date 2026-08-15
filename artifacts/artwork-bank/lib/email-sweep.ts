@@ -401,6 +401,42 @@ export async function sweepUnsentStatusEmails(
 }
 
 /**
+ * When a gallery owner adds a contact email via the settings page, reset ALL
+ * inquiries for that tenant whose emailError is "no gallery contact email" —
+ * regardless of attempt count.  Resetting emailAttempts to 0 and
+ * emailLastAttemptAt to null achieves two things:
+ *
+ *  1. Exhausted rows (emailAttempts ≥ MAX_EMAIL_ATTEMPTS) re-enter the sweep
+ *     candidate set because emailAttempts < MAX_EMAIL_ATTEMPTS again.
+ *
+ *  2. Non-exhausted rows that a concurrent sweep is currently processing get
+ *     their snapshot invalidated: the sweep's CAS condition checks
+ *     emailAttempts = <snapshot> — after this reset changes emailAttempts to 0,
+ *     the stale CAS fails and the row is left at emailAttempts=0, so the next
+ *     sweep can deliver it instead of bumping it toward MAX.
+ *
+ * It is safe to call unconditionally on every settings save — it is a no-op
+ * when there are no no-contact-email inquiries for the tenant.
+ *
+ * @param tenantId  The tenant whose contact email was just set.
+ */
+export async function requeueNoContactEmailInquiries(
+  tenantId: string,
+): Promise<void> {
+  await db
+    .update(inquiriesTable)
+    .set({
+      emailAttempts: 0,
+      emailLastAttemptAt: null,
+    })
+    .where(
+      and(
+        eq(inquiriesTable.tenantId, tenantId),
+        eq(inquiriesTable.emailError, "no gallery contact email"),
+      ),
+    );
+}
+/**
  * Find inquiries whose notification email to the gallery was never delivered
  * (emailError IS NOT NULL) and retry sending with exponential back-off.
  *
@@ -497,6 +533,43 @@ export async function sweepUnsentInquiryEmails(
     }
 
     if (!tenant?.contactEmail) {
+      // The gallery has no contact email configured.  Unlike a deleted artwork,
+      // this is potentially recoverable — the owner could add an email later.
+      // Rather than leaving the row completely untouched (which would cause it
+      // to be scanned and skipped on every single sweep run indefinitely), we
+      // write a distinct error message and bump emailAttempts by 1 so that
+      // normal exponential back-off applies and the row eventually reaches
+      // MAX_EMAIL_ATTEMPTS and falls out of the candidate set.
+      //
+      // Recovery path: when the gallery owner saves a contact email via the
+      // settings page, updateTenantSettings calls requeueNoContactEmailInquiries
+      // which resets emailAttempts to 0 (keeping emailError non-null so this
+      // sweep re-selects the row) for any exhausted inquiry with this error.
+      //
+      // CAS guard: include the snapshot emailAttempts and a non-null emailError
+      // check so a stale write cannot overwrite a concurrent successful delivery
+      // (which clears emailError) or a concurrent bump of emailAttempts.
+      try {
+        await db
+          .update(inquiriesTable)
+          .set({
+            emailError: "no gallery contact email",
+            emailAttempts: inquiry.emailAttempts + 1,
+            emailLastAttemptAt: now,
+          })
+          .where(
+            and(
+              eq(inquiriesTable.id, inquiry.id),
+              isNotNull(inquiriesTable.emailError),
+              eq(inquiriesTable.emailAttempts, inquiry.emailAttempts),
+            ),
+          );
+      } catch (dbErr) {
+        console.error(
+          `Inquiry email sweep: could not persist no-contact-email state for inquiry ${inquiry.id}:`,
+          (dbErr as any)?.message ?? String(dbErr),
+        );
+      }
       result.skipped++;
       continue;
     }
