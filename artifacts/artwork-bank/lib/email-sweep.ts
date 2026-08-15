@@ -25,6 +25,13 @@ import { getTenantUrl } from "@/lib/base-url";
 /** Give up after this many failed attempts (initial send counts as one). */
 export const MAX_EMAIL_ATTEMPTS = 5;
 
+/**
+ * Sentinel stored in inquiries.emailError when the gallery has no contact
+ * email configured.  Exported so the dashboard count query and any other
+ * consumers use the same literal and cannot silently drift.
+ */
+export const NO_CONTACT_EMAIL_ERROR = "no gallery contact email";
+
 /** Base backoff: 5 min, then 10, 20, 40… doubling per prior attempt. */
 export const BASE_BACKOFF_MS = 5 * 60 * 1000;
 
@@ -432,7 +439,7 @@ export async function requeueNoContactEmailInquiries(
     .where(
       and(
         eq(inquiriesTable.tenantId, tenantId),
-        eq(inquiriesTable.emailError, "no gallery contact email"),
+        eq(inquiriesTable.emailError, NO_CONTACT_EMAIL_ERROR),
       ),
     );
 }
@@ -571,7 +578,7 @@ export async function sweepUnsentInquiryEmails(
         await db
           .update(inquiriesTable)
           .set({
-            emailError: "no gallery contact email",
+            emailError: NO_CONTACT_EMAIL_ERROR,
             emailAttempts: inquiry.emailAttempts + 1,
             emailLastAttemptAt: now,
           })

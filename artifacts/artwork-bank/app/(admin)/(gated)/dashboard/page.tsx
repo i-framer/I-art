@@ -13,6 +13,7 @@ import {
   Store,
   AlertTriangle,
   Clock,
+  MailWarning,
 } from "lucide-react";
 import Link from "next/link";
 import { getTenantUrl } from "@/lib/base-url";
@@ -22,6 +23,7 @@ import {
   STRIPE_PENDING_BANNER_HREF,
 } from "@/lib/stripe";
 import { getStorageProvider } from "@/lib/object-storage";
+import { getNoContactEmailInquiryCount } from "@/app/(admin)/_actions/inquiry-count";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -47,6 +49,8 @@ export default async function DashboardPage() {
   } catch {
     storageConfigured = false;
   }
+
+  const noContactEmailCount = await getNoContactEmailInquiryCount();
 
   const stats = [
     {
@@ -115,6 +119,32 @@ export default async function DashboardPage() {
               instructions.
             </p>
           </div>
+        </div>
+      )}
+
+      {/* No contact email — inquiries silently waiting */}
+      {!tenant.contactEmail && noContactEmailCount > 0 && (
+        <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 flex items-start gap-4">
+          <MailWarning className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-900">
+              {noContactEmailCount === 1
+                ? "1 inquiry is waiting — no contact email set"
+                : `${noContactEmailCount} inquiries are waiting — no contact email set`}
+            </p>
+            <p className="text-sm text-amber-700 mt-0.5">
+              Buyer{noContactEmailCount === 1 ? "" : "s"} have reached out but
+              notification emails cannot be delivered because your gallery has
+              no contact email configured. Add one in Settings and they will be
+              sent automatically.
+            </p>
+          </div>
+          <Link
+            href="/settings"
+            className="shrink-0 text-sm font-medium text-amber-700 bg-amber-100 hover:bg-amber-200 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+          >
+            Add contact email
+          </Link>
         </div>
       )}
 
