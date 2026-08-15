@@ -19,6 +19,8 @@ import {
   tenantsTable,
   usersTable,
   tenantUsersTable,
+  artworksTable,
+  inquiriesTable,
 } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -27,6 +29,8 @@ const RUN = Date.now();
 let seq = 0;
 const createdTenantIds: string[] = [];
 const createdUserIds: string[] = [];
+const createdArtworkIds: string[] = [];
+const createdInquiryIds: string[] = [];
 
 function uid() { return `${randomUUID()}-tsup-${RUN}-${++seq}`; }
 
@@ -40,6 +44,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { updateTenantSettings } from "@/app/(admin)/settings/actions";
+import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
 
 async function createTenant(businessName = "Settings Test Gallery") {
   const id = uid();
@@ -66,7 +71,45 @@ async function tenantRow(id: string) {
   return db.query.tenantsTable.findFirst({ where: eq(tenantsTable.id, id) });
 }
 
+async function createArtwork(tenantId: string) {
+  const id = uid();
+  await db.insert(artworksTable).values({
+    id,
+    tenantId,
+    title: "Settings Test Artwork",
+    sku: `sku-${id}`,
+    status: "AVAILABLE",
+    showInGallery: true,
+  } as any);
+  createdArtworkIds.push(id);
+  return id;
+}
+
+async function createExhaustedNoEmailInquiry(tenantId: string, artworkId: string) {
+  const id = uid();
+  await db.insert(inquiriesTable).values({
+    id,
+    tenantId,
+    artworkId,
+    artworkTitle: "Settings Test Artwork",
+    buyerName: "Test Buyer",
+    buyerEmail: `buyer-${id}@test.com`,
+    message: "Is this available?",
+    emailError: "no gallery contact email",
+    emailAttempts: MAX_EMAIL_ATTEMPTS,
+    emailLastAttemptAt: new Date(Date.now() - 60_000),
+  } as any);
+  createdInquiryIds.push(id);
+  return id;
+}
+
 async function cleanup() {
+  for (const id of createdInquiryIds.splice(0)) {
+    await db.delete(inquiriesTable).where(eq(inquiriesTable.id, id)).catch(() => {});
+  }
+  for (const id of createdArtworkIds.splice(0)) {
+    await db.delete(artworksTable).where(eq(artworksTable.id, id)).catch(() => {});
+  }
   for (const id of createdTenantIds.splice(0)) {
     await db.delete(tenantUsersTable).where(eq(tenantUsersTable.tenantId, id)).catch(() => {});
     await db.delete(tenantsTable).where(eq(tenantsTable.id, id)).catch(() => {});
@@ -181,5 +224,40 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
 
     const foreignRow = await tenantRow(foreignId);
     expect(foreignRow?.businessName).toBe("Foreign Gallery Original");
+  });
+
+  it("saving a contactEmail requeues exhausted no-contact-email inquiries via the settings route", async () => {
+    // Arrange: tenant starts with no contactEmail so inquiries have been
+    // exhausted (emailAttempts = MAX_EMAIL_ATTEMPTS, emailError =
+    // "no gallery contact email") and are excluded from the sweep.
+    //
+    // This test wires through updateTenantSettings (the real settings action)
+    // to confirm requeueNoContactEmailInquiries is called correctly.  A future
+    // refactor that silently drops the call will cause this test to fail.
+    const { tenantId } = await createTenant("Gallery Without Email");
+    // Overwrite contactEmail to blank so the tenant starts without one.
+    await db.update(tenantsTable).set({ contactEmail: null } as any).where(eq(tenantsTable.id, tenantId));
+
+    const artworkId = await createArtwork(tenantId);
+    const inquiryId = await createExhaustedNoEmailInquiry(tenantId, artworkId);
+
+    // Act: gallery owner saves a contact email through the settings route.
+    await updateTenantSettings(fd({
+      businessName: "Gallery Without Email",
+      contactEmail: "gallery@example.com",
+      themeColor: "", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: the exhausted inquiry must have been reset so the sweep can
+    // re-select and deliver it.
+    const row = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, inquiryId),
+    });
+    // emailAttempts reset to 0 so the row re-enters the sweep candidate set.
+    expect(row?.emailAttempts).toBe(0);
+    // emailError is kept non-null so the sweep knows this is a retry.
+    expect(row?.emailError).toBe("no gallery contact email");
+    // emailLastAttemptAt cleared so no backoff delay applies.
+    expect(row?.emailLastAttemptAt).toBeNull();
   });
 });
