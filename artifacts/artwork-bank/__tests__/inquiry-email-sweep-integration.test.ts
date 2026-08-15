@@ -16,6 +16,7 @@
  *  9. Missing artwork causes the sweep to skip without touching the row.
  * 10. Cross-tenant artwork mismatch writes a terminal state so the row is never re-selected.
  * 11. No-email inquiry is not re-selected once it reaches MAX_EMAIL_ATTEMPTS.
+ * 11a. No-email inquiry is permanently excluded: second sweep run finds scanned=0 after first bump reaches MAX.
  * 12. requeueNoContactEmailInquiries resets exhausted rows → sweep delivers on next run.
  * 13. Requeue at MAX-1 (near-exhaustion interleave) still lets the sweep deliver.
  */
@@ -356,6 +357,47 @@ describeIntegration(
 
       expect(result).toEqual({ scanned: 0, sent: 0, failed: 0, skipped: 0 });
       expect(sendArtworkInquiry).not.toHaveBeenCalled();
+    });
+
+    it("no-email inquiry is permanently excluded: second sweep finds scanned=0 after first bump reaches MAX", async () => {
+      // First sweep: inquiry is at MAX_EMAIL_ATTEMPTS-1 with no contactEmail
+      // configured on the tenant.  The sweep bumps emailAttempts to MAX and
+      // writes "no gallery contact email" — the row is now at the terminal
+      // threshold.  Second sweep: the candidate query excludes rows at MAX so
+      // scanned must be 0 and the row must remain untouched.
+      const tenantId = await createTenant(""); // blank contactEmail throughout
+      const artworkId = await createArtwork(tenantId);
+      const inquiryId = await createFailedInquiry(tenantId, artworkId, {
+        emailAttempts: MAX_EMAIL_ATTEMPTS - 1,
+        emailError: "no gallery contact email",
+        emailLastAttemptAt: null,
+      });
+
+      // First sweep — no contactEmail → bumps emailAttempts to MAX.
+      const result1 = await sweepUnsentInquiryEmails(new Date(), tenantId);
+      expect(result1).toEqual({ scanned: 1, sent: 0, failed: 0, skipped: 1 });
+      expect(sendArtworkInquiry).not.toHaveBeenCalled();
+
+      const afterFirst = await db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, inquiryId),
+      });
+      expect(afterFirst?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(afterFirst?.emailError).toBe("no gallery contact email");
+
+      // Second sweep — row is at MAX_EMAIL_ATTEMPTS so the candidate query
+      // must not select it at all.
+      sendArtworkInquiry.mockClear();
+      const result2 = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+      expect(result2).toEqual({ scanned: 0, sent: 0, failed: 0, skipped: 0 });
+      expect(sendArtworkInquiry).not.toHaveBeenCalled();
+
+      // Row must remain at the terminal state written by the first sweep.
+      const afterSecond = await db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, inquiryId),
+      });
+      expect(afterSecond?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(afterSecond?.emailError).toBe("no gallery contact email");
     });
 
     it("missing artwork writes terminal state so the inquiry is never retried", async () => {
