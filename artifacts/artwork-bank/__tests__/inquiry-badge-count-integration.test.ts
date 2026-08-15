@@ -32,6 +32,7 @@ import {
 } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 const mockSession: { userId: string | null; tenantId: string } = {
@@ -82,7 +83,13 @@ async function createArtwork(tenantId: string) {
 async function createInquiry(
   tenantId: string,
   artworkId: string,
-  opts: { status?: string; archivedAt?: Date | null; emailError?: string | null } = {},
+  opts: {
+    status?: string;
+    archivedAt?: Date | null;
+    emailError?: string | null;
+    /** Set to MAX_EMAIL_ATTEMPTS (or higher) to simulate a permanently-failed inquiry. */
+    emailAttempts?: number;
+  } = {},
 ) {
   const id = uid();
   await db.insert(inquiriesTable).values({
@@ -93,6 +100,7 @@ async function createInquiry(
     status: opts.status ?? "NEW",
     archivedAt: opts.archivedAt ?? null,
     emailError: opts.emailError ?? null,
+    emailAttempts: opts.emailAttempts ?? 0,
   } as any);
   createdInquiryIds.push(id);
   return id;
@@ -203,13 +211,13 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);
 
-    // 2 qualifying: emailError set, not archived
-    await createInquiry(tenantId, artworkId, { emailError: "SMTP timeout", archivedAt: null });
-    await createInquiry(tenantId, artworkId, { emailError: "550 rejected", archivedAt: null });
+    // 2 qualifying: emailError set, all attempts exhausted, not archived
+    await createInquiry(tenantId, artworkId, { emailError: "SMTP timeout", archivedAt: null, emailAttempts: MAX_EMAIL_ATTEMPTS });
+    await createInquiry(tenantId, artworkId, { emailError: "550 rejected", archivedAt: null, emailAttempts: MAX_EMAIL_ATTEMPTS });
     // Not counted: no emailError
     await createInquiry(tenantId, artworkId, { emailError: null, archivedAt: null });
-    // Not counted: archived (even though emailError is set)
-    await createInquiry(tenantId, artworkId, { emailError: "SMTP timeout", archivedAt: new Date() });
+    // Not counted: archived (even though emailError is set and attempts exhausted)
+    await createInquiry(tenantId, artworkId, { emailError: "SMTP timeout", archivedAt: new Date(), emailAttempts: MAX_EMAIL_ATTEMPTS });
 
     const failCount = await getEmailFailCount();
 
@@ -224,6 +232,7 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
     await createInquiry(tenantId, artworkId, {
       emailError: "Connection refused",
       archivedAt: new Date(Date.now() - 1000),
+      emailAttempts: MAX_EMAIL_ATTEMPTS,
     });
 
     const failCount = await getEmailFailCount();
@@ -246,10 +255,10 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
   it("getEmailFailCount does not count another tenant's failed-email inquiries", async () => {
     const ownTenantId = await createTenant();
     const ownArtworkId = await createArtwork(ownTenantId);
-    // 1 own failing inquiry
-    await createInquiry(ownTenantId, ownArtworkId, { emailError: "SMTP timeout", archivedAt: null });
+    // 1 own failing inquiry (all attempts exhausted)
+    await createInquiry(ownTenantId, ownArtworkId, { emailError: "SMTP timeout", archivedAt: null, emailAttempts: MAX_EMAIL_ATTEMPTS });
 
-    // Foreign tenant with its own failing inquiries
+    // Foreign tenant with its own permanently-failed inquiries
     const foreignTenantId = uid();
     await db.insert(tenantsTable).values({
       id: foreignTenantId, slug: foreignTenantId,
@@ -262,8 +271,8 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
       title: "Foreign", sku: `sku-${foreignArtworkId}`, status: "AVAILABLE",
     } as any);
     createdArtworkIds.push(foreignArtworkId);
-    await createInquiry(foreignTenantId, foreignArtworkId, { emailError: "550 rejected", archivedAt: null });
-    await createInquiry(foreignTenantId, foreignArtworkId, { emailError: "550 rejected", archivedAt: null });
+    await createInquiry(foreignTenantId, foreignArtworkId, { emailError: "550 rejected", archivedAt: null, emailAttempts: MAX_EMAIL_ATTEMPTS });
+    await createInquiry(foreignTenantId, foreignArtworkId, { emailError: "550 rejected", archivedAt: null, emailAttempts: MAX_EMAIL_ATTEMPTS });
 
     // Session remains on ownTenantId
     mockSession.tenantId = ownTenantId;
@@ -275,7 +284,7 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
   it("getEmailFailCount returns 0 for unauthenticated session", async () => {
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);
-    await createInquiry(tenantId, artworkId, { emailError: "SMTP timeout", archivedAt: null });
+    await createInquiry(tenantId, artworkId, { emailError: "SMTP timeout", archivedAt: null, emailAttempts: MAX_EMAIL_ATTEMPTS });
 
     mockSession.userId = null;
     const failCount = await getEmailFailCount();

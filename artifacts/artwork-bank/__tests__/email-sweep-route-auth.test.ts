@@ -16,6 +16,8 @@
  *  - Correct CRON_SECRET → 200
  *  - Malformed auth header (Basic scheme) → 403
  *  - Sweep errors return 500 not 403
+ *  - Inquiry sweep (sweepUnsentInquiryEmails) is blocked / allowed in
+ *    lock-step with the same EMAIL_SWEEP_SECRET Bearer-token gate
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -39,7 +41,10 @@ vi.mock("next/server", () => ({
 }));
 
 import { GET, POST } from "@/app/api/email-sweep/route";
-import { sweepUnsentConfirmationEmails } from "@/lib/email-sweep";
+import {
+  sweepUnsentConfirmationEmails,
+  sweepUnsentInquiryEmails,
+} from "@/lib/email-sweep";
 
 // ── Env helpers ───────────────────────────────────────────────────────────────
 const savedEnv: Record<string, string | undefined> = {};
@@ -164,5 +169,41 @@ describe("email sweep route — error handling", () => {
 
     const res = await POST(makeRequest());
     expect(res.status).toBe(500);
+  });
+});
+
+/**
+ * Inquiry-sweep auth gate
+ *
+ * sweepUnsentInquiryEmails is called by the same combined route
+ * (app/api/email-sweep/route.ts) and is gated by the same
+ * EMAIL_SWEEP_SECRET / CRON_SECRET Bearer-token check.
+ *
+ * These tests assert that the inquiry sweep is explicitly blocked
+ * or allowed in lock-step with that gate.
+ */
+describe("email sweep route — inquiry sweep auth gate (EMAIL_SWEEP_SECRET)", () => {
+  it("does not call sweepUnsentInquiryEmails and returns 401 when no Authorization header is sent and EMAIL_SWEEP_SECRET is configured", async () => {
+    setEnv({ EMAIL_SWEEP_SECRET: "inquiry-secret" });
+
+    const res = await POST(makeRequest()); // no auth header
+    expect(res.status).toBe(401);
+    expect(sweepUnsentInquiryEmails).not.toHaveBeenCalled();
+  });
+
+  it("does not call sweepUnsentInquiryEmails and returns 401 when a wrong Bearer token is sent and EMAIL_SWEEP_SECRET is configured", async () => {
+    setEnv({ EMAIL_SWEEP_SECRET: "inquiry-secret" });
+
+    const res = await POST(makeRequest("Bearer wrong-secret"));
+    expect(res.status).toBe(401);
+    expect(sweepUnsentInquiryEmails).not.toHaveBeenCalled();
+  });
+
+  it("calls sweepUnsentInquiryEmails and returns 200 when the correct EMAIL_SWEEP_SECRET Bearer token is sent", async () => {
+    setEnv({ EMAIL_SWEEP_SECRET: "inquiry-secret" });
+
+    const res = await POST(makeRequest("Bearer inquiry-secret"));
+    expect(res.status).toBe(200);
+    expect(sweepUnsentInquiryEmails).toHaveBeenCalledOnce();
   });
 });
