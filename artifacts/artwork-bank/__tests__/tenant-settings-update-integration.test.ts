@@ -166,6 +166,23 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(row?.contactEmail).toBe("new-contact@gallery.test");
   });
 
+  it("clearing contactEmail stores null in the DB (not an empty string)", async () => {
+    // Arrange: tenant starts with a real contactEmail.
+    const { tenantId } = await createTenant();
+
+    // Act: submit an empty contactEmail — the action uses `|| null` so it
+    // should write NULL to the DB, not an empty string.
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "",   // ← deliberate clear
+      themeColor: "", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: the persisted row must have null, not "".
+    const row = await tenantRow(tenantId);
+    expect(row?.contactEmail).toBeNull();
+  });
+
   it("empty location stores null", async () => {
     const { tenantId } = await createTenant();
 
