@@ -3,8 +3,9 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { db } from "@workspace/db";
-import { tenantsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { tenantsTable, inquiriesTable } from "@workspace/db";
+import { and, count, eq } from "drizzle-orm";
+import { NO_CONTACT_EMAIL_ERROR } from "@/lib/email-sweep";
 import {
   updateTenantSettings,
   startStripeOnboarding,
@@ -25,6 +26,7 @@ import { getCnameTarget } from "@/lib/tenant-cache";
 import { getPlatformBaseUrl } from "@/lib/base-url";
 import { DomainForm } from "./_components/domain-form";
 import { StripeReadinessPanel } from "./_components/stripe-readiness-panel";
+import { ContactEmailField } from "./_components/contact-email-field";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -66,6 +68,18 @@ export default async function SettingsPage({
       stripeStatus = "pending";
     }
   }
+
+  // Count inquiries stalled on "no gallery contact email" so the UI can warn
+  // the gallery owner before they save an empty contact email field.
+  const [{ value: pendingNoContactInquiries }] = await db
+    .select({ value: count() })
+    .from(inquiriesTable)
+    .where(
+      and(
+        eq(inquiriesTable.tenantId, session.tenantId),
+        eq(inquiriesTable.emailError, NO_CONTACT_EMAIL_ERROR),
+      ),
+    );
 
   const platformFeePercent = process.env.PLATFORM_FEE_PERCENT ?? "5";
   const cnameTarget = getCnameTarget();
@@ -236,22 +250,10 @@ export default async function SettingsPage({
               Shown on your public storefront and used in artwork discovery filters.
             </p>
           </div>
-          <div>
-            <label htmlFor="contactEmail" className="block text-sm font-medium text-stone-700 mb-1.5">
-              Contact email
-            </label>
-            <input
-              id="contactEmail"
-              name="contactEmail"
-              type="email"
-              defaultValue={tenant.contactEmail ?? ""}
-              placeholder="hello@yourgallery.com"
-              className="w-full rounded-lg border border-stone-300 bg-white px-3.5 py-2.5 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-900/10 transition-colors"
-            />
-            <p className="mt-1 text-xs text-stone-400">
-              Buyer inquiries are sent here when online payments are unavailable.
-            </p>
-          </div>
+          <ContactEmailField
+            defaultValue={tenant.contactEmail ?? ""}
+            pendingNoContactInquiries={pendingNoContactInquiries}
+          />
         </div>
 
         <div className="rounded-xl border border-stone-200 bg-white p-6 space-y-4">
