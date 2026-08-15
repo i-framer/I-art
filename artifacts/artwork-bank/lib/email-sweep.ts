@@ -409,14 +409,22 @@ export async function sweepUnsentStatusEmails(
  *  – exponential backoff based on emailLastAttemptAt
  *  – atomic optimistic-lock claim to guard against concurrent sweeps sending
  *    the same notification twice
+ *
+ * @param now     Reference timestamp for backoff calculations.
+ * @param tenantId When provided, restricts the sweep to inquiries belonging to
+ *                 a single tenant.  Used by integration tests to prevent the
+ *                 global query from touching rows owned by other test runs or
+ *                 real tenants in the shared dev database.
  */
 export async function sweepUnsentInquiryEmails(
   now: Date = new Date(),
+  tenantId?: string,
 ): Promise<SweepResult> {
   const candidates = await db.query.inquiriesTable.findMany({
     where: and(
       isNotNull(inquiriesTable.emailError),
       lt(inquiriesTable.emailAttempts, MAX_EMAIL_ATTEMPTS),
+      tenantId ? eq(inquiriesTable.tenantId, tenantId) : undefined,
     ),
     limit: 50,
   });
