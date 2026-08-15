@@ -24,6 +24,7 @@ import {
 } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
+import * as emailSweepModule from "@/lib/email-sweep";
 
 const RUN = Date.now();
 let seq = 0;
@@ -42,6 +43,19 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("next/navigation", () => ({
   redirect: vi.fn((url: string) => { throw new Error(`REDIRECT:${url}`); }),
 }));
+
+// Wrap the real email-sweep module so individual tests can override
+// requeueNoContactEmailInquiries via vi.spyOn without affecting others.
+vi.mock("@/lib/email-sweep", async (importActual) => {
+  const actual = await importActual<typeof import("@/lib/email-sweep")>();
+  return {
+    ...actual,
+    requeueNoContactEmailInquiries: vi.fn(
+      (...args: Parameters<typeof actual.requeueNoContactEmailInquiries>) =>
+        actual.requeueNoContactEmailInquiries(...args),
+    ),
+  };
+});
 
 import { updateTenantSettings } from "@/app/(admin)/settings/actions";
 import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
@@ -224,6 +238,33 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
 
     const foreignRow = await tenantRow(foreignId);
     expect(foreignRow?.businessName).toBe("Foreign Gallery Original");
+  });
+
+  it("settings save redirects to /settings?saved=1 and contactEmail is persisted when requeue silently throws", async () => {
+    const { tenantId } = await createTenant();
+
+    // Make requeueNoContactEmailInquiries throw for this test only.
+    vi.spyOn(emailSweepModule, "requeueNoContactEmailInquiries").mockRejectedValueOnce(
+      new Error("requeue step failed — simulated"),
+    );
+
+    let caughtError: unknown;
+    try {
+      await updateTenantSettings(fd({
+        businessName: "Settings Test Gallery",
+        contactEmail: "contact@gallery.test",
+        themeColor: "", aboutText: "", location: "",
+      }));
+    } catch (e) {
+      caughtError = e;
+    }
+
+    // The action must redirect to /settings?saved=1, not propagate the requeue error.
+    expect(String(caughtError)).toContain("REDIRECT:/settings?saved=1");
+
+    // The contactEmail update must have been committed to the DB before the throw.
+    const row = await tenantRow(tenantId);
+    expect(row?.contactEmail).toBe("contact@gallery.test");
   });
 
   it("saving a contactEmail requeues exhausted no-contact-email inquiries via the settings route", async () => {
