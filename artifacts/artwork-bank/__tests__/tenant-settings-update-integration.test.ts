@@ -313,6 +313,42 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(errorCalls).toHaveLength(0);
   });
 
+  it("requeue is skipped entirely when contactEmail is cleared (empty string)", async () => {
+    // Arrange: tenant starts with a contactEmail so the form submission is a
+    // deliberate clear, not a first-time blank.
+    const { tenantId } = await createTenant("Gallery With Contact Email");
+
+    // Spy on the mocked module to assert it is never invoked.
+    // Clear call history left by earlier tests so the not.toHaveBeenCalled()
+    // assertion only reflects calls made within this test.
+    const requeueSpy = vi.spyOn(emailSweepModule, "requeueNoContactEmailInquiries");
+    requeueSpy.mockClear();
+
+    let caughtError: unknown;
+    try {
+      await updateTenantSettings(fd({
+        businessName: "Gallery With Contact Email",
+        contactEmail: "",          // ← cleared / empty string
+        themeColor: "", aboutText: "", location: "",
+      }));
+    } catch (e) {
+      caughtError = e;
+    }
+
+    // The action must still redirect to /settings?saved=1 even when
+    // contactEmail is cleared.
+    expect(String(caughtError)).toContain("REDIRECT:/settings?saved=1");
+
+    // requeueNoContactEmailInquiries must NOT have been called at all.
+    expect(requeueSpy).not.toHaveBeenCalled();
+
+    requeueSpy.mockRestore();
+
+    // contactEmail must have been cleared in the DB (stored as null).
+    const row = await tenantRow(tenantId);
+    expect(row?.contactEmail).toBeNull();
+  });
+
   it("saving a contactEmail requeues exhausted no-contact-email inquiries via the settings route", async () => {
     // Arrange: tenant starts with no contactEmail so inquiries have been
     // exhausted (emailAttempts = MAX_EMAIL_ATTEMPTS, emailError =
