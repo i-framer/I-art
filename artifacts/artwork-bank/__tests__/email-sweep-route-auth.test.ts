@@ -207,3 +207,67 @@ describe("email sweep route — inquiry sweep auth gate (EMAIL_SWEEP_SECRET)", (
     expect(sweepUnsentInquiryEmails).toHaveBeenCalledOnce();
   });
 });
+
+/**
+ * inquiryResult shape and top-level totals
+ *
+ * The combined sweep response body must include an `inquiryResult` object with
+ * the four standard numeric fields, and the top-level totals must incorporate
+ * the inquiry sweep's contribution.
+ */
+describe("email sweep route — inquiryResult in response body", () => {
+  it("response body contains inquiryResult with scanned/sent/failed/skipped fields when request is authorized", async () => {
+    setEnv({ EMAIL_SWEEP_SECRET: "test-secret" });
+    vi.mocked(sweepUnsentInquiryEmails).mockResolvedValueOnce({
+      scanned: 5,
+      sent: 3,
+      failed: 1,
+      skipped: 1,
+    });
+
+    const res = await POST(makeRequest("Bearer test-secret"));
+    expect(res.status).toBe(207); // failed > 0 → 207
+
+    const body = await res.json();
+    expect(body).toHaveProperty("inquiryResult");
+    const { inquiryResult } = body;
+    expect(typeof inquiryResult.scanned).toBe("number");
+    expect(typeof inquiryResult.sent).toBe("number");
+    expect(typeof inquiryResult.failed).toBe("number");
+    expect(typeof inquiryResult.skipped).toBe("number");
+    expect(inquiryResult).toEqual({ scanned: 5, sent: 3, failed: 1, skipped: 1 });
+  });
+
+  it("top-level totals include the inquiry sweep contribution", async () => {
+    setEnv({ EMAIL_SWEEP_SECRET: "test-secret" });
+
+    // All other sweeps return zeros; only inquiry returns non-zero values
+    vi.mocked(sweepUnsentInquiryEmails).mockResolvedValueOnce({
+      scanned: 10,
+      sent: 4,
+      failed: 2,
+      skipped: 3,
+    });
+
+    const res = await POST(makeRequest("Bearer test-secret"));
+    const body = await res.json();
+
+    // Top-level totals must at least include the inquiry contribution.
+    // Other sweeps are mocked to return zeros (see top-level vi.mock).
+    expect(body.scanned).toBe(10);
+    expect(body.sent).toBe(4);
+    expect(body.failed).toBe(2);
+    expect(body.skipped).toBe(3);
+  });
+
+  it("inquiryResult fields are all zero when sweepUnsentInquiryEmails returns zeros", async () => {
+    setEnv({ EMAIL_SWEEP_SECRET: "test-secret" });
+    // Default mock returns all zeros — no override needed
+
+    const res = await POST(makeRequest("Bearer test-secret"));
+    expect(res.status).toBe(200); // no failures → 200
+
+    const body = await res.json();
+    expect(body.inquiryResult).toEqual({ scanned: 0, sent: 0, failed: 0, skipped: 0 });
+  });
+});
