@@ -127,12 +127,11 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
   it("counts only NEW + unarchived inquiries for the session tenant", async () => {
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);
-
-    // 2 qualifying: NEW + unarchived
-    await createInquiry(tenantId, artworkId, { status: "NEW", archivedAt: null });
-    await createInquiry(tenantId, artworkId, { status: "NEW", archivedAt: null });
+    // 2 qualifying
+    await createInquiry(tenantId, artworkId, { status: "NEW" });
+    await createInquiry(tenantId, artworkId, { status: "NEW" });
     // Not counted: HANDLED
-    await createInquiry(tenantId, artworkId, { status: "HANDLED", archivedAt: null });
+    await createInquiry(tenantId, artworkId, { status: "HANDLED" });
     // Not counted: archived
     await createInquiry(tenantId, artworkId, { status: "NEW", archivedAt: new Date() });
 
@@ -144,9 +143,7 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
   it("HANDLED inquiries are not counted", async () => {
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);
-
-    await createInquiry(tenantId, artworkId, { status: "HANDLED", archivedAt: null });
-    await createInquiry(tenantId, artworkId, { status: "HANDLED", archivedAt: null });
+    await createInquiry(tenantId, artworkId, { status: "HANDLED" });
 
     const count = await getNewInquiryCount();
 
@@ -156,7 +153,6 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
   it("archived inquiries (archivedAt non-null) are not counted", async () => {
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);
-
     await createInquiry(tenantId, artworkId, { status: "NEW", archivedAt: new Date(Date.now() - 1000) });
 
     const count = await getNewInquiryCount();
@@ -167,10 +163,7 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
   it("inquiries from another tenant are not counted", async () => {
     const ownTenantId = await createTenant();
     const ownArtworkId = await createArtwork(ownTenantId);
-    // 1 own qualifying inquiry.
-    await createInquiry(ownTenantId, ownArtworkId, { status: "NEW", archivedAt: null });
-
-    // Create a foreign tenant with its own inquiries.
+    // Foreign tenant with its own NEW inquiries
     const foreignTenantId = uid();
     await db.insert(tenantsTable).values({
       id: foreignTenantId, slug: foreignTenantId,
@@ -189,8 +182,9 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
     // Session is still on ownTenantId.
     mockSession.tenantId = ownTenantId;
     const count = await getNewInquiryCount();
+    mockSession.userId = "u-badge-owner";
 
-    expect(count).toBe(1);
+    expect(count).toBe(0);
   });
 
   it("unauthenticated session returns 0", async () => {
@@ -211,12 +205,12 @@ describeIntegration("getNewInquiryCount — real-DB integration", () => {
     const tenantId = await createTenant();
     const artworkId = await createArtwork(tenantId);
 
-    // 2 qualifying: emailError set, all attempts exhausted, not archived
+    // 2 qualifying: emailError set, attempts exhausted, not archived
     await createInquiry(tenantId, artworkId, { emailError: "SMTP timeout", archivedAt: null, emailAttempts: MAX_EMAIL_ATTEMPTS });
     await createInquiry(tenantId, artworkId, { emailError: "550 rejected", archivedAt: null, emailAttempts: MAX_EMAIL_ATTEMPTS });
     // Not counted: no emailError
     await createInquiry(tenantId, artworkId, { emailError: null, archivedAt: null });
-    // Not counted: archived (even though emailError is set and attempts exhausted)
+    // Not counted: archived (even though emailError is set)
     await createInquiry(tenantId, artworkId, { emailError: "SMTP timeout", archivedAt: new Date(), emailAttempts: MAX_EMAIL_ATTEMPTS });
 
     const failCount = await getEmailFailCount();

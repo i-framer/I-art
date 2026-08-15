@@ -13,6 +13,7 @@
  *  6. Inquiry is re-selected once the backoff window has passed.
  *  7. Atomic CAS claim prevents a second concurrent sweep from double-sending.
  *  8. Inquiry with no tenant contactEmail is skipped without crashing.
+ *  9. Missing artwork causes the sweep to skip without touching the row.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -327,6 +328,46 @@ describeIntegration(
       });
       expect(row?.emailAttempts).toBe(1);
       expect(row?.emailError).not.toBeNull();
+    });
+
+    it("missing artwork causes the sweep to skip the inquiry without crashing", async () => {
+      // Use a real valid inquiry (satisfies FK) but make the artwork lookup
+      // return undefined via a spy — simulating an artwork that was deleted
+      // after the inquiry was recorded.  Because the sweep now resolves artwork
+      // and tenant *before* claiming, the inquiry row is left completely
+      // untouched when the artwork is missing (no emailLastAttemptAt stamp).
+      const tenantId = await createTenant();
+      const artworkId = await createArtwork(tenantId);
+      const inquiryId = await createFailedInquiry(tenantId, artworkId, {
+        emailAttempts: 1,
+        emailLastAttemptAt: null,
+      });
+
+      const artworkSpy = vi
+        .spyOn(db.query.artworksTable, "findFirst")
+        .mockResolvedValueOnce(undefined as any);
+
+      let result: Awaited<ReturnType<typeof sweepUnsentInquiryEmails>>;
+      try {
+        result = await sweepUnsentInquiryEmails(new Date(), tenantId);
+      } finally {
+        artworkSpy.mockRestore();
+      }
+
+      // The sweep sees the inquiry (scanned=1) but skips it because the artwork
+      // lookup returns nothing — no email is sent, no failure is recorded.
+      expect(result!).toEqual({ scanned: 1, sent: 0, failed: 0, skipped: 1 });
+      expect(sendArtworkInquiry).not.toHaveBeenCalled();
+
+      // The inquiry row must be completely untouched — the skip happens before
+      // the CAS claim, so emailAttempts, emailError, and emailLastAttemptAt
+      // all remain at their original values.
+      const row = await db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, inquiryId),
+      });
+      expect(row?.emailAttempts).toBe(1);
+      expect(row?.emailError).not.toBeNull();
+      expect(row?.emailLastAttemptAt).toBeNull();
     });
   },
 );

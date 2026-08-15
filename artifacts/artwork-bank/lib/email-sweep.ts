@@ -447,6 +447,25 @@ export async function sweepUnsentInquiryEmails(
       continue;
     }
 
+    // Resolve dependencies before claiming.  Checking artwork and tenant here
+    // (before the CAS stamp) means a missing artwork or gallery address leaves
+    // the inquiry row completely untouched — no emailLastAttemptAt is written,
+    // so the row stays eligibly re-selectable and no spurious backoff is
+    // applied to a row that was never actually attempted.
+    const [artwork, tenant] = await Promise.all([
+      db.query.artworksTable.findFirst({
+        where: eq(artworksTable.id, inquiry.artworkId),
+      }),
+      db.query.tenantsTable.findFirst({
+        where: eq(tenantsTable.id, inquiry.tenantId),
+      }),
+    ]);
+
+    if (!artwork || !tenant?.contactEmail) {
+      result.skipped++;
+      continue;
+    }
+
     // True compare-and-swap claim: stamp emailLastAttemptAt to `now` only
     // if the DB still shows the exact snapshot value we read.  Because the
     // stamp changes emailLastAttemptAt, a second concurrent sweep reading the
@@ -467,20 +486,6 @@ export async function sweepUnsentInquiryEmails(
       )
       .returning({ id: inquiriesTable.id });
     if (!claimed) {
-      result.skipped++;
-      continue;
-    }
-
-    const [artwork, tenant] = await Promise.all([
-      db.query.artworksTable.findFirst({
-        where: eq(artworksTable.id, inquiry.artworkId),
-      }),
-      db.query.tenantsTable.findFirst({
-        where: eq(tenantsTable.id, inquiry.tenantId),
-      }),
-    ]);
-
-    if (!artwork || !tenant?.contactEmail) {
       result.skipped++;
       continue;
     }
