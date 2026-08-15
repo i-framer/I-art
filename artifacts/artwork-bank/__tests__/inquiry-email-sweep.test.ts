@@ -283,6 +283,22 @@ describe("sweepUnsentInquiryEmails", () => {
     expect(sendArtworkInquiry).not.toHaveBeenCalled();
   });
 
+  it("skips the inquiry and does not call sendArtworkInquiry when the tenant record is missing entirely", async () => {
+    // Override the tenant mock for this test only: findFirst returns undefined
+    // (simulates a dangling FK after a tenant row has been deleted).
+    vi.mocked(db.query.tenantsTable.findFirst).mockResolvedValueOnce(
+      undefined as any,
+    );
+
+    sendArtworkInquiry.mockResolvedValue(true);
+    state.candidates = [inquiry()];
+
+    const result = await sweepUnsentInquiryEmails(NOW);
+
+    expect(result).toEqual({ scanned: 1, sent: 0, failed: 0, skipped: 1 });
+    expect(sendArtworkInquiry).not.toHaveBeenCalled();
+  });
+
   it("processes multiple candidates independently", async () => {
     sendArtworkInquiry
       .mockResolvedValueOnce(true)
