@@ -487,6 +487,15 @@ export async function sweepUnsentInquiryEmails(
       continue;
     }
 
+    // Guard against cross-tenant data integrity bugs: the artwork record
+    // exists but belongs to a different tenant than the inquiry (e.g. after a
+    // botched migration).  Sending would route the notification to the wrong
+    // gallery, so skip silently without claiming or modifying the row.
+    if (artwork.tenantId !== inquiry.tenantId) {
+      result.skipped++;
+      continue;
+    }
+
     if (!tenant?.contactEmail) {
       result.skipped++;
       continue;

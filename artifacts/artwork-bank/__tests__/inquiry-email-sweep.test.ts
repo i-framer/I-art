@@ -32,6 +32,7 @@ vi.mock("@workspace/db", () => ({
         findFirst: vi.fn(async () => ({
           id: "artwork-1",
           sku: "SKU-001",
+          tenantId: "tenant-1",
         })),
       },
       tenantsTable: {
@@ -311,6 +312,25 @@ describe("sweepUnsentInquiryEmails", () => {
 
     sendArtworkInquiry.mockResolvedValue(true);
     state.candidates = [inquiry()];
+
+    const result = await sweepUnsentInquiryEmails(NOW);
+
+    expect(result).toEqual({ scanned: 1, sent: 0, failed: 0, skipped: 1 });
+    expect(sendArtworkInquiry).not.toHaveBeenCalled();
+  });
+
+  it("skips the inquiry and does not call sendArtworkInquiry when the artwork belongs to a different tenant", async () => {
+    // Simulate a cross-tenant data-integrity bug: the artwork row exists but
+    // its tenantId doesn't match the inquiry's tenantId.  The sweep must skip
+    // silently rather than routing the notification to the wrong gallery.
+    vi.mocked(db.query.artworksTable.findFirst).mockResolvedValueOnce({
+      id: "artwork-1",
+      sku: "SKU-001",
+      tenantId: "tenant-OTHER",
+    } as any);
+
+    sendArtworkInquiry.mockResolvedValue(true);
+    state.candidates = [inquiry()]; // inquiry.tenantId === "tenant-1"
 
     const result = await sweepUnsentInquiryEmails(NOW);
 
