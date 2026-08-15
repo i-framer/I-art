@@ -268,6 +268,21 @@ describe("sweepUnsentInquiryEmails", () => {
     expect(sendArtworkInquiry).not.toHaveBeenCalled();
   });
 
+  it("skips the inquiry and does not call sendArtworkInquiry when the artwork record is missing", async () => {
+    // Override the artwork mock for this test only: findFirst returns undefined.
+    vi.mocked(db.query.artworksTable.findFirst).mockResolvedValueOnce(
+      undefined as any,
+    );
+
+    sendArtworkInquiry.mockResolvedValue(true);
+    state.candidates = [inquiry()];
+
+    const result = await sweepUnsentInquiryEmails(NOW);
+
+    expect(result).toEqual({ scanned: 1, sent: 0, failed: 0, skipped: 1 });
+    expect(sendArtworkInquiry).not.toHaveBeenCalled();
+  });
+
   it("processes multiple candidates independently", async () => {
     sendArtworkInquiry
       .mockResolvedValueOnce(true)
