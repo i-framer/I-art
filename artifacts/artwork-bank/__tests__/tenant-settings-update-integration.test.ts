@@ -279,6 +279,40 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(String(errorCalls[0][1])).toContain("requeue step failed — simulated");
   });
 
+  it("completes and redirects without logging errors when contactEmail is set but no inquiries need requeuing", async () => {
+    // Arrange: tenant starts with a contactEmail; there are no exhausted
+    // "no gallery contact email" inquiries, so requeueNoContactEmailInquiries
+    // will succeed but update 0 rows.  The action must still redirect cleanly
+    // and must NOT call console.error (no spurious error logging).
+    const { tenantId } = await createTenant("Gallery With No Pending Inquiries");
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    let caughtError: unknown;
+    try {
+      await updateTenantSettings(fd({
+        businessName: "Gallery With No Pending Inquiries",
+        contactEmail: "contact@gallery.test",
+        themeColor: "", aboutText: "", location: "",
+      }));
+    } catch (e) {
+      caughtError = e;
+    }
+
+    const errorCalls = [...errorSpy.mock.calls];
+    errorSpy.mockRestore();
+
+    // Must redirect to /settings?saved=1 even when 0 rows were requeued.
+    expect(String(caughtError)).toContain("REDIRECT:/settings?saved=1");
+
+    // contactEmail must be persisted.
+    const row = await tenantRow(tenantId);
+    expect(row?.contactEmail).toBe("contact@gallery.test");
+
+    // console.error must NOT be called — zero updated rows is not an error.
+    expect(errorCalls).toHaveLength(0);
+  });
+
   it("saving a contactEmail requeues exhausted no-contact-email inquiries via the settings route", async () => {
     // Arrange: tenant starts with no contactEmail so inquiries have been
     // exhausted (emailAttempts = MAX_EMAIL_ATTEMPTS, emailError =
