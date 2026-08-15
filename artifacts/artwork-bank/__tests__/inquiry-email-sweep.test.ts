@@ -101,6 +101,7 @@ vi.mock("@/lib/base-url", () => ({
     `https://example.com/t/gallery-one${path}`,
 }));
 
+import { db } from "@workspace/db";
 import { sweepUnsentInquiryEmails } from "@/lib/email-sweep";
 
 const NOW = new Date("2026-07-19T12:00:00Z");
@@ -245,6 +246,26 @@ describe("sweepUnsentInquiryEmails", () => {
     const result = await sweepUnsentInquiryEmails(NOW);
 
     expect(result.scanned).toBe(0);
+  });
+
+  it("skips the inquiry and does not call sendArtworkInquiry when tenant has no contactEmail", async () => {
+    // Override the tenant mock for this test only: contactEmail is null.
+    vi.mocked(db.query.tenantsTable.findFirst).mockResolvedValueOnce({
+      id: "tenant-1",
+      slug: "gallery-one",
+      businessName: "Gallery One",
+      contactEmail: null,
+      customDomain: null,
+      customDomainVerified: null,
+    } as any);
+
+    sendArtworkInquiry.mockResolvedValue(true);
+    state.candidates = [inquiry()];
+
+    const result = await sweepUnsentInquiryEmails(NOW);
+
+    expect(result).toEqual({ scanned: 1, sent: 0, failed: 0, skipped: 1 });
+    expect(sendArtworkInquiry).not.toHaveBeenCalled();
   });
 
   it("processes multiple candidates independently", async () => {
