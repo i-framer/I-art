@@ -526,8 +526,26 @@ export async function sweepUnsentInquiryEmails(
     // Guard against cross-tenant data integrity bugs: the artwork record
     // exists but belongs to a different tenant than the inquiry (e.g. after a
     // botched migration).  Sending would route the notification to the wrong
-    // gallery, so skip silently without claiming or modifying the row.
+    // gallery.  The mismatch is permanent — it will never self-heal — so write
+    // a terminal error and bump emailAttempts to MAX_EMAIL_ATTEMPTS exactly as
+    // the artwork-deleted path does.  This prevents the row from accumulating
+    // stale re-scans on every future sweep run.
     if (artwork.tenantId !== inquiry.tenantId) {
+      try {
+        await db
+          .update(inquiriesTable)
+          .set({
+            emailError: "cross-tenant artwork mismatch",
+            emailAttempts: MAX_EMAIL_ATTEMPTS,
+            emailLastAttemptAt: now,
+          })
+          .where(eq(inquiriesTable.id, inquiry.id));
+      } catch (dbErr) {
+        console.error(
+          `Inquiry email sweep: could not persist cross-tenant state for inquiry ${inquiry.id}:`,
+          (dbErr as any)?.message ?? String(dbErr),
+        );
+      }
       result.skipped++;
       continue;
     }

@@ -14,9 +14,10 @@
  *  7. Atomic CAS claim prevents a second concurrent sweep from double-sending.
  *  8. Inquiry with no tenant contactEmail records a distinct error and bumps attempts so it is not retried forever.
  *  9. Missing artwork causes the sweep to skip without touching the row.
- * 10. No-email inquiry is not re-selected once it reaches MAX_EMAIL_ATTEMPTS.
- * 11. requeueNoContactEmailInquiries resets exhausted rows → sweep delivers on next run.
- * 12. Requeue at MAX-1 (near-exhaustion interleave) still lets the sweep deliver.
+ * 10. Cross-tenant artwork mismatch writes a terminal state so the row is never re-selected.
+ * 11. No-email inquiry is not re-selected once it reaches MAX_EMAIL_ATTEMPTS.
+ * 12. requeueNoContactEmailInquiries resets exhausted rows → sweep delivers on next run.
+ * 13. Requeue at MAX-1 (near-exhaustion interleave) still lets the sweep deliver.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -396,11 +397,12 @@ describeIntegration(
       expect(row?.emailLastAttemptAt).toBeInstanceOf(Date);
     });
 
-    it("cross-tenant artwork guard: inquiry is skipped and row is left fully untouched", async () => {
+    it("cross-tenant artwork guard: inquiry is skipped and permanently marked so it is never re-scanned", async () => {
       // Simulate a cross-tenant data-integrity bug: the artwork exists in the DB
       // but its tenantId belongs to a *different* tenant than the inquiry.
-      // The sweep must skip the inquiry silently without claiming it (no CAS stamp)
-      // and without calling sendArtworkInquiry — leaving emailLastAttemptAt NULL.
+      // The mismatch is permanent, so the sweep must write a terminal error
+      // (emailAttempts = MAX_EMAIL_ATTEMPTS) rather than leaving the row
+      // silently re-selectable forever.
       const inquiryTenantId = await createTenant("gallery-a@test.com");
       const artworkTenantId = await createTenant("gallery-b@test.com");
 
@@ -433,19 +435,73 @@ describeIntegration(
       createdInquiryIds.push(inquiryId);
 
       // Sweep scoped to inquiryTenantId — it will find the inquiry, look up the
-      // artwork, detect the tenantId mismatch, and skip without modifying the row.
+      // artwork, detect the tenantId mismatch, and write a terminal state.
       const result = await sweepUnsentInquiryEmails(new Date(), inquiryTenantId);
 
       expect(result).toEqual({ scanned: 1, sent: 0, failed: 0, skipped: 1 });
       expect(sendArtworkInquiry).not.toHaveBeenCalled();
 
-      // The row must be completely untouched — no CAS stamp was applied.
+      // The row must have been stamped with the terminal cross-tenant error so
+      // it is excluded from every future scan (emailAttempts = MAX_EMAIL_ATTEMPTS).
       const row = await db.query.inquiriesTable.findFirst({
         where: eq(inquiriesTable.id, inquiryId),
       });
-      expect(row?.emailLastAttemptAt).toBeNull();
-      expect(row?.emailAttempts).toBe(1);
-      expect(row?.emailError).not.toBeNull();
+      expect(row?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(row?.emailError).toBe("cross-tenant artwork mismatch");
+      expect(row?.emailLastAttemptAt).not.toBeNull();
+    });
+
+    it("cross-tenant artwork mismatch: inquiry is not re-selected on a subsequent sweep run", async () => {
+      // First sweep: cross-tenant mismatch is detected → terminal state written.
+      // Second sweep: the row is now at MAX_EMAIL_ATTEMPTS and must not appear
+      // in the candidate set at all.
+      const inquiryTenantId = await createTenant("gallery-a2@test.com");
+      const artworkTenantId = await createTenant("gallery-b2@test.com");
+
+      const artworkId = uid();
+      await db.insert(artworksTable).values({
+        id: artworkId,
+        tenantId: artworkTenantId,
+        title: "Cross-Tenant Artwork 2",
+        sku: `sku-${artworkId}`,
+        status: "AVAILABLE",
+        showInGallery: true,
+      } as any);
+      createdArtworkIds.push(artworkId);
+
+      const inquiryId = uid();
+      await db.insert(inquiriesTable).values({
+        id: inquiryId,
+        tenantId: inquiryTenantId,
+        artworkId,
+        artworkTitle: "Cross-Tenant Artwork 2",
+        buyerName: "Test Buyer",
+        buyerEmail: `buyer-${inquiryId}@test.com`,
+        message: "Is this available?",
+        emailError: "smtp timeout",
+        emailAttempts: 1,
+        emailLastAttemptAt: null,
+      } as any);
+      createdInquiryIds.push(inquiryId);
+
+      // First sweep — detects mismatch and writes terminal state.
+      const result1 = await sweepUnsentInquiryEmails(new Date(), inquiryTenantId);
+      expect(result1).toEqual({ scanned: 1, sent: 0, failed: 0, skipped: 1 });
+
+      // Second sweep — the row is at MAX_EMAIL_ATTEMPTS so the query must not
+      // select it at all.
+      sendArtworkInquiry.mockClear();
+      const result2 = await sweepUnsentInquiryEmails(new Date(), inquiryTenantId);
+
+      expect(result2).toEqual({ scanned: 0, sent: 0, failed: 0, skipped: 0 });
+      expect(sendArtworkInquiry).not.toHaveBeenCalled();
+
+      // Row remains in the terminal state from the first sweep.
+      const row = await db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, inquiryId),
+      });
+      expect(row?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(row?.emailError).toBe("cross-tenant artwork mismatch");
     });
 
     it("inquiry with deleted artwork is not re-selected on a subsequent sweep run", async () => {
