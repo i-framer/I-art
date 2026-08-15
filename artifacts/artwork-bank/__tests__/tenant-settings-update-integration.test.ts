@@ -248,6 +248,9 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
       new Error("requeue step failed — simulated"),
     );
 
+    // Spy on console.error to confirm the error is logged, not silently dropped.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
     let caughtError: unknown;
     try {
       await updateTenantSettings(fd({
@@ -259,12 +262,21 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
       caughtError = e;
     }
 
+    // Capture calls before restoring (mockRestore clears recorded calls).
+    const errorCalls = [...errorSpy.mock.calls];
+    errorSpy.mockRestore();
+
     // The action must redirect to /settings?saved=1, not propagate the requeue error.
     expect(String(caughtError)).toContain("REDIRECT:/settings?saved=1");
 
     // The contactEmail update must have been committed to the DB before the throw.
     const row = await tenantRow(tenantId);
     expect(row?.contactEmail).toBe("contact@gallery.test");
+
+    // The requeue error must be logged (not silently dropped) so operators see it.
+    expect(errorCalls).toHaveLength(1);
+    expect(String(errorCalls[0][0])).toContain(tenantId);
+    expect(String(errorCalls[0][1])).toContain("requeue step failed — simulated");
   });
 
   it("saving a contactEmail requeues exhausted no-contact-email inquiries via the settings route", async () => {
