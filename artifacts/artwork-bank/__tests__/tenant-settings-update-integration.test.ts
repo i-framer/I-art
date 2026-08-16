@@ -264,6 +264,35 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(row?.aboutText).toBe("A contemporary art gallery in Sydney.");
   });
 
+  it("clearing an existing aboutText stores null in the DB (not an empty string)", async () => {
+    // Arrange: first save a non-empty aboutText so the tenant has one set.
+    const { tenantId } = await createTenant();
+
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "",
+      aboutText: "A contemporary art gallery in Sydney.",
+      location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const withAbout = await tenantRow(tenantId);
+    expect(withAbout?.aboutText).toBe("A contemporary art gallery in Sydney.");
+
+    // Act: submit with an empty aboutText to clear it.
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "",
+      aboutText: "",   // ← deliberate clear
+      location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: the DB row must have null, not an empty string.
+    const cleared = await tenantRow(tenantId);
+    expect(cleared?.aboutText).toBeNull();
+  });
+
   it("foreign tenant row is not affected by own session update", async () => {
     const { tenantId: _ownId } = await createTenant("My Gallery");
 

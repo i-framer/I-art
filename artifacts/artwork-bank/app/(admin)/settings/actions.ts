@@ -42,7 +42,7 @@ export async function updateTenantSettings(formData: FormData) {
     .set({
       businessName: parsed.data.businessName,
       themeColor: parsed.data.themeColor ?? null,
-      aboutText: parsed.data.aboutText ?? null,
+      aboutText: parsed.data.aboutText?.trim() || null,
       location: parsed.data.location?.trim() || null,
       contactEmail: parsed.data.contactEmail || null,
     })
