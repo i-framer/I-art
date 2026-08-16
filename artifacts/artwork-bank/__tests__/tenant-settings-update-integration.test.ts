@@ -245,8 +245,8 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
 
     const cleared = await tenantRow(tenantId);
-    // "" (empty string) is stored as-is; the action uses `?? null` not `|| null`
-    expect(cleared?.themeColor).toBe("");
+    // Assert: the DB row must have null, not an empty string.
+    expect(cleared?.themeColor).toBeNull();
   });
 
   it("aboutText update persists", async () => {

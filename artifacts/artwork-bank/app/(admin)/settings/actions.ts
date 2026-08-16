@@ -41,7 +41,7 @@ export async function updateTenantSettings(formData: FormData) {
     .update(tenantsTable)
     .set({
       businessName: parsed.data.businessName,
-      themeColor: parsed.data.themeColor ?? null,
+      themeColor: parsed.data.themeColor?.trim() || null,
       aboutText: parsed.data.aboutText?.trim() || null,
       location: parsed.data.location?.trim() || null,
       contactEmail: parsed.data.contactEmail || null,
