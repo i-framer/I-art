@@ -197,6 +197,33 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(row?.location).toBeNull();
   });
 
+  it("clearing an existing location stores null in the DB (not an empty string)", async () => {
+    // Arrange: first save a non-empty location so the tenant has one set.
+    const { tenantId } = await createTenant();
+
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "", aboutText: "",
+      location: "Sydney, NSW",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const withLocation = await tenantRow(tenantId);
+    expect(withLocation?.location).toBe("Sydney, NSW");
+
+    // Act: submit with an empty location to clear it.
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "", aboutText: "",
+      location: "",           // ← deliberate clear
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: the DB row must have null, not an empty string.
+    const cleared = await tenantRow(tenantId);
+    expect(cleared?.location).toBeNull();
+  });
+
   it("themeColor persists; clearing stores null", async () => {
     const { tenantId } = await createTenant();
 
