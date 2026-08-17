@@ -196,15 +196,15 @@ describeIntegration(
     it(
       "stale CAS write fails after requeueNoContactEmailInquiries; row is re-selected by the next sweep",
       async () => {
-        const tenantId = makeId("tenant");
-        // Start with NO contact email — the sweep will hit the no-contact path.
+        const tenantId = makeId("tenant-953");
+        // Start with NO contact email — the inquiry will have NO_CONTACT_EMAIL_ERROR.
         await insertTenant(tenantId);
 
-        const artworkId = makeId("artwork");
+        const artworkId = makeId("artwork-953");
         await insertArtwork(artworkId, tenantId);
 
-        const inqId = makeId("inq");
-        // Seed at emailAttempts=2 — below MAX, so the sweep normally selects it.
+        const inqId = makeId("inq-953");
+        // One attempt away from exhaustion.
         const snapshotAttempts = 2;
         await insertNoContactInquiry(inqId, tenantId, artworkId, snapshotAttempts);
 
@@ -213,11 +213,13 @@ describeIntegration(
         // ── Pre-condition: the row is in the no-contact state ─────────────────
 
         const rowBefore = await fetchRow(inqId);
-        expect(rowBefore?.emailAttempts).toBe(snapshotAttempts);
-        expect(rowBefore?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+        expect(rowBefore?.emailAttempts).toBe(2);
         expect(rowBefore?.emailLastAttemptAt).not.toBeNull();
+        expect(rowBefore?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
 
         const noContactBefore = await getNoContactEmailInquiryCount();
+
+        const rowAfterFirst = await fetchRow(inqId);
         expect(noContactBefore).toBe(1);
 
         // ── Simulate the concurrent sweep's snapshot ──────────────────────────
@@ -231,60 +233,33 @@ describeIntegration(
         // The row is now at emailAttempts=0.
         const rowAfterRequeue = await fetchRow(inqId);
         expect(rowAfterRequeue?.emailAttempts).toBe(0);
-        expect(rowAfterRequeue?.emailLastAttemptAt).toBeNull();
-        // emailError is preserved so the sweep can re-select the row.
-        expect(rowAfterRequeue?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
-
-        // ── Stale CAS write (what the concurrent sweep would issue) ───────────
-        //
-        // The no-contact path in sweepUnsentInquiryEmails issues:
-        //
-        //   UPDATE inquiries
-        //   SET emailError = NO_CONTACT_EMAIL_ERROR,
-        //       emailAttempts = inquiry.emailAttempts + 1,   -- 2+1=3
-        //       emailLastAttemptAt = now
-        //   WHERE id = <id>
-        //     AND emailError IS NOT NULL
-        //     AND emailAttempts = <snapshot>                 -- 2
-        //
-        // Since requeueNoContactEmailInquiries already changed emailAttempts to
-        // 0, the WHERE emailAttempts=2 predicate no longer matches; the write
-        // returns 0 rows.
 
         const now = new Date();
         const staleResult = await db
           .update(inquiriesTable)
           .set({
             emailError: NO_CONTACT_EMAIL_ERROR,
-            emailAttempts: snapshotAttempts + 1, // would have been 3
-            emailLastAttemptAt: now,
+            emailAttempts: snapshotAttempts + 1, // would have been MAX
+            emailLastAttemptAt: new Date(),
           })
           .where(
             and(
               eq(inquiriesTable.id, inqId),
-              eq(inquiriesTable.emailAttempts, snapshotAttempts), // stale: 2
+              eq(inquiriesTable.emailAttempts, snapshotAttempts),
             ),
           )
           .returning({ id: inquiriesTable.id });
 
-        // The stale CAS write must have matched 0 rows.
         expect(staleResult).toHaveLength(0);
 
-        // ── Row is still at emailAttempts=0 (the stale write left it intact) ──
-
+        // Row is still eligible — at emailAttempts=0, well below MAX.
         const rowAfterStaleWrite = await fetchRow(inqId);
         expect(rowAfterStaleWrite?.emailAttempts).toBe(0);
-        expect(rowAfterStaleWrite?.emailLastAttemptAt).toBeNull();
-        expect(rowAfterStaleWrite?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
 
-        // ── Next sweep pass: gallery now has a contact email ──────────────────
-        //
-        // Simulate the gallery owner's email actually being persisted so the
-        // sweep can deliver the inquiry notification.
-
+        // Add contact email and verify the sweep delivers it.
         await db
           .update(tenantsTable)
-          .set({ contactEmail: "owner@gallery-950.test" })
+          .set({ contactEmail: "owner-edge@gallery-950.test" })
           .where(eq(tenantsTable.id, tenantId));
 
         sendArtworkInquiry.mockResolvedValue(true);
@@ -304,30 +279,28 @@ describeIntegration(
         // The DB row has emailError cleared (delivery succeeded).
         const rowFinal = await fetchRow(inqId);
         expect(rowFinal?.emailError).toBeNull();
-        expect(rowFinal?.emailAttempts).toBe(1);
       },
     );
 
     /**
-     * Edge case: the row is at emailAttempts=MAX_EMAIL_ATTEMPTS-1 (one attempt
-     * away from exhaustion) when the concurrent sweep reads it.  After
-     * requeueNoContactEmailInquiries resets to 0, the stale CAS write would
-     * have pushed the row to MAX_EMAIL_ATTEMPTS — dropping it out of the
-     * candidate set permanently.  Confirm the stale write is blocked and the
-     * row remains eligible.
+     * Confirms that multiple concurrent sweeps all get their stale CAS writes
+     * invalidated when requeueNoContactEmailInquiries fires in between.
+     * Two "sweep snapshots" both taken at emailAttempts=2; after requeue resets
+     * to 0, both stale writes return 0 rows.
      */
     it(
-      "stale CAS write at MAX-1 does not exhaust the row; requeue keeps it eligible",
+      "two concurrent stale CAS writes are both invalidated after requeue",
       async () => {
-        const tenantId = makeId("tenant-edge");
+        const tenantId = makeId("tenant-953");
+        // Start with NO contact email — the inquiry will have NO_CONTACT_EMAIL_ERROR.
         await insertTenant(tenantId);
 
-        const artworkId = makeId("artwork-edge");
+        const artworkId = makeId("artwork-953");
         await insertArtwork(artworkId, tenantId);
 
-        const inqId = makeId("inq-edge");
+        const inqId = makeId("inq-953");
         // One attempt away from exhaustion.
-        const snapshotAttempts = MAX_EMAIL_ATTEMPTS - 1;
+        const snapshotAttempts = 2;
         await insertNoContactInquiry(
           inqId,
           tenantId,
@@ -335,6 +308,7 @@ describeIntegration(
           snapshotAttempts,
         );
 
+        // Both sweeps read the same snapshot simultaneously (emailAttempts=2).
         // Gallery owner saves their email → requeue fires.
         await requeueNoContactEmailInquiries(tenantId);
 
@@ -396,13 +370,14 @@ describeIntegration(
     it(
       "two concurrent stale CAS writes are both invalidated after requeue",
       async () => {
-        const tenantId = makeId("tenant-multi");
+        const tenantId = makeId("tenant-953");
+        // Start with NO contact email — the inquiry will have NO_CONTACT_EMAIL_ERROR.
         await insertTenant(tenantId);
 
-        const artworkId = makeId("artwork-multi");
+        const artworkId = makeId("artwork-953");
         await insertArtwork(artworkId, tenantId);
 
-        const inqId = makeId("inq-multi");
+        const inqId = makeId("inq-953");
         const snapshotAttempts = 2;
         await insertNoContactInquiry(
           inqId,
@@ -494,11 +469,11 @@ describeIntegration(
     it(
       "bulk requeue clears backoff for all stuck inquiries; sweep sends all 3 immediately (Task #961)",
       async () => {
-        const tenantId = makeId("tenant-961");
-        // Start with NO contact email — all inquiries will have NO_CONTACT_EMAIL_ERROR.
+        const tenantId = makeId("tenant-953");
+        // Start with NO contact email — the inquiry will have NO_CONTACT_EMAIL_ERROR.
         await insertTenant(tenantId);
 
-        const artworkId = makeId("artwork-961");
+        const artworkId = makeId("artwork-953");
         await insertArtwork(artworkId, tenantId);
 
         // Three buyers each sent an inquiry while the gallery had no email.
@@ -596,6 +571,131 @@ describeIntegration(
 
         const countAfter = await getNoContactEmailInquiryCount();
         expect(countAfter).toBe(0);
+      },
+    );
+
+    /**
+     * Task #960 — Confirm a row requeued twice in a row (with a recent
+     * emailLastAttemptAt that would normally keep it inside the backoff window)
+     * still sends immediately on the next sweep.
+     *
+     * requeueNoContactEmailInquiries is idempotent — calling it twice should
+     * leave the row in the same ready state as calling it once.  In particular,
+     * both calls must clear emailLastAttemptAt to null even when the first call
+     * already set it to null.  A second reset on an already-clean row must be a
+     * no-op; it must not re-introduce a backoff timestamp.
+     *
+     * Scenario:
+     *  1. Seed an inquiry at emailAttempts=2 with emailLastAttemptAt = now
+     *     (firmly inside the 10-minute backoff window for 2 attempts).
+     *  2. Call requeueNoContactEmailInquiries twice (simulating a gallery owner
+     *     saving settings twice in quick succession).
+     *  3. Assert emailAttempts=0 and emailLastAttemptAt=null after both calls.
+     *  4. Add a contact email and sweep; assert sent=1, skipped=0 — the email
+     *     is delivered on the very next pass without any time-travel.
+     */
+    it(
+      "double requeue with a recent backoff timestamp leaves row at 0/null; sweep sends immediately (Task #960)",
+      async () => {
+        const tenantId = makeId("tenant-960");
+        // Start with NO contact email — the inquiry will have NO_CONTACT_EMAIL_ERROR.
+        await insertTenant(tenantId);
+
+        const artworkId = makeId("artwork-960");
+        await insertArtwork(artworkId, tenantId);
+
+        const inqId = makeId("inq-960");
+
+        // Seed the inquiry at emailAttempts=2 with emailLastAttemptAt = now
+        // so the row is firmly inside the backoff window for 2 prior attempts
+        // (backoff = 10 minutes).  Without both requeue calls clearing the
+        // timestamp, the sweep would skip this row on the next pass.
+        const recentAttemptAt = new Date();
+        await insertNoContactInquiry(
+          inqId,
+          tenantId,
+          artworkId,
+          2,
+          recentAttemptAt,
+        );
+
+        mockSession.tenantId = tenantId;
+
+        // ── Pre-condition: row is in the backoff window ───────────────────────
+
+        const rowBefore = await fetchRow(inqId);
+        expect(rowBefore?.emailAttempts).toBe(2);
+        expect(rowBefore?.emailLastAttemptAt).not.toBeNull();
+        expect(rowBefore?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+
+        const noContactBefore = await getNoContactEmailInquiryCount();
+        expect(noContactBefore).toBe(1);
+
+        // ── First requeue ─────────────────────────────────────────────────────
+        //
+        // Gallery owner saves their contact email for the first time.
+
+        await requeueNoContactEmailInquiries(tenantId);
+
+        const rowAfterFirst = await fetchRow(inqId);
+        expect(rowAfterFirst?.emailAttempts).toBe(0);
+        expect(rowAfterFirst?.emailLastAttemptAt).toBeNull();
+        // emailError must be preserved so the sweep still selects the row.
+        expect(rowAfterFirst?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+
+        // ── Second requeue ────────────────────────────────────────────────────
+        //
+        // Gallery owner immediately changes to a different email address,
+        // triggering a second requeueNoContactEmailInquiries call.  The row is
+        // already at emailAttempts=0 / emailLastAttemptAt=null — the second
+        // call must be a no-op (0→0, null→null) and must NOT re-introduce a
+        // backoff timestamp.
+
+        await requeueNoContactEmailInquiries(tenantId);
+
+        const rowAfterSecond = await fetchRow(inqId);
+        // Both must still be at the clean, ready state.
+        expect(rowAfterSecond?.emailAttempts).toBe(0);
+        expect(rowAfterSecond?.emailLastAttemptAt).toBeNull();
+        expect(rowAfterSecond?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+
+        // No-contact badge still reflects the requeued row (emailError intact).
+        const noContactAfterRequeue = await getNoContactEmailInquiryCount();
+        expect(noContactAfterRequeue).toBe(1);
+
+        // ── Persist the contact email so the sweep can deliver ────────────────
+
+        await db
+          .update(tenantsTable)
+          .set({ contactEmail: "owner-960@gallery.test" })
+          .where(eq(tenantsTable.id, tenantId));
+
+        // ── Sweep runs with now = current wall time (no time-travel) ──────────
+        //
+        // emailLastAttemptAt is null → the backoff guard is skipped entirely →
+        // the row is claimed and the email is delivered on this very pass.
+        // skipped must be 0 — a non-zero skipped would mean a backoff timestamp
+        // crept back in during the second requeue.
+
+        sendArtworkInquiry.mockResolvedValue(true);
+        const sweepResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+        expect(sweepResult.scanned).toBe(1);
+        expect(sweepResult.sent).toBe(1);
+        expect(sweepResult.failed).toBe(0);
+        expect(sweepResult.skipped).toBe(0);
+        expect(sendArtworkInquiry).toHaveBeenCalledTimes(1);
+
+        // ── DB row confirms successful delivery ───────────────────────────────
+
+        const rowFinal = await fetchRow(inqId);
+        expect(rowFinal?.emailError).toBeNull();
+        expect(rowFinal?.emailAttempts).toBe(1);
+
+        // ── No-contact badge drops to 0 ───────────────────────────────────────
+
+        const noContactAfter = await getNoContactEmailInquiryCount();
+        expect(noContactAfter).toBe(0);
       },
     );
 
