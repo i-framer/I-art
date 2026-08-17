@@ -26,6 +26,7 @@
  *  19. Requeue only resets inquiries with the exact 'no gallery contact email' error, not other failed inquiries.
  *  20. Requeue is isolated to the restoring tenant — a concurrent restore from
  *      a different tenant must not reset the other tenant's inquiries.
+ *  21. Requeue resets ALL exhausted inquiries for the tenant, not just the first.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -853,5 +854,57 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(afterB?.emailError).toBe("no gallery contact email");
     // emailLastAttemptAt was set during insert — must still be non-null.
     expect(afterB?.emailLastAttemptAt).not.toBeNull();
+  });
+
+  it("requeue resets ALL exhausted inquiries for the tenant, not just the first", async () => {
+    // Arrange: tenant starts without a contactEmail so multiple inquiries have
+    // accumulated in the exhausted state.  requeueNoContactEmailInquiries uses a
+    // bulk UPDATE with no LIMIT clause — this test guards against a regression
+    // where a LIMIT 1 (or findFirst + single-row update) would leave the second
+    // and third inquiries permanently stuck.
+    const { tenantId } = await createTenant("Gallery With Multiple Exhausted Inquiries");
+    await db.update(tenantsTable).set({ contactEmail: null } as any).where(eq(tenantsTable.id, tenantId));
+
+    const artworkId = await createArtwork(tenantId);
+
+    // Create three independent exhausted inquiries for the same tenant.
+    const inquiryId1 = await createExhaustedNoEmailInquiry(tenantId, artworkId);
+    const inquiryId2 = await createExhaustedNoEmailInquiry(tenantId, artworkId);
+    const inquiryId3 = await createExhaustedNoEmailInquiry(tenantId, artworkId);
+
+    // Verify all three start out exhausted before the restore.
+    const [before1, before2, before3] = await Promise.all([
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryId1) }),
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryId2) }),
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryId3) }),
+    ]);
+    expect(before1?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(before2?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(before3?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+
+    // Act: gallery owner restores the contact email through the settings route.
+    await updateTenantSettings(fd({
+      businessName: "Gallery With Multiple Exhausted Inquiries",
+      contactEmail: "gallery@example.com",
+      themeColor: "", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: every inquiry must have been reset — not just the first one.
+    const [after1, after2, after3] = await Promise.all([
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryId1) }),
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryId2) }),
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryId3) }),
+    ]);
+
+    for (const [label, row] of [
+      ["inquiry 1", after1],
+      ["inquiry 2", after2],
+      ["inquiry 3", after3],
+    ] as const) {
+      expect(row?.emailAttempts, `${label}: emailAttempts`).toBe(0);
+      expect(row?.emailLastAttemptAt, `${label}: emailLastAttemptAt`).toBeNull();
+      // emailError is preserved so the sweep knows this is a retry attempt.
+      expect(row?.emailError, `${label}: emailError`).toBe("no gallery contact email");
+    }
   });
 });
