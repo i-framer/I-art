@@ -10,7 +10,10 @@ import {
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { getSession, generateToken } from "@/lib/auth";
-import { requeueNoContactEmailInquiries } from "@/lib/email-sweep";
+import {
+  requeueNoContactEmailInquiries,
+  requeueAllFailedInquiries,
+} from "@/lib/email-sweep";
 
 const settingsSchema = z.object({
   businessName: z.string().min(2),
@@ -66,6 +69,37 @@ export async function updateTenantSettings(formData: FormData) {
   }
 
   redirect("/settings?saved=1");
+}
+
+// ---------------------------------------------------------------------------
+// Retry failed inquiry notifications
+// ---------------------------------------------------------------------------
+
+/**
+ * Resets ALL inquiries for the authenticated tenant that have a non-null
+ * emailError, re-enqueuing them for the next sweep cycle.  Redirects to
+ * /settings?retry_result=<count> on success, or ?retry_result=error on
+ * failure.
+ *
+ * Authentication: session.tenantId is used as the scope — this action can
+ * never touch another tenant's rows.
+ */
+export async function retryFailedInquiryNotifications() {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  let retried = 0;
+  try {
+    retried = await requeueAllFailedInquiries(session.tenantId);
+  } catch (err) {
+    console.error(
+      `Settings: failed to retry inquiry notifications for tenant ${session.tenantId}:`,
+      (err as any)?.message ?? String(err),
+    );
+    redirect("/settings?retry_result=error");
+  }
+
+  redirect(`/settings?retry_result=${retried}`);
 }
 
 // ---------------------------------------------------------------------------

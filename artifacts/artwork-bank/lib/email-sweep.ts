@@ -467,6 +467,47 @@ export async function requeueNoContactEmailInquiries(
       ),
     );
 }
+
+/**
+ * Explicit "retry all failed notifications" escape hatch for gallery owners.
+ *
+ * Resets emailAttempts to 0 and emailLastAttemptAt to null for ALL inquiries
+ * belonging to the tenant that have a non-null emailError — regardless of the
+ * error type or current attempt count.  emailError is deliberately preserved
+ * so the sweep can distinguish retries from fresh inquiries via the existing
+ * `emailError IS NOT NULL` candidate filter.
+ *
+ * Unlike requeueNoContactEmailInquiries (which is scoped to the
+ * "no gallery contact email" sentinel and fires automatically on contact-email
+ * save), this function is intentionally manual — it is triggered by the gallery
+ * owner via the settings page after they have resolved the underlying issue
+ * (e.g. updated their contact email or confirmed the buyer's address).
+ *
+ * The reset is safe to call multiple times: a row with emailAttempts already
+ * at 0 is re-set to 0 (no-op in practice).
+ *
+ * @param tenantId  The tenant whose failed inquiry notifications should be
+ *                  re-enqueued.
+ * @returns         The number of inquiry rows that were reset.
+ */
+export async function requeueAllFailedInquiries(
+  tenantId: string,
+): Promise<number> {
+  const rows = await db
+    .update(inquiriesTable)
+    .set({
+      emailAttempts: 0,
+      emailLastAttemptAt: null,
+    })
+    .where(
+      and(
+        eq(inquiriesTable.tenantId, tenantId),
+        isNotNull(inquiriesTable.emailError),
+      ),
+    )
+    .returning({ id: inquiriesTable.id });
+  return rows.length;
+}
 /**
  * Find inquiries whose notification email to the gallery was never delivered
  * (emailError IS NOT NULL) and retry sending with exponential back-off.

@@ -4,13 +4,14 @@ import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { db } from "@workspace/db";
 import { tenantsTable, inquiriesTable } from "@workspace/db";
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, isNotNull } from "drizzle-orm";
 import { NO_CONTACT_EMAIL_ERROR } from "@/lib/email-sweep";
 import {
   updateTenantSettings,
   startStripeOnboarding,
   verifyCustomDomain,
   removeCustomDomain,
+  retryFailedInquiryNotifications,
 } from "./actions";
 import {
   Users,
@@ -33,7 +34,7 @@ export const metadata: Metadata = { title: "Settings" };
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ saved?: string; stripe?: string; domain_status?: string; }>;
+  searchParams: Promise<{ saved?: string; stripe?: string; domain_status?: string; retry_result?: string; }>;
 }) {
   const session = await getSession();
   if (!session.userId) redirect("/login");
@@ -43,7 +44,7 @@ export default async function SettingsPage({
   });
   if (!tenant) redirect("/login");
 
-  const { saved, stripe, domain_status } = await searchParams;
+  const { saved, stripe, domain_status, retry_result } = await searchParams;
 
   // When Stripe sends the user back via the refresh_url (onboarding link
   // expired), immediately re-launch onboarding so the user lands on a fresh
@@ -71,15 +72,31 @@ export default async function SettingsPage({
 
   // Count inquiries stalled on "no gallery contact email" so the UI can warn
   // the gallery owner before they save an empty contact email field.
-  const [{ value: pendingNoContactInquiries }] = await db
-    .select({ value: count() })
-    .from(inquiriesTable)
-    .where(
-      and(
-        eq(inquiriesTable.tenantId, session.tenantId),
-        eq(inquiriesTable.emailError, NO_CONTACT_EMAIL_ERROR),
+  // Also count ALL inquiries with any delivery error so the retry panel can
+  // show the gallery owner how many are stuck.
+  const [
+    [{ value: pendingNoContactInquiries }],
+    [{ value: failedInquiriesCount }],
+  ] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(inquiriesTable)
+      .where(
+        and(
+          eq(inquiriesTable.tenantId, session.tenantId),
+          eq(inquiriesTable.emailError, NO_CONTACT_EMAIL_ERROR),
+        ),
       ),
-    );
+    db
+      .select({ value: count() })
+      .from(inquiriesTable)
+      .where(
+        and(
+          eq(inquiriesTable.tenantId, session.tenantId),
+          isNotNull(inquiriesTable.emailError),
+        ),
+      ),
+  ]);
 
   const platformFeePercent = process.env.PLATFORM_FEE_PERCENT ?? "5";
   const cnameTarget = getCnameTarget();
@@ -121,6 +138,18 @@ export default async function SettingsPage({
       {saved && (
         <div className="mb-6 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-700">
           Settings saved successfully.
+        </div>
+      )}
+      {retry_result && retry_result !== "error" && (
+        <div className="mb-6 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-700">
+          {Number(retry_result) === 0
+            ? "No stuck notifications found — nothing to retry."
+            : `${Number(retry_result)} notification${Number(retry_result) === 1 ? "" : "s"} re-queued for delivery.`}
+        </div>
+      )}
+      {retry_result === "error" && (
+        <div className="mb-6 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          Failed to retry notifications — please try again. If the problem persists, contact support.
         </div>
       )}
       {stripe === "connected" && (
@@ -280,6 +309,34 @@ export default async function SettingsPage({
           Save changes
         </button>
       </form>
+
+      {/* ── Retry failed inquiry notifications ────────────────────────────── */}
+      {failedInquiriesCount > 0 && (
+        <div className="mt-8 rounded-xl border border-amber-200 bg-amber-50 p-6 space-y-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <h2 className="text-sm font-semibold text-amber-900">
+                {failedInquiriesCount} stuck inquiry notification{failedInquiriesCount === 1 ? "" : "s"}
+              </h2>
+              <p className="mt-1 text-sm text-amber-800">
+                {failedInquiriesCount === 1
+                  ? "1 inquiry notification couldn't be delivered and has exhausted automatic retries."
+                  : `${failedInquiriesCount} inquiry notifications couldn't be delivered and have exhausted automatic retries.`}{" "}
+                If you&apos;ve updated your contact email or resolved the delivery issue, you can retry them now.
+              </p>
+            </div>
+          </div>
+          <form action={retryFailedInquiryNotifications}>
+            <button
+              type="submit"
+              className="rounded-lg border border-amber-400 bg-white px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 transition-colors"
+            >
+              Retry {failedInquiriesCount} failed notification{failedInquiriesCount === 1 ? "" : "s"}
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* ── Custom Domain ─────────────────────────────────────────────────── */}
       <div className="mt-8 rounded-xl border border-stone-200 bg-white p-6 space-y-5">
