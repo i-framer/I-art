@@ -27,6 +27,8 @@
  *  20. Requeue is isolated to the restoring tenant — a concurrent restore from
  *      a different tenant must not reset the other tenant's inquiries.
  *  21. Requeue resets ALL exhausted inquiries for the tenant, not just the first.
+ *  22. Changing contactEmail from one non-null value to another also requeues
+ *      exhausted no-contact-email inquiries (non-null → different non-null path).
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -906,5 +908,56 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
       // emailError is preserved so the sweep knows this is a retry attempt.
       expect(row?.emailError, `${label}: emailError`).toBe("no gallery contact email");
     }
+  });
+
+  it("changing contactEmail from one non-null value to another also requeues exhausted no-contact-email inquiries (non-null → different non-null)", async () => {
+    // Arrange: tenant already has a contactEmail set ("original@test.com" from
+    // createTenant).  This is the non-null → different non-null path that the
+    // guard `if (parsed.data.contactEmail)` covers, but that had no dedicated
+    // test.  A future refactor changing the guard to "email was previously null"
+    // would silently break this case and leave stuck inquiries undelivered even
+    // though the gallery has a valid address.
+    const { tenantId } = await createTenant("Gallery With Existing Email");
+
+    // Confirm the tenant starts with a non-null contactEmail.
+    const initialRow = await tenantRow(tenantId);
+    expect(initialRow?.contactEmail).toBe("original@test.com");
+
+    // Plant an exhausted "no gallery contact email" inquiry.  In practice this
+    // represents a notification that got stuck before the email address was set,
+    // or one that was filed in an unusual state.  Either way, saving any non-null
+    // contactEmail should reset it so the sweep can re-deliver it.
+    const artworkId = await createArtwork(tenantId);
+    const inquiryId = await createExhaustedNoEmailInquiry(tenantId, artworkId);
+
+    // Verify the inquiry is exhausted before the update.
+    const exhaustedRow = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, inquiryId),
+    });
+    expect(exhaustedRow?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(exhaustedRow?.emailLastAttemptAt).not.toBeNull();
+
+    // Act: submit a *different* non-null contactEmail — non-null → different non-null.
+    await updateTenantSettings(fd({
+      businessName: "Gallery With Existing Email",
+      contactEmail: "updated@gallery.test",   // ← changed, not cleared or first-set
+      themeColor: "", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: the new contactEmail must be persisted.
+    const updatedRow = await tenantRow(tenantId);
+    expect(updatedRow?.contactEmail).toBe("updated@gallery.test");
+
+    // Assert: the exhausted inquiry must have been reset so the sweep can
+    // re-select and deliver it.
+    const requeuedRow = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, inquiryId),
+    });
+    // emailAttempts reset to 0 so the row re-enters the sweep candidate set.
+    expect(requeuedRow?.emailAttempts).toBe(0);
+    // emailError is kept non-null so the sweep knows this is a retry.
+    expect(requeuedRow?.emailError).toBe("no gallery contact email");
+    // emailLastAttemptAt cleared so no backoff delay applies.
+    expect(requeuedRow?.emailLastAttemptAt).toBeNull();
   });
 });
