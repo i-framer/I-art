@@ -276,6 +276,43 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(cleared?.themeColor).toBeNull();
   });
 
+  it("setting themeColor to a new value after clearing it persists correctly (null → non-null round-trip)", async () => {
+    // Arrange: start with a non-empty themeColor.
+    const { tenantId } = await createTenant();
+
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "#FF5733", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const withColor = await tenantRow(tenantId);
+    expect(withColor?.themeColor).toBe("#FF5733");
+
+    // Act: clear the themeColor (stores null).
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "",   // ← deliberate clear
+      aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const cleared = await tenantRow(tenantId);
+    expect(cleared?.themeColor).toBeNull();
+
+    // Act: set a different themeColor after the clear (null → non-null).
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "#1A2B3C",   // ← new value
+      aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: the DB row must have the new color, not null.
+    const withNewColor = await tenantRow(tenantId);
+    expect(withNewColor?.themeColor).toBe("#1A2B3C");
+  });
+
   it("aboutText update persists", async () => {
     const { tenantId } = await createTenant();
 
