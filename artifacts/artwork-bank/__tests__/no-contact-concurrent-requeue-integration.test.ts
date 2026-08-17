@@ -218,8 +218,6 @@ describeIntegration(
         expect(rowBefore?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
 
         const noContactBefore = await getNoContactEmailInquiryCount();
-
-        const _rowAfterFirst = await fetchRow(inqId);
         expect(noContactBefore).toBe(1);
 
         // ── Simulate the concurrent sweep's snapshot ──────────────────────────

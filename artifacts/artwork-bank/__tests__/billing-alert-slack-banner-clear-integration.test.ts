@@ -139,10 +139,15 @@ describeIntegration(
           slackPostFailed: new Date(Date.now() - 90_000),
         });
 
-        // First call succeeds, second fails.
-        sendBillingAlertSlackNotificationMock
-          .mockResolvedValueOnce({ ok: true })
-          .mockResolvedValueOnce({ ok: false });
+        // Succeed for successId's event, fail for failId's — order-independent.
+        // The hoisted vi.fn() infers a zero-parameter signature so we cast to
+        // bypass the TS2345 error; the runtime payload always carries stripeEventId.
+        (sendBillingAlertSlackNotificationMock as ReturnType<typeof vi.fn>).mockImplementation(
+          async (payload: { stripeEventId: string }) =>
+            payload.stripeEventId === `evt-${successId}`
+              ? { ok: true }
+              : { ok: false },
+        );
 
         const result = await replayFailedSlackAlerts();
 

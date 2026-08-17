@@ -16,7 +16,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // ── DB mock ───────────────────────────────────────────────────────────────────
 const mockSelect = vi.hoisted(() => vi.fn());
 const mockUpdate = vi.hoisted(() => vi.fn());
-const mockWhere = vi.hoisted(() => vi.fn());
+// SELECT chain ends at .orderBy(); UPDATE chain ends at .where()
+const mockSelectWhere = vi.hoisted(() => vi.fn());
+const mockUpdateWhere = vi.hoisted(() => vi.fn());
+const mockOrderBy = vi.hoisted(() => vi.fn());
 const mockSet = vi.hoisted(() => vi.fn());
 const mockFrom = vi.hoisted(() => vi.fn());
 
@@ -25,15 +28,18 @@ vi.mock("@workspace/db", () => {
     slackPostFailed: "slack_post_failed",
     dismissedAt: "dismissed_at",
     id: "id",
+    createdAt: "created_at",
   };
 
-  // select().from().where() chain
-  mockFrom.mockReturnValue({ where: mockWhere });
+  // select().from().where().orderBy() chain
+  mockOrderBy.mockResolvedValue([]);
+  mockSelectWhere.mockReturnValue({ orderBy: mockOrderBy });
+  mockFrom.mockReturnValue({ where: mockSelectWhere });
   mockSelect.mockReturnValue({ from: mockFrom });
 
   // update().set().where()
-  mockWhere.mockResolvedValue([]);
-  mockSet.mockReturnValue({ where: mockWhere });
+  mockUpdateWhere.mockResolvedValue([]);
+  mockSet.mockReturnValue({ where: mockUpdateWhere });
   mockUpdate.mockReturnValue({ set: mockSet });
 
   return {
@@ -48,6 +54,7 @@ vi.mock("@workspace/db", () => {
 // ── Drizzle operator mocks ────────────────────────────────────────────────────
 vi.mock("drizzle-orm", () => ({
   and: (...args: unknown[]) => ({ _and: args }),
+  asc: (col: unknown) => ({ _asc: col }),
   eq: (col: unknown, val: unknown) => ({ _eq: [col, val] }),
   isNotNull: (col: unknown) => ({ _isNotNull: col }),
   isNull: (col: unknown) => ({ _isNull: col }),
@@ -105,12 +112,15 @@ const ORIGINAL_ENV = process.env.PLATFORM_ADMIN_EMAILS;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Reset the select/from/where chain defaults
-  mockFrom.mockReturnValue({ where: mockWhere });
+  // Reset select chain: select().from().where().orderBy()
+  mockOrderBy.mockResolvedValue([]);
+  mockSelectWhere.mockReturnValue({ orderBy: mockOrderBy });
+  mockFrom.mockReturnValue({ where: mockSelectWhere });
   mockSelect.mockReturnValue({ from: mockFrom });
-  mockSet.mockReturnValue({ where: mockWhere });
+  // Reset update chain: update().set().where()
+  mockUpdateWhere.mockResolvedValue([]);
+  mockSet.mockReturnValue({ where: mockUpdateWhere });
   mockUpdate.mockReturnValue({ set: mockSet });
-  mockWhere.mockResolvedValue([]);
   // Default: channel is configured for every event type
   mockResolveSlackChannel.mockReturnValue("#billing-alerts");
 });
@@ -155,9 +165,8 @@ describe("replayFailedSlackAlerts — successful replay", () => {
   it("calls sendBillingAlertSlackNotification for each pending alert", async () => {
     setPlatformAdmin();
     const alerts = [makeAlert({ id: "a1", stripeEventId: "evt_a1" }), makeAlert({ id: "a2", stripeEventId: "evt_a2" })];
-    mockWhere
-      .mockResolvedValueOnce(alerts) // SELECT query
-      .mockResolvedValue([]); // UPDATE queries
+    mockOrderBy.mockResolvedValueOnce(alerts); // SELECT query
+    // UPDATE queries default to [] via mockUpdateWhere default
 
     mockSendBillingAlertSlackNotification.mockResolvedValue({ ok: true });
 
@@ -175,9 +184,7 @@ describe("replayFailedSlackAlerts — successful replay", () => {
       subscriptionId: null,
       reason: "Customer not found",
     });
-    mockWhere
-      .mockResolvedValueOnce([alert])
-      .mockResolvedValue([]);
+    mockOrderBy.mockResolvedValueOnce([alert]); // SELECT
     mockSendBillingAlertSlackNotification.mockResolvedValue({ ok: true });
 
     await replayFailedSlackAlerts();
@@ -194,9 +201,7 @@ describe("replayFailedSlackAlerts — successful replay", () => {
   it("clears slackPostFailed on successful replay", async () => {
     setPlatformAdmin();
     const alert = makeAlert({ id: "a1" });
-    mockWhere
-      .mockResolvedValueOnce([alert])
-      .mockResolvedValue([]);
+    mockOrderBy.mockResolvedValueOnce([alert]); // SELECT
     mockSendBillingAlertSlackNotification.mockResolvedValue({ ok: true });
 
     await replayFailedSlackAlerts();
@@ -214,9 +219,7 @@ describe("replayFailedSlackAlerts — partial failure", () => {
       makeAlert({ id: "ok-1", stripeEventId: "evt_ok" }),
       makeAlert({ id: "fail-1", stripeEventId: "evt_fail" }),
     ];
-    mockWhere
-      .mockResolvedValueOnce(alerts)
-      .mockResolvedValue([]);
+    mockOrderBy.mockResolvedValueOnce(alerts); // SELECT
     mockSendBillingAlertSlackNotification
       .mockResolvedValueOnce({ ok: true })
       .mockResolvedValueOnce({ ok: false, error: "channel_not_found" });
@@ -239,7 +242,7 @@ describe("replayFailedSlackAlerts — partial failure", () => {
   it("tolerates SDK errors during replay without throwing", async () => {
     setPlatformAdmin();
     const alert = makeAlert();
-    mockWhere.mockResolvedValueOnce([alert]);
+    mockOrderBy.mockResolvedValueOnce([alert]); // SELECT
     mockSendBillingAlertSlackNotification.mockRejectedValueOnce(
       new Error("connector not configured"),
     );
@@ -257,7 +260,7 @@ describe("replayFailedSlackAlerts — Slack not configured", () => {
       makeAlert({ id: "a2" }),
       makeAlert({ id: "a3" }),
     ];
-    mockWhere.mockResolvedValueOnce(alerts);
+    mockOrderBy.mockResolvedValueOnce(alerts); // SELECT
     // No channel configured for any event type
     mockResolveSlackChannel.mockReturnValue(undefined);
 
@@ -276,9 +279,7 @@ describe("replayFailedSlackAlerts — Slack not configured", () => {
       makeAlert({ id: "no-ch", eventType: "invoice.payment_failed" }),
       makeAlert({ id: "has-ch", eventType: "customer.subscription.updated" }),
     ];
-    mockWhere
-      .mockResolvedValueOnce(alerts) // SELECT
-      .mockResolvedValue([]); // UPDATE
+    mockOrderBy.mockResolvedValueOnce(alerts); // SELECT
     // Only the subscription event type has a channel
     mockResolveSlackChannel.mockImplementation((eventType: string) =>
       eventType === "customer.subscription.updated" ? "#billing-alerts" : undefined,
@@ -299,9 +300,8 @@ describe("replayFailedSlackAlerts — DB flag-clear failure tolerated", () => {
   it("still counts as replayed when the DB update throws after a successful Slack post", async () => {
     setPlatformAdmin();
     const alert = makeAlert();
-    mockWhere
-      .mockResolvedValueOnce([alert]) // SELECT
-      .mockRejectedValueOnce(new Error("DB connection lost")); // UPDATE
+    mockOrderBy.mockResolvedValueOnce([alert]); // SELECT
+    mockUpdateWhere.mockRejectedValueOnce(new Error("DB connection lost")); // UPDATE
 
     mockSendBillingAlertSlackNotification.mockResolvedValue({ ok: true });
 

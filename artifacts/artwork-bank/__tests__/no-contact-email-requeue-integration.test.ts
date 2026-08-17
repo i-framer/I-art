@@ -72,6 +72,7 @@ import {
   requeueNoContactEmailInquiries,
   sweepUnsentInquiryEmails,
   NO_CONTACT_EMAIL_ERROR,
+  MAX_EMAIL_ATTEMPTS,
 } from "@/lib/email-sweep";
 import { getNoContactEmailInquiryCount } from "@/app/(admin)/_actions/inquiry-count";
 
@@ -350,6 +351,98 @@ describeIntegration(
         // After sweep: emailError cleared for both rows — count drops to 0.
         const countAfterSweep = await getNoContactEmailInquiryCount();
         expect(countAfterSweep).toBe(0);
+      },
+    );
+
+    it(
+      "requeueNoContactEmailInquiries resets an exhausted row (emailAttempts=MAX) to 0 and clears backoff",
+      async () => {
+        const tenantId = await createTenant();
+        const artworkId = await createArtwork(tenantId);
+        // Seed at exactly MAX_EMAIL_ATTEMPTS — the sweep candidate query
+        // (lt emailAttempts MAX) normally excludes this row entirely.
+        const inquiryId = await createStuckInquiry(
+          tenantId,
+          artworkId,
+          MAX_EMAIL_ATTEMPTS,
+        );
+
+        // Pre-condition: row is fully exhausted.
+        const before = await db.query.inquiriesTable.findFirst({
+          where: eq(inquiriesTable.id, inquiryId),
+        });
+        expect(before?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+        expect(before?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+        expect(before?.emailLastAttemptAt).not.toBeNull();
+
+        await requeueNoContactEmailInquiries(tenantId);
+
+        const after = await db.query.inquiriesTable.findFirst({
+          where: eq(inquiriesTable.id, inquiryId),
+        });
+        // Must be reset so the sweep candidate query (lt MAX) picks it up again.
+        expect(after?.emailAttempts).toBe(0);
+        // Backoff cleared — no delay before the next sweep attempt.
+        expect(after?.emailLastAttemptAt).toBeNull();
+        // emailError left intact so the sweep still selects the row.
+        expect(after?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+      },
+    );
+
+    it(
+      "sweep delivers an exhausted-then-requeued inquiry (emailAttempts was MAX) immediately; sent=1, skipped=0",
+      async () => {
+        // Gallery has a contact email so the sweep can deliver the notification.
+        const tenantId = await createTenant({
+          contactEmail: "owner@gallery.test",
+        });
+        const artworkId = await createArtwork(tenantId);
+
+        // Seed a fully-exhausted inquiry — emailAttempts=MAX_EMAIL_ATTEMPTS,
+        // emailLastAttemptAt is recent (would normally enforce a long backoff).
+        const inquiryId = await createStuckInquiry(
+          tenantId,
+          artworkId,
+          MAX_EMAIL_ATTEMPTS,
+        );
+
+        // Step 1 — requeue resets the exhausted row.
+        await requeueNoContactEmailInquiries(tenantId);
+
+        const afterRequeue = await db.query.inquiriesTable.findFirst({
+          where: eq(inquiriesTable.id, inquiryId),
+        });
+        expect(afterRequeue?.emailAttempts).toBe(0);
+        expect(afterRequeue?.emailLastAttemptAt).toBeNull();
+        expect(afterRequeue?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+
+        // Step 2 — sweep runs; email transport succeeds.
+        sendArtworkInquiry.mockResolvedValue(true);
+
+        const result = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+        // The requeued row must be delivered, not skipped.
+        expect(result.sent).toBe(1);
+        expect(result.skipped).toBe(0);
+        expect(result.failed).toBe(0);
+        expect(sendArtworkInquiry).toHaveBeenCalledOnce();
+        expect(sendArtworkInquiry).toHaveBeenCalledWith(
+          expect.objectContaining({
+            galleryEmail: "owner@gallery.test",
+            buyerEmail: "buyer@example.com",
+            artworkTitle: "Test Artwork",
+          }),
+        );
+
+        // Step 3 — emailError cleared on successful delivery.
+        const afterSweep = await db.query.inquiriesTable.findFirst({
+          where: eq(inquiriesTable.id, inquiryId),
+        });
+        expect(afterSweep?.emailError).toBeNull();
+
+        // Step 4 — badge count drops to 0.
+        const count = await getNoContactEmailInquiryCount();
+        expect(count).toBe(0);
       },
     );
 

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
 import { db, tenantsTable, stripeAlertsTable } from "@workspace/db";
 import { getSession } from "@/lib/auth";
 import { requirePlatformAdmin } from "@/lib/platform-admin";
@@ -369,7 +369,8 @@ export async function replayFailedSlackAlerts(): Promise<{
         isNotNull(stripeAlertsTable.slackPostFailed),
         isNull(stripeAlertsTable.dismissedAt),
       ),
-    );
+    )
+    .orderBy(asc(stripeAlertsTable.createdAt), asc(stripeAlertsTable.id));
 
   let replayed = 0;
   let failed = 0;
