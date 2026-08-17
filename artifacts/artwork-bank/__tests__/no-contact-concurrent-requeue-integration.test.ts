@@ -123,6 +123,7 @@ async function insertNoContactInquiry(
   tenantId: string,
   artworkId: string,
   emailAttempts: number,
+  emailLastAttemptAt: Date | null = new Date("2024-06-01T10:00:00Z"),
 ): Promise<void> {
   CREATED_INQUIRY_IDS.push(id);
   await db.insert(inquiriesTable).values({
@@ -135,7 +136,7 @@ async function insertNoContactInquiry(
     message: "Interested in purchasing.",
     emailError: NO_CONTACT_EMAIL_ERROR,
     emailAttempts,
-    emailLastAttemptAt: new Date("2024-06-01T10:00:00Z"),
+    emailLastAttemptAt,
     status: "NEW",
   } as any);
 }
@@ -470,6 +471,95 @@ describeIntegration(
         sendArtworkInquiry.mockResolvedValue(true);
         const sweepResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
         expect(sweepResult.sent).toBe(1);
+      },
+    );
+
+    /**
+     * Task #953 — Confirm that requeueNoContactEmailInquiries clears the
+     * backoff window so the freshly-requeued row is selected on the very next
+     * sweep pass without any time-travel.
+     *
+     * Scenario:
+     *  1. Seed an inquiry at emailAttempts=2 with emailLastAttemptAt set to
+     *     "just now" — well inside the 10-minute backoff window for 2 attempts.
+     *     Without the null-reset the sweep would skip the row.
+     *  2. Gallery owner adds a contact email → requeueNoContactEmailInquiries
+     *     resets emailAttempts→0 AND emailLastAttemptAt→null.
+     *  3. sweepUnsentInquiryEmails is called with now = new Date() (no time-
+     *     travel).  The null emailLastAttemptAt causes the backoff guard to be
+     *     skipped entirely, so the row is claimed and the email is sent
+     *     immediately.
+     */
+    it(
+      "requeue clears backoff window; sweep sends the email immediately without time-travel (Task #953)",
+      async () => {
+        const tenantId = makeId("tenant-953");
+        // Start with NO contact email — the inquiry will have NO_CONTACT_EMAIL_ERROR.
+        await insertTenant(tenantId);
+
+        const artworkId = makeId("artwork-953");
+        await insertArtwork(artworkId, tenantId);
+
+        const inqId = makeId("inq-953");
+
+        // Seed the inquiry at emailAttempts=2 with emailLastAttemptAt set to
+        // "just now" so the row is firmly inside the backoff window for
+        // 2 prior attempts (backoff = 10 minutes).  Without the null-reset
+        // the sweep would skip this row on the next pass.
+        const recentAttemptAt = new Date();
+        await insertNoContactInquiry(inqId, tenantId, artworkId, 2, recentAttemptAt);
+
+        mockSession.tenantId = tenantId;
+
+        // ── Pre-condition: the row is inside the backoff window ───────────────
+
+        const rowBefore = await fetchRow(inqId);
+        expect(rowBefore?.emailAttempts).toBe(2);
+        expect(rowBefore?.emailLastAttemptAt).not.toBeNull();
+        expect(rowBefore?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+
+        // ── Gallery owner saves their contact email → requeue fires ───────────
+
+        await requeueNoContactEmailInquiries(tenantId);
+
+        const rowAfterRequeue = await fetchRow(inqId);
+        // emailAttempts and emailLastAttemptAt are both reset.
+        expect(rowAfterRequeue?.emailAttempts).toBe(0);
+        expect(rowAfterRequeue?.emailLastAttemptAt).toBeNull();
+        // emailError is preserved so the sweep candidate query still selects it.
+        expect(rowAfterRequeue?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+
+        // ── Persist the contact email so the sweep can deliver ────────────────
+
+        await db
+          .update(tenantsTable)
+          .set({ contactEmail: "owner-953@gallery.test" })
+          .where(eq(tenantsTable.id, tenantId));
+
+        // ── Sweep runs with now = current wall time (no time-travel) ─────────
+        //
+        // emailLastAttemptAt is null → the backoff guard is skipped entirely →
+        // the row is claimed and the email is delivered on this very pass.
+
+        sendArtworkInquiry.mockResolvedValue(true);
+        const sweepResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+        expect(sweepResult.scanned).toBe(1);
+        expect(sweepResult.sent).toBe(1);
+        expect(sweepResult.failed).toBe(0);
+        expect(sweepResult.skipped).toBe(0);
+        expect(sendArtworkInquiry).toHaveBeenCalledTimes(1);
+
+        // ── DB row confirms successful delivery ───────────────────────────────
+
+        const rowFinal = await fetchRow(inqId);
+        expect(rowFinal?.emailError).toBeNull();
+        expect(rowFinal?.emailAttempts).toBe(1);
+
+        // ── No-contact banner drops to 0 ──────────────────────────────────────
+
+        const noContactAfter = await getNoContactEmailInquiryCount();
+        expect(noContactAfter).toBe(0);
       },
     );
   },
