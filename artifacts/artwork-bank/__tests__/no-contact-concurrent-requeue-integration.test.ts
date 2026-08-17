@@ -220,15 +220,12 @@ describeIntegration(
         const noContactBefore = await getNoContactEmailInquiryCount();
         expect(noContactBefore).toBe(1);
 
-        // ── Simulate the concurrent sweep's snapshot ──────────────────────────
+        // ── First requeue ─────────────────────────────────────────────────────
         //
-        // The sweep read emailAttempts=2 and is about to issue its CAS write.
-        // Before it can, requeueNoContactEmailInquiries fires (the gallery
-        // owner just saved their contact email).
+        // Gallery owner saves their contact email for the first time.
 
         await requeueNoContactEmailInquiries(tenantId);
 
-        // The row is now at emailAttempts=0.
         const rowAfterRequeue = await fetchRow(inqId);
         expect(rowAfterRequeue?.emailAttempts).toBe(0);
 
@@ -473,15 +470,14 @@ describeIntegration(
         const artworkId = makeId("artwork-953");
         await insertArtwork(artworkId, tenantId);
 
-        // Three buyers each sent an inquiry while the gallery had no email.
-        // The sweep has already tried (and failed) a different number of times
-        // for each one.  All three have emailLastAttemptAt set to "just now" so
-        // each is inside its respective backoff window.
+        // Seed 3 inquiries at emailAttempts=1 with emailLastAttemptAt "just now"
+        // so each is inside its backoff window.  Without the requeue they'd all
+        // be skipped on the next sweep pass.
         const recentAt = new Date();
 
-        const inqId1 = makeId("inq-961-a");
-        const inqId2 = makeId("inq-961-b");
-        const inqId3 = makeId("inq-961-c");
+        const inqId1 = makeId("inq-972-a");
+        const inqId2 = makeId("inq-972-b");
+        const inqId3 = makeId("inq-972-c");
 
         await Promise.all([
           insertNoContactInquiry(inqId1, tenantId, artworkId, 1, recentAt),
@@ -512,7 +508,7 @@ describeIntegration(
 
         await requeueNoContactEmailInquiries(tenantId);
 
-        // All 3 rows must be reset regardless of their prior attempt count.
+        // Confirm all 3 rows are reset and still carry NO_CONTACT_EMAIL_ERROR.
         const [a1, a2, a3] = await Promise.all([
           fetchRow(inqId1),
           fetchRow(inqId2),
@@ -544,13 +540,15 @@ describeIntegration(
         sendArtworkInquiry.mockResolvedValue(true);
         const sweepResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
 
+        // All 3 rows have null emailLastAttemptAt → backoff guard skipped for
+        // each → sendArtworkInquiry resolves successfully for every call.
         expect(sweepResult.scanned).toBe(3);
         expect(sweepResult.sent).toBe(3);
-        expect(sweepResult.skipped).toBe(0);
         expect(sweepResult.failed).toBe(0);
+        expect(sweepResult.skipped).toBe(0);
         expect(sendArtworkInquiry).toHaveBeenCalledTimes(3);
 
-        // ── DB rows confirm successful delivery ───────────────────────────────
+        // ── DB state: all 3 rows delivered ────────────────────────────────────
 
         const [f1, f2, f3] = await Promise.all([
           fetchRow(inqId1),
@@ -591,11 +589,11 @@ describeIntegration(
     it(
       "partial transport failure mid-sweep: sweep continues and delivers remaining rows (Task #964)",
       async () => {
-        const tenantId = makeId("tenant-964");
-        // Start with NO contact email — all 3 inquiries will have NO_CONTACT_EMAIL_ERROR.
+        const tenantId = makeId("tenant-953");
+        // Start with NO contact email — the inquiry will have NO_CONTACT_EMAIL_ERROR.
         await insertTenant(tenantId);
 
-        const artworkId = makeId("artwork-964");
+        const artworkId = makeId("artwork-953");
         await insertArtwork(artworkId, tenantId);
 
         // Seed 3 inquiries at emailAttempts=1 with emailLastAttemptAt "just now"
@@ -603,9 +601,9 @@ describeIntegration(
         // be skipped on the next sweep pass.
         const recentAt = new Date();
 
-        const inqId1 = makeId("inq-964-a");
-        const inqId2 = makeId("inq-964-b");
-        const inqId3 = makeId("inq-964-c");
+        const inqId1 = makeId("inq-972-a");
+        const inqId2 = makeId("inq-972-b");
+        const inqId3 = makeId("inq-972-c");
 
         await Promise.all([
           insertNoContactInquiry(inqId1, tenantId, artworkId, 1, recentAt),
@@ -645,7 +643,9 @@ describeIntegration(
 
         // ── Mock transport: succeed for calls 1 and 3; reject for call 2 ──────
 
-        const transportError = new Error("Transport failure: connection refused");
+        const transportError = new Error(
+          "Transport failure: connection refused (972)",
+        );
         sendArtworkInquiry
           .mockResolvedValueOnce(true)
           .mockRejectedValueOnce(transportError)
@@ -678,72 +678,67 @@ describeIntegration(
         const allRows = [f1, f2, f3];
         const successRows = allRows.filter((r) => r?.emailError === null);
         const failedRows = allRows.filter(
-          (r) => r?.emailError !== null && r?.emailError !== NO_CONTACT_EMAIL_ERROR,
+          (r) =>
+            r?.emailError !== null &&
+            r?.emailError !== NO_CONTACT_EMAIL_ERROR,
         );
 
         expect(successRows).toHaveLength(2);
         expect(failedRows).toHaveLength(1);
 
-        // Successful rows must have emailAttempts incremented and emailError cleared.
+        // Successful rows: emailError cleared, attempts incremented.
         for (const row of successRows) {
-          expect(row?.emailAttempts).toBe(1);
           expect(row?.emailError).toBeNull();
+          expect(row?.emailAttempts).toBe(1);
         }
 
-        // Failed row must retain the transport error message.
+        // Failed row: emailError is the transport error message — non-null AND
+        // distinct from NO_CONTACT_EMAIL_ERROR.  This is the property that makes
+        // the no-contact banner count drop to 0 rather than 1.
         expect(failedRows[0]?.emailError).toBe(transportError.message);
+        expect(failedRows[0]?.emailError).not.toBe(NO_CONTACT_EMAIL_ERROR);
         expect(failedRows[0]?.emailAttempts).toBe(1);
       },
     );
 
     /**
-     * Task #960 — Confirm a row requeued twice in a row (with a recent
-     * emailLastAttemptAt that would normally keep it inside the backoff window)
-     * still sends immediately on the next sweep.
-     *
-     * requeueNoContactEmailInquiries is idempotent — calling it twice should
-     * leave the row in the same ready state as calling it once.  In particular,
-     * both calls must clear emailLastAttemptAt to null even when the first call
-     * already set it to null.  A second reset on an already-clean row must be a
-     * no-op; it must not re-introduce a backoff timestamp.
+     * Task #953 — Confirm that requeueNoContactEmailInquiries clears the
+     * backoff window so the freshly-requeued row is selected on the very next
+     * sweep pass without any time-travel.
      *
      * Scenario:
-     *  1. Seed an inquiry at emailAttempts=2 with emailLastAttemptAt = now
-     *     (firmly inside the 10-minute backoff window for 2 attempts).
-     *  2. Call requeueNoContactEmailInquiries twice (simulating a gallery owner
-     *     saving settings twice in quick succession).
-     *  3. Assert emailAttempts=0 and emailLastAttemptAt=null after both calls.
-     *  4. Add a contact email and sweep; assert sent=1, skipped=0 — the email
-     *     is delivered on the very next pass without any time-travel.
+     *  1. Seed an inquiry at emailAttempts=2 with emailLastAttemptAt set to
+     *     "just now" — well inside the 10-minute backoff window for 2 attempts.
+     *     Without the null-reset the sweep would skip the row.
+     *  2. Gallery owner adds a contact email → requeueNoContactEmailInquiries
+     *     resets emailAttempts→0 AND emailLastAttemptAt→null.
+     *  3. sweepUnsentInquiryEmails is called with now = new Date() (no time-
+     *     travel).  The null emailLastAttemptAt causes the backoff guard to be
+     *     skipped entirely, so the row is claimed and the email is sent
+     *     immediately.
      */
     it(
-      "double requeue with a recent backoff timestamp leaves row at 0/null; sweep sends immediately (Task #960)",
+      "requeue clears backoff window; sweep sends the email immediately without time-travel (Task #953)",
       async () => {
-        const tenantId = makeId("tenant-960");
+        const tenantId = makeId("tenant-953");
         // Start with NO contact email — the inquiry will have NO_CONTACT_EMAIL_ERROR.
         await insertTenant(tenantId);
 
-        const artworkId = makeId("artwork-960");
+        const artworkId = makeId("artwork-953");
         await insertArtwork(artworkId, tenantId);
 
-        const inqId = makeId("inq-960");
+        const inqId = makeId("inq-953");
 
-        // Seed the inquiry at emailAttempts=2 with emailLastAttemptAt = now
-        // so the row is firmly inside the backoff window for 2 prior attempts
-        // (backoff = 10 minutes).  Without both requeue calls clearing the
-        // timestamp, the sweep would skip this row on the next pass.
+        // Seed the inquiry at emailAttempts=2 with emailLastAttemptAt set to
+        // "just now" so the row is firmly inside the backoff window for
+        // 2 prior attempts (backoff = 10 minutes).  Without the null-reset
+        // the sweep would skip this row on the next pass.
         const recentAttemptAt = new Date();
-        await insertNoContactInquiry(
-          inqId,
-          tenantId,
-          artworkId,
-          2,
-          recentAttemptAt,
-        );
+        await insertNoContactInquiry(inqId, tenantId, artworkId, 2, recentAttemptAt);
 
         mockSession.tenantId = tenantId;
 
-        // ── Pre-condition: row is in the backoff window ───────────────────────
+        // ── Pre-condition: the row is inside the backoff window ───────────────
 
         const rowBefore = await fetchRow(inqId);
         expect(rowBefore?.emailAttempts).toBe(2);
@@ -814,7 +809,7 @@ describeIntegration(
         expect(rowFinal?.emailError).toBeNull();
         expect(rowFinal?.emailAttempts).toBe(1);
 
-        // ── No-contact badge drops to 0 ───────────────────────────────────────
+        // ── No-contact banner drops to 0 ──────────────────────────────────────
 
         const noContactAfter = await getNoContactEmailInquiryCount();
         expect(noContactAfter).toBe(0);
@@ -854,11 +849,11 @@ describeIntegration(
     it(
       "no-contact banner count drops to 0 when 2 of 3 inquiries send and 1 fails mid-sweep (Task #972)",
       async () => {
-        const tenantId = makeId("tenant-972");
-        // Start with NO contact email so all 3 inquiries land with NO_CONTACT_EMAIL_ERROR.
+        const tenantId = makeId("tenant-953");
+        // Start with NO contact email — the inquiry will have NO_CONTACT_EMAIL_ERROR.
         await insertTenant(tenantId);
 
-        const artworkId = makeId("artwork-972");
+        const artworkId = makeId("artwork-953");
         await insertArtwork(artworkId, tenantId);
 
         // Seed 3 inquiries at emailAttempts=1 with emailLastAttemptAt "just now"

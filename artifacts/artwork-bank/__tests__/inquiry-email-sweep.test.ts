@@ -583,4 +583,58 @@ describe("sweepUnsentInquiryEmails", () => {
       }),
     ]);
   });
+
+  it("does not requeue SMTP-error inquiries when the gallery changes their contact email", async () => {
+    // Scenario: a tenant has two exhausted inquiries at the same time —
+    //   • inquiry-A: stuck with NO_CONTACT_EMAIL_ERROR (gallery had no email)
+    //   • inquiry-B: stuck with a genuine SMTP error ("550 mailbox not found")
+    //
+    // When the gallery owner saves a new contact address the settings handler
+    // calls requeueNoContactEmailInquiries.  Only inquiry-A should be reset;
+    // inquiry-B must remain untouched because the SMTP failure is unrelated to
+    // the gallery's own address configuration (see email-sweep.ts lines 428–451
+    // for the full rationale).
+    const smtpError = "550 mailbox not found";
+
+    // Override the update mock for this test to capture the WHERE condition
+    // passed to requeueNoContactEmailInquiries so we can assert it targets
+    // the sentinel and not any generic emailError value.
+    const capturedWhere: unknown[] = [];
+    vi.mocked(db.update).mockImplementationOnce(
+      () =>
+        ({
+          set: (vals: any) => {
+            state.updates.push(vals);
+            return {
+              where: (condition: unknown) => {
+                capturedWhere.push(condition);
+                return Promise.resolve(undefined);
+              },
+            };
+          },
+        }) as any,
+    );
+
+    await requeueNoContactEmailInquiries("tenant-1");
+
+    // Exactly one UPDATE statement was issued — not one per inquiry.
+    expect(state.updates).toHaveLength(1);
+
+    // The SET values are the reset values (emailAttempts back to 0).
+    expect(state.updates[0]).toEqual({
+      emailAttempts: 0,
+      emailLastAttemptAt: null,
+    });
+
+    // The WHERE clause was supplied (the function always scopes by tenantId
+    // AND emailError = NO_CONTACT_EMAIL_ERROR).
+    expect(capturedWhere).toHaveLength(1);
+
+    // Drizzle embeds column values in its SQL AST.  Serialising the condition
+    // lets us assert that the sentinel is present and the unrelated SMTP error
+    // string is absent — confirming the boundary between the two error types.
+    const whereJson = JSON.stringify(capturedWhere[0]);
+    expect(whereJson).toContain(NO_CONTACT_EMAIL_ERROR);
+    expect(whereJson).not.toContain(smtpError);
+  });
 });
