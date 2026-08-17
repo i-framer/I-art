@@ -787,6 +787,59 @@ describeIntegration(
       expect(deliveredB?.emailAttempts).toBe(1);
     });
 
+    it("exhausted-mid-sweep: row at MAX_EMAIL_ATTEMPTS is not scanned on the second sweep pass", async () => {
+      // Scenario: during a multi-row sweep one inquiry is driven from
+      // MAX-1 to MAX by a transport failure.  The test verifies that a
+      // subsequent sweep invocation excludes that now-exhausted row entirely —
+      // the candidate query's lt(emailAttempts, MAX) guard must filter it out
+      // before sendArtworkInquiry is ever called again.
+      //
+      // Steps:
+      //  1. Seed the inquiry at emailAttempts = MAX-1 (one attempt away from
+      //     exhaustion) with an SMTP error already recorded.
+      //  2. First sweep: mock sendArtworkInquiry to reject → the sweep bumps
+      //     emailAttempts to MAX and records the new error.
+      //  3. Second sweep: assert scanned=0 and sendArtworkInquiry was never
+      //     called for this inquiry.
+      const tenantId = await createTenant("gallery@test.com");
+      const artworkId = await createArtwork(tenantId);
+      const inquiryId = await createFailedInquiry(tenantId, artworkId, {
+        emailAttempts: MAX_EMAIL_ATTEMPTS - 1,
+        emailError: "smtp timeout",
+        emailLastAttemptAt: null, // no backoff — eligible immediately
+      });
+
+      // First sweep: mock rejects so the sweep bumps emailAttempts to MAX.
+      sendArtworkInquiry.mockRejectedValueOnce(new Error("SMTP server unavailable"));
+      const result1 = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+      // The inquiry was scanned and the send failed — one row processed.
+      expect(result1).toEqual({ scanned: 1, sent: 0, failed: 1, skipped: 0 });
+      expect(sendArtworkInquiry).toHaveBeenCalledTimes(1);
+
+      // Confirm the row is now at MAX_EMAIL_ATTEMPTS in the DB.
+      const afterFirst = await db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, inquiryId),
+      });
+      expect(afterFirst?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(afterFirst?.emailError).toMatch(/SMTP server unavailable/);
+
+      // Second sweep: the exhausted row must not appear in the candidate set.
+      sendArtworkInquiry.mockClear();
+      const result2 = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+      // scanned=0 proves the lt(emailAttempts, MAX) guard excluded the row.
+      expect(result2).toEqual({ scanned: 0, sent: 0, failed: 0, skipped: 0 });
+      expect(sendArtworkInquiry).not.toHaveBeenCalled();
+
+      // Row must remain exactly as the first sweep left it — untouched.
+      const afterSecond = await db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, inquiryId),
+      });
+      expect(afterSecond?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(afterSecond?.emailError).toMatch(/SMTP server unavailable/);
+    });
+
     it("sweep does not re-select exhausted SMTP-error inquiries after a gallery email-A → email-B change", async () => {
       // Arrange: tenant starts with a real contact email (email A).
       // Two inquiries were filed and their delivery attempts exhausted with
