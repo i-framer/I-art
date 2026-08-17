@@ -225,6 +225,44 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(cleared?.location).toBeNull();
   });
 
+  it("setting location to a new value after clearing it persists correctly (null → non-null round-trip)", async () => {
+    // Arrange: start with a non-empty location.
+    const { tenantId } = await createTenant();
+
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "", aboutText: "",
+      location: "Melbourne, VIC",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const withLocation = await tenantRow(tenantId);
+    expect(withLocation?.location).toBe("Melbourne, VIC");
+
+    // Act: clear the location (stores null).
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "", aboutText: "",
+      location: "",           // ← deliberate clear
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const cleared = await tenantRow(tenantId);
+    expect(cleared?.location).toBeNull();
+
+    // Act: set a different location after the clear (null → non-null).
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "", aboutText: "",
+      location: "Brisbane, QLD",   // ← new value
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: the DB row must have the new location, not null.
+    const withNewLocation = await tenantRow(tenantId);
+    expect(withNewLocation?.location).toBe("Brisbane, QLD");
+  });
+
   it("themeColor persists; clearing stores null", async () => {
     const { tenantId } = await createTenant();
 
