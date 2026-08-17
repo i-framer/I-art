@@ -50,9 +50,6 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as emailSweepModule from "@/lib/email-sweep";
 
-// Hoisted so the vi.mock factory below can reference it without a TDZ error.
-const sendArtworkInquirySpy = vi.hoisted(() => vi.fn().mockResolvedValue(true));
-
 const RUN = Date.now();
 let seq = 0;
 const createdTenantIds: string[] = [];
@@ -83,6 +80,10 @@ vi.mock("@/lib/email-sweep", async (importActual) => {
     ),
   };
 });
+
+// Hoisted mock for sendArtworkInquiry — must be declared before vi.mock so the
+// factory closure can reference it.  Default: resolves true (successful send).
+const sendArtworkInquirySpy = vi.hoisted(() => vi.fn(async () => true));
 
 // Stub the email transport so the sweep end-to-end test doesn't hit a real
 // mail server. sendArtworkInquirySpy.mockResolvedValue(true) simulates a
