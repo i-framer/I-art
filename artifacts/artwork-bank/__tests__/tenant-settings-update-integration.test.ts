@@ -8,11 +8,12 @@
  *  1. businessName update persists correctly.
  *  2. contactEmail update persists correctly.
  *  3. location update persists; empty string stores null.
- *  4. themeColor update persists; clearing stores null.
- *  5. aboutText update persists.
- *  6. Clearing an existing aboutText stores null (not empty string).
- *  7. Re-setting aboutText after clearing it persists the new value (null → non-null round-trip).
- *  8. Foreign tenant row is not affected by own session update.
+ *  4. location null → non-null round-trip: re-setting after a clear persists.
+ *  5. themeColor update persists; clearing stores null.
+ *  6. aboutText update persists.
+ *  7. Clearing an existing aboutText stores null (not empty string).
+ *  8. Re-setting aboutText after clearing it persists the new value (null → non-null round-trip).
+ *  9. Foreign tenant row is not affected by own session update.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
