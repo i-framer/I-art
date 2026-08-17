@@ -391,12 +391,17 @@ describeIntegration(
     );
 
     it(
-      "no-contact-email inquiry is NOT re-selected by the sweep after owner retry (different bucket)",
+      "exhausted no-contact inquiry IS reset by owner retry and re-selected by the sweep",
       async () => {
-        // retryFailedInquiryNotifications excludes NO_CONTACT_EMAIL_ERROR rows.
-        // Even if such a row exists for the tenant, the sweep must not touch it
-        // via the SMTP-retry path.
-        const tenantId = await createTenant();
+        // requeueExhaustedInquiries resets ALL exhausted rows whose emailError is
+        // non-null (emailAttempts >= MAX, archivedAt IS NULL) — including rows
+        // with the NO_CONTACT_EMAIL_ERROR sentinel.  This matches the predicate
+        // used by getEmailFailCount so the redirect count equals the banner count.
+        //
+        // After the reset (emailAttempts=0, emailLastAttemptAt=null) the sweep
+        // re-selects the row, finds the tenant has a contact email, and attempts
+        // delivery — exactly the same flow as a genuine SMTP-error retry.
+        const tenantId = await createTenant(); // creates tenant WITH contactEmail
         const artworkId = await createArtwork(tenantId);
         const noContactId = uid("inquiry-nc");
         createdInquiryIds.push(noContactId);
@@ -416,23 +421,24 @@ describeIntegration(
         mockSession.tenantId = tenantId;
         mockSession.role = "owner";
 
-        // retryFailedInquiryNotifications must not reset the no-contact row.
+        // retryFailedInquiryNotifications counts and resets the exhausted
+        // no-contact row (same predicate as getEmailFailCount).
         const redirectError = await retryFailedInquiryNotifications().catch(
           (e) => e,
         );
-        expect(redirectError.message).toBe("REDIRECT:/settings?retry_result=0");
+        expect(redirectError.message).toBe("REDIRECT:/settings?retry_result=1");
 
-        // The no-contact row must remain exhausted and untouched.
+        // Row is now reset — re-enters the sweep candidate set.
         const noContactAfter = await inquiryRow(noContactId);
-        expect(noContactAfter?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
-        expect(noContactAfter?.emailLastAttemptAt).not.toBeNull();
+        expect(noContactAfter?.emailAttempts).toBe(0);
+        expect(noContactAfter?.emailLastAttemptAt).toBeNull();
         expect(noContactAfter?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
 
-        // The sweep must not select the no-contact row either (it is still at
-        // MAX_EMAIL_ATTEMPTS and therefore excluded from the candidate set).
+        // The sweep re-selects the reset row and attempts delivery.
+        // The tenant has a contactEmail so the sweep proceeds to sendArtworkInquiry.
         const sweepResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
-        expect(sweepResult.scanned).toBe(0);
-        expect(sendArtworkInquiry).not.toHaveBeenCalled();
+        expect(sweepResult.scanned).toBeGreaterThanOrEqual(1);
+        expect(sendArtworkInquiry).toHaveBeenCalledOnce();
       },
       20_000,
     );

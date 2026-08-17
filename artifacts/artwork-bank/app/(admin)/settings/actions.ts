@@ -12,7 +12,7 @@ import { z } from "zod";
 import { getSession, generateToken } from "@/lib/auth";
 import {
   requeueNoContactEmailInquiries,
-  retrySmtpErrorInquiries,
+  requeueExhaustedInquiries,
 } from "@/lib/email-sweep";
 
 const settingsSchema = z.object({
@@ -94,7 +94,7 @@ export async function retryFailedInquiryNotifications() {
 
   let retried = 0;
   try {
-    retried = await retrySmtpErrorInquiries(session.tenantId);
+    retried = await requeueExhaustedInquiries(session.tenantId);
   } catch (err) {
     console.error(
       `Settings: failed to retry SMTP-error inquiry notifications for tenant ${session.tenantId}:`,

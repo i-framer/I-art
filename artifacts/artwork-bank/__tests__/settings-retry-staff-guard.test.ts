@@ -10,18 +10,19 @@
  *  1. retryFailedInquiryNotifications → staff session → redirects to
  *     /settings?retry_result=unauthorized without touching the database.
  *  2. retryFailedInquiryNotifications → owner session → proceeds past the
- *     guard and calls retrySmtpErrorInquiries (baseline to confirm the mock
+ *     guard and calls requeueExhaustedInquiries (baseline to confirm the mock
  *     wiring is correct).
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // ── DB mock ────────────────────────────────────────────────────────────────────
-const retrySmtpErrorInquiries = vi.hoisted(() => vi.fn(async () => 3));
+const requeueExhaustedInquiries = vi.hoisted(() => vi.fn(async () => 3));
 
 vi.mock("@/lib/email-sweep", () => ({
-  retrySmtpErrorInquiries,
+  requeueExhaustedInquiries,
   requeueNoContactEmailInquiries: vi.fn(async () => {}),
   NO_CONTACT_EMAIL_ERROR: "no gallery contact email",
+  MAX_EMAIL_ATTEMPTS: 5,
 }));
 
 // ── Session mock ───────────────────────────────────────────────────────────────
@@ -71,10 +72,10 @@ describe("retryFailedInquiryNotifications — staff guard", () => {
     );
 
     // The requeue function must NOT have been called — the guard fires first.
-    expect(retrySmtpErrorInquiries).not.toHaveBeenCalled();
+    expect(requeueExhaustedInquiries).not.toHaveBeenCalled();
   });
 
-  it("proceeds past the guard and calls retrySmtpErrorInquiries for an owner session", async () => {
+  it("proceeds past the guard and calls requeueExhaustedInquiries for an owner session", async () => {
     getSession.mockResolvedValue({
       userId: "u-owner-1",
       tenantId: "tenant-X",
@@ -86,7 +87,7 @@ describe("retryFailedInquiryNotifications — staff guard", () => {
       "REDIRECT:/settings?retry_result=3",
     );
 
-    expect(retrySmtpErrorInquiries).toHaveBeenCalledWith("tenant-X");
+    expect(requeueExhaustedInquiries).toHaveBeenCalledWith("tenant-X");
   });
 
   it("redirects to /login instead of /settings when the session has no userId", async () => {
@@ -96,6 +97,6 @@ describe("retryFailedInquiryNotifications — staff guard", () => {
       "REDIRECT:/login",
     );
 
-    expect(retrySmtpErrorInquiries).not.toHaveBeenCalled();
+    expect(requeueExhaustedInquiries).not.toHaveBeenCalled();
   });
 });

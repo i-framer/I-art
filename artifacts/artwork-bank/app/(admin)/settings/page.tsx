@@ -4,8 +4,8 @@ import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { db } from "@workspace/db";
 import { tenantsTable, inquiriesTable } from "@workspace/db";
-import { and, count, eq, isNotNull, ne } from "drizzle-orm";
-import { NO_CONTACT_EMAIL_ERROR } from "@/lib/email-sweep";
+import { and, count, eq, gte, isNotNull, isNull } from "drizzle-orm";
+import { NO_CONTACT_EMAIL_ERROR, MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
 import {
   updateTenantSettings,
   startStripeOnboarding,
@@ -94,7 +94,8 @@ export default async function SettingsPage({
         and(
           eq(inquiriesTable.tenantId, session.tenantId),
           isNotNull(inquiriesTable.emailError),
-          ne(inquiriesTable.emailError, NO_CONTACT_EMAIL_ERROR),
+          gte(inquiriesTable.emailAttempts, MAX_EMAIL_ATTEMPTS),
+          isNull(inquiriesTable.archivedAt),
         ),
       ),
   ]);

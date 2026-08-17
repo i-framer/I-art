@@ -86,6 +86,7 @@ vi.mock("drizzle-orm", () => ({
   eq: (col: any, val: any) => ({ eq: [col, val] }),
   ne: (col: any, val: any) => ({ ne: [col, val] }),
   not: (expr: any) => ({ not: expr }),
+  gte: (col: any, val: any) => ({ gte: [col, val] }),
   isNotNull: (col: any) => ({ isNotNull: col }),
   isNull: (col: any) => ({ isNull: col }),
   count: () => ({ count: true }),
@@ -94,6 +95,7 @@ vi.mock("drizzle-orm", () => ({
 // ── email-sweep ────────────────────────────────────────────────────────────────
 vi.mock("@/lib/email-sweep", () => ({
   NO_CONTACT_EMAIL_ERROR: "no gallery contact email",
+  MAX_EMAIL_ATTEMPTS: 5,
   requeueNoContactEmailInquiries: vi.fn(async () => {}),
   requeueAllFailedInquiries: vi.fn(async () => 0),
 }));

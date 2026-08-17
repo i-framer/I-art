@@ -330,13 +330,15 @@ describeIntegration("retrySmtpErrorInquiries + retryFailedInquiryNotifications â
     expect(row?.emailError).toBe("SMTP error");
   });
 
-  it("retryFailedInquiryNotifications resets only SMTP-error inquiries, redirects to /settings?retry_result=<count>, and does NOT reset the sentinel row", async () => {
+  it("retryFailedInquiryNotifications resets all exhausted inquiries (SMTP-error + no-contact sentinel) and redirect count matches the banner count", async () => {
     const { tenantId } = await createTenant("Gallery With Failed Inquiries");
     const artworkId = await createArtwork(tenantId);
 
     const smtpId1 = await createFailedInquiry(tenantId, artworkId, "550 mailbox not found");
     const smtpId2 = await createFailedInquiry(tenantId, artworkId, "SMTP connection timeout");
-    // Sentinel row: must NOT be reset or counted by the action.
+    // Exhausted no-contact sentinel row: counted by getEmailFailCount and reset
+    // by requeueExhaustedInquiries (same predicate â€” emailError IS NOT NULL AND
+    // emailAttempts >= MAX AND archivedAt IS NULL).
     const sentinelId = await createFailedInquiry(tenantId, artworkId, "no gallery contact email");
 
     let caughtError: unknown;
@@ -346,19 +348,18 @@ describeIntegration("retrySmtpErrorInquiries + retryFailedInquiryNotifications â
       caughtError = e;
     }
 
-    // Must redirect to /settings?retry_result=2 â€” only the 2 SMTP-error rows.
-    expect(String(caughtError)).toContain("REDIRECT:/settings?retry_result=2");
+    // Must redirect to /settings?retry_result=3 â€” all 3 exhausted rows.
+    expect(String(caughtError)).toContain("REDIRECT:/settings?retry_result=3");
 
-    // Both SMTP-error rows must have been reset.
-    for (const [label, id] of [["smtpId1", smtpId1], ["smtpId2", smtpId2]] as const) {
+    // All three exhausted rows must have been reset.
+    for (const [label, id] of [["smtpId1", smtpId1], ["smtpId2", smtpId2], ["sentinelId", sentinelId]] as const) {
       const row = await inquiryRow(id);
       expect(row?.emailAttempts, `${label}: emailAttempts`).toBe(0);
       expect(row?.emailLastAttemptAt, `${label}: emailLastAttemptAt`).toBeNull();
     }
 
-    // Sentinel row must be completely untouched.
+    // Sentinel emailError is preserved so the no-contact banner can still find it.
     const sentinelRow = await inquiryRow(sentinelId);
-    expect(sentinelRow?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
     expect(sentinelRow?.emailError).toBe("no gallery contact email");
   });
 
