@@ -380,4 +380,33 @@ describeIntegration("requeueAllFailedInquiries + retryFailedInquiryNotifications
 
     expect(String(caughtError)).toContain("REDIRECT:/settings?retry_result=0");
   });
+
+  it("retryFailedInquiryNotifications redirects to /settings?retry_result=unauthorized and leaves inquiries untouched when called by a staff-role session", async () => {
+    const { tenantId, userId } = await createTenant("Gallery With Staff Member");
+    const artworkId = await createArtwork(tenantId);
+
+    const id1 = await createFailedInquiry(tenantId, artworkId, "SMTP error");
+    const id2 = await createFailedInquiry(tenantId, artworkId, "no gallery contact email");
+
+    // Act as a staff member (not owner) for this tenant.
+    mockSession.value = { userId, tenantId, role: "staff" };
+
+    let caughtError: unknown;
+    try {
+      await retryFailedInquiryNotifications();
+    } catch (e) {
+      caughtError = e;
+    }
+
+    // Must redirect with unauthorized result, not reset the queue.
+    expect(String(caughtError)).toContain("REDIRECT:/settings?retry_result=unauthorized");
+
+    // Both inquiries must remain untouched — staff cannot trigger the reset.
+    for (const [label, id] of [["id1", id1], ["id2", id2]] as const) {
+      const row = await inquiryRow(id);
+      expect(row?.emailAttempts, `${label}: emailAttempts`).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(row?.emailLastAttemptAt, `${label}: emailLastAttemptAt`).not.toBeNull();
+      expect(row?.emailError, `${label}: emailError`).not.toBeNull();
+    }
+  });
 });

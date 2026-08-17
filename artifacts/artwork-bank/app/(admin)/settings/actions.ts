@@ -87,6 +87,7 @@ export async function updateTenantSettings(formData: FormData) {
 export async function retryFailedInquiryNotifications() {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  if (session.role !== "owner") redirect("/settings?retry_result=unauthorized");
 
   let retried = 0;
   try {
