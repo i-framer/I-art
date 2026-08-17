@@ -627,9 +627,11 @@ describe("sweepUnsentInquiryEmails", () => {
     expect(state.updates).toHaveLength(1);
 
     // The SET values are the reset values (emailAttempts back to 0).
+    // emailClaimNonce is also cleared so any stale sweep claim is released.
     expect(state.updates[0]).toEqual({
       emailAttempts: 0,
       emailLastAttemptAt: null,
+      emailClaimNonce: null,
     });
 
     // The WHERE clause was supplied (the function always scopes by tenantId

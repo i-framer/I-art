@@ -142,6 +142,30 @@ async function insertNoContactInquiry(
   } as any);
 }
 
+async function insertSmtpErrorInquiry(
+  id: string,
+  tenantId: string,
+  artworkId: string,
+  emailError: string,
+  emailAttempts: number,
+  emailLastAttemptAt: Date | null = new Date("2024-06-01T10:00:00Z"),
+): Promise<void> {
+  CREATED_INQUIRY_IDS.push(id);
+  await db.insert(inquiriesTable).values({
+    id,
+    tenantId,
+    artworkId,
+    artworkTitle: "Test Artwork 950",
+    buyerName: "SMTP Error Buyer",
+    buyerEmail: "smtp-error-buyer@example.com",
+    message: "Interested in purchasing.",
+    emailError,
+    emailAttempts,
+    emailLastAttemptAt,
+    status: "NEW",
+  } as any);
+}
+
 async function fetchRow(id: string) {
   return db.query.inquiriesTable.findFirst({
     where: eq(inquiriesTable.id, id),
@@ -1203,6 +1227,109 @@ describeIntegration(
 
         const noContactAfter = await getNoContactEmailInquiryCount();
         expect(noContactAfter).toBe(0);
+      },
+    );
+
+    /**
+     * Task #986 — Confirm retrySmtpErrorInquiries is tenant-scoped and cannot
+     * touch another gallery's rows.
+     *
+     * retrySmtpErrorInquiries takes a tenantId parameter and its WHERE clause
+     * must filter to that tenant only.  A missing tenantId predicate would reset
+     * all galleries' SMTP-error rows in one call.
+     *
+     * Scenario:
+     *  1. Seed two tenants (A and B), each with a contact email.
+     *  2. Seed one artwork per tenant.
+     *  3. Insert a transport-error inquiry for each tenant
+     *     (emailAttempts=1, emailLastAttemptAt=<fixed>, emailError=<message>).
+     *  4. Call retrySmtpErrorInquiries for tenant A only.
+     *  5. Assert resetCount === 1 (only tenant A's row was touched).
+     *  6. Assert tenant A's row was reset: emailAttempts=0, emailLastAttemptAt=null.
+     *  7. Assert tenant B's row is completely unchanged: emailAttempts and
+     *     emailLastAttemptAt are identical to the seeded values.
+     */
+    it(
+      "retrySmtpErrorInquiries only resets the calling tenant's rows; another gallery's row is untouched (Task #986)",
+      async () => {
+        const tenantIdA = makeId("tenant-986-a");
+        const tenantIdB = makeId("tenant-986-b");
+
+        await Promise.all([
+          insertTenant(tenantIdA, { contactEmail: "owner-986-a@gallery.test" }),
+          insertTenant(tenantIdB, { contactEmail: "owner-986-b@gallery.test" }),
+        ]);
+
+        const artworkIdA = makeId("artwork-986-a");
+        const artworkIdB = makeId("artwork-986-b");
+
+        await Promise.all([
+          insertArtwork(artworkIdA, tenantIdA),
+          insertArtwork(artworkIdB, tenantIdB),
+        ]);
+
+        const inqIdA = makeId("inq-986-a");
+        const inqIdB = makeId("inq-986-b");
+
+        const transportErrorMsg = "Transport failure: connection refused (986)";
+        const seededAttempts = 1;
+        const seededLastAttemptAt = new Date("2024-07-01T12:00:00Z");
+
+        await Promise.all([
+          insertSmtpErrorInquiry(
+            inqIdA,
+            tenantIdA,
+            artworkIdA,
+            transportErrorMsg,
+            seededAttempts,
+            seededLastAttemptAt,
+          ),
+          insertSmtpErrorInquiry(
+            inqIdB,
+            tenantIdB,
+            artworkIdB,
+            transportErrorMsg,
+            seededAttempts,
+            seededLastAttemptAt,
+          ),
+        ]);
+
+        // ── Pre-condition: both rows carry the seeded transport error ─────────
+
+        const [rowABefore, rowBBefore] = await Promise.all([
+          fetchRow(inqIdA),
+          fetchRow(inqIdB),
+        ]);
+
+        expect(rowABefore?.emailAttempts).toBe(seededAttempts);
+        expect(rowABefore?.emailLastAttemptAt).toEqual(seededLastAttemptAt);
+        expect(rowABefore?.emailError).toBe(transportErrorMsg);
+
+        expect(rowBBefore?.emailAttempts).toBe(seededAttempts);
+        expect(rowBBefore?.emailLastAttemptAt).toEqual(seededLastAttemptAt);
+        expect(rowBBefore?.emailError).toBe(transportErrorMsg);
+
+        // ── Admin retries only tenant A's SMTP errors ─────────────────────────
+
+        const resetCount = await retrySmtpErrorInquiries(tenantIdA);
+
+        // Exactly one row must have been reset — tenant A's only.
+        expect(resetCount).toBe(1);
+
+        // ── Tenant A's row is reset ───────────────────────────────────────────
+
+        const rowAAfter = await fetchRow(inqIdA);
+        expect(rowAAfter?.emailAttempts).toBe(0);
+        expect(rowAAfter?.emailLastAttemptAt).toBeNull();
+        // emailError is preserved so the sweep still selects the row.
+        expect(rowAAfter?.emailError).toBe(transportErrorMsg);
+
+        // ── Tenant B's row is completely unchanged ────────────────────────────
+
+        const rowBAfter = await fetchRow(inqIdB);
+        expect(rowBAfter?.emailAttempts).toBe(seededAttempts);
+        expect(rowBAfter?.emailLastAttemptAt).toEqual(seededLastAttemptAt);
+        expect(rowBAfter?.emailError).toBe(transportErrorMsg);
       },
     );
 
