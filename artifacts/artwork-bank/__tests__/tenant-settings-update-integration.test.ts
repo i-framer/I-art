@@ -86,9 +86,7 @@ vi.mock("@/lib/email-sweep", async (importActual) => {
 const sendArtworkInquirySpy = vi.hoisted(() => vi.fn(async () => true));
 
 // Stub the email transport so the sweep end-to-end test doesn't hit a real
-// mail server. sendArtworkInquirySpy.mockResolvedValue(true) simulates a
-// successful send; individual tests can override it via mockRejectedValueOnce
-// if they need to test failure paths.
+// mail server. Individual tests can override via mockRejectedValueOnce.
 vi.mock("@/lib/email", async (importActual) => {
   const actual = await importActual<typeof import("@/lib/email")>();
   return {
@@ -740,6 +738,7 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(clearedRow?.contactEmail).toBeNull();
     expect(requeueSpy).not.toHaveBeenCalled();
 
+
     // Step 3: create an exhausted "no gallery contact email" inquiry — this
     // represents a notification that piled up while the email was absent.
     const artworkId = await createArtwork(tenantId);
@@ -1117,7 +1116,10 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     // Arrange: tenant starts without a contactEmail so one inquiry became
     // exhausted and was frozen out of the sweep.
     const { tenantId } = await createTenant("Gallery End-To-End Sweep");
-    await db.update(tenantsTable).set({ contactEmail: null } as any).where(eq(tenantsTable.id, tenantId));
+    await db
+      .update(tenantsTable)
+      .set({ contactEmail: null } as any)
+      .where(eq(tenantsTable.id, tenantId));
 
     const artworkId = await createArtwork(tenantId);
     const inquiryId = await createExhaustedNoEmailInquiry(tenantId, artworkId);
@@ -1134,12 +1136,17 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     // counters so the sweep's WHERE clause (emailError IS NOT NULL AND
     // emailAttempts < MAX_EMAIL_ATTEMPTS) will match again.
     sendArtworkInquirySpy.mockClear();
-
-    await updateTenantSettings(fd({
-      businessName: "Gallery End-To-End Sweep",
-      contactEmail: "new-contact@gallery.test",
-      themeColor: "", aboutText: "", location: "",
-    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+    await updateTenantSettings(
+      fd({
+        businessName: "Gallery End-To-End Sweep",
+        contactEmail: "new-contact@gallery.test",
+        themeColor: "",
+        aboutText: "",
+        location: "",
+      }),
+    ).catch((e) => {
+      if (!String(e).includes("REDIRECT")) throw e;
+    });
 
     // Confirm the inquiry was requeued (counters reset).
     const requeued = await db.query.inquiriesTable.findFirst({
@@ -1154,24 +1161,22 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
 
     // Assert: the sweep must have scanned and processed the inquiry.
     expect(sweepResult.scanned).toBeGreaterThanOrEqual(1);
-    // sent + failed = 1 means the sweep reached the delivery attempt for our
+    // sent + failed >= 1 means the sweep reached the delivery attempt for our
     // row (sendArtworkInquiry was called), regardless of whether the stub
     // succeeded or threw.  scanned > 0 with skipped == scanned would indicate
     // the row was re-excluded by the backoff or WHERE clause — a regression.
     expect(sweepResult.sent + sweepResult.failed).toBeGreaterThanOrEqual(1);
 
-    // Assert: sendArtworkInquiry must have been invoked — the stub returning
-    // true triggers the success path (emailError cleared).
+    // Assert: sendArtworkInquiry must have been invoked.
     expect(sendArtworkInquirySpy).toHaveBeenCalledOnce();
 
-    // Assert: the inquiry row shows evidence of a delivery attempt.
+    // Assert: the inquiry row shows evidence of a successful delivery.
     const afterSweep = await db.query.inquiriesTable.findFirst({
       where: eq(inquiriesTable.id, inquiryId),
     });
     // emailAttempts incremented from 0 — the sweep processed the row.
     expect(afterSweep?.emailAttempts).toBeGreaterThan(0);
-    // On a successful mock send (mockResolvedValue(true)), emailError is
-    // cleared by the sweep.
+    // On a successful mock send, emailError is cleared to null.
     expect(afterSweep?.emailError).toBeNull();
   });
 });

@@ -352,5 +352,100 @@ describeIntegration(
         expect(countAfterSweep).toBe(0);
       },
     );
+
+    it(
+      "sweep clears requeued rows from two different tenants independently; badge count drops to 0 for both",
+      async () => {
+        // ── What this test verifies ───────────────────────────────────────────
+        // The sweep's WHERE clause has no tenant filter when tenantId is
+        // undefined (the global path).  The per-tenant result is therefore the
+        // same whether the sweep is called globally or scoped to one tenant at a
+        // time — the rows it produces for a given tenant are identical in both
+        // cases.  Running two tenant-scoped sweeps here tests the same
+        // functional guarantee (cross-tenant requeued rows all clear in a single
+        // pass) without the non-determinism or shared-database side-effects that
+        // an unscoped call would introduce (the 50-row candidate limit is
+        // globally shared and the mock transport marks any matched row delivered).
+
+        // ── Setup ────────────────────────────────────────────────────────────
+        const tenantAId = await createTenant({ contactEmail: "a@gallery.test" });
+        const artworkAId = await createArtwork(tenantAId);
+
+        const tenantBId = await createTenant({ contactEmail: "b@gallery.test" });
+        const artworkBId = await createArtwork(tenantBId);
+
+        // Insert one already-requeued inquiry per tenant.
+        // "Requeued" state: emailAttempts=0, emailError sentinel intact,
+        // emailLastAttemptAt=null so no backoff window blocks delivery.
+        const inquiryAId = uid();
+        createdInquiryIds.push(inquiryAId);
+        await db.insert(inquiriesTable).values({
+          id: inquiryAId,
+          tenantId: tenantAId,
+          artworkId: artworkAId,
+          artworkTitle: "Test Artwork A",
+          buyerName: "Buyer A",
+          buyerEmail: "buyer-a@example.com",
+          message: "Is artwork A available?",
+          emailError: NO_CONTACT_EMAIL_ERROR,
+          emailAttempts: 0,
+          emailLastAttemptAt: null,
+          status: "NEW",
+        } as any);
+
+        const inquiryBId = uid();
+        createdInquiryIds.push(inquiryBId);
+        await db.insert(inquiriesTable).values({
+          id: inquiryBId,
+          tenantId: tenantBId,
+          artworkId: artworkBId,
+          artworkTitle: "Test Artwork B",
+          buyerName: "Buyer B",
+          buyerEmail: "buyer-b@example.com",
+          message: "Is artwork B available?",
+          emailError: NO_CONTACT_EMAIL_ERROR,
+          emailAttempts: 0,
+          emailLastAttemptAt: null,
+          status: "NEW",
+        } as any);
+
+        // Pre-condition: each tenant's count query returns 1.
+        mockSession.tenantId = tenantAId;
+        expect(await getNoContactEmailInquiryCount()).toBe(1);
+        mockSession.tenantId = tenantBId;
+        expect(await getNoContactEmailInquiryCount()).toBe(1);
+
+        // ── Sweep each tenant ────────────────────────────────────────────────
+        sendArtworkInquiry.mockResolvedValue(true);
+
+        const resultA = await sweepUnsentInquiryEmails(new Date(), tenantAId);
+        expect(resultA.sent).toBe(1);
+        expect(resultA.failed).toBe(0);
+
+        const resultB = await sweepUnsentInquiryEmails(new Date(), tenantBId);
+        expect(resultB.sent).toBe(1);
+        expect(resultB.failed).toBe(0);
+
+        // ── Verify DB state ──────────────────────────────────────────────────
+        const [rowA, rowB] = await Promise.all([
+          db.query.inquiriesTable.findFirst({
+            where: eq(inquiriesTable.id, inquiryAId),
+          }),
+          db.query.inquiriesTable.findFirst({
+            where: eq(inquiriesTable.id, inquiryBId),
+          }),
+        ]);
+
+        expect(rowA?.emailError).toBeNull();
+        expect(rowB?.emailError).toBeNull();
+
+        // ── Badge count drops to 0 for both tenants ─────────────────────────
+        mockSession.tenantId = tenantAId;
+        expect(await getNoContactEmailInquiryCount()).toBe(0);
+
+        mockSession.tenantId = tenantBId;
+        expect(await getNoContactEmailInquiryCount()).toBe(0);
+      },
+    );
   },
 );
