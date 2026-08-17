@@ -10,7 +10,7 @@
  *  1. retryFailedInquiryNotifications → staff session → redirects to
  *     /settings?retry_result=unauthorized without touching the database.
  *  2. retryFailedInquiryNotifications → owner session → proceeds past the
- *     guard and calls requeueAllFailedInquiries (baseline to confirm the mock
+ *     guard and calls retrySmtpErrorInquiries (baseline to confirm the mock
  *     wiring is correct).
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -70,11 +70,11 @@ describe("retryFailedInquiryNotifications — staff guard", () => {
       "REDIRECT:/settings?retry_result=unauthorized",
     );
 
-    // The retry function must NOT have been called — the guard fires first.
+    // The requeue function must NOT have been called — the guard fires first.
     expect(retrySmtpErrorInquiries).not.toHaveBeenCalled();
   });
 
-  it("proceeds past the guard and calls requeueAllFailedInquiries for an owner session", async () => {
+  it("proceeds past the guard and calls retrySmtpErrorInquiries for an owner session", async () => {
     getSession.mockResolvedValue({
       userId: "u-owner-1",
       tenantId: "tenant-X",

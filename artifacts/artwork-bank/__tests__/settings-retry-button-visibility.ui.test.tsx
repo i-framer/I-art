@@ -85,7 +85,9 @@ vi.mock("drizzle-orm", () => ({
   and: (...args: any[]) => ({ and: args }),
   eq: (col: any, val: any) => ({ eq: [col, val] }),
   ne: (col: any, val: any) => ({ ne: [col, val] }),
+  not: (expr: any) => ({ not: expr }),
   isNotNull: (col: any) => ({ isNotNull: col }),
+  isNull: (col: any) => ({ isNull: col }),
   count: () => ({ count: true }),
 }));
 
