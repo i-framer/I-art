@@ -70,6 +70,7 @@ vi.mock("@workspace/db", () => ({
   },
   inquiriesTable: {
     id: "id",
+    tenantId: "tenantId",
     emailError: "emailError",
     emailAttempts: "emailAttempts",
     emailLastAttemptAt: "emailLastAttemptAt",
@@ -135,6 +136,103 @@ beforeEach(() => {
   state.claimShouldFail = false;
   state.claimSuccessLimit = Infinity;
   state.claimCallCount = 0;
+});
+
+// ---------------------------------------------------------------------------
+// Predicate evaluator for drizzle-orm SQL condition objects.
+// Handles the exact shape produced by requeueNoContactEmailInquiries:
+//   and(eq(col, val), eq(col, val))
+//
+// Structure confirmed at runtime against drizzle-orm@0.45.x:
+//   and(eq1, eq2)  →  { queryChunks: ["(", innerCompound, ")"] }
+//   innerCompound  →  { queryChunks: [eq1, {" and "}, eq2] }
+//   eq(str, val)   →  { queryChunks: [lit, "colName", {" = "}, value, lit] }
+// ---------------------------------------------------------------------------
+function evalDrizzleCondition(
+  condition: any,
+  row: Record<string, any>,
+): boolean {
+  if (!condition?.queryChunks) return true;
+  const chunks: any[] = condition.queryChunks;
+
+  // Outer and-wrapper: exactly 3 chunks, starts with "(" ends with ")"
+  if (
+    chunks.length === 3 &&
+    chunks[0]?.value?.[0] === "(" &&
+    chunks[2]?.value?.[0] === ")"
+  ) {
+    return evalDrizzleCondition(chunks[1], row);
+  }
+
+  // Simple eq: 5 chunks where chunk[1] is the column name string
+  // and chunk[2] is the " = " operator literal.
+  if (
+    chunks.length === 5 &&
+    typeof chunks[1] === "string" &&
+    chunks[2]?.value?.[0] === " = "
+  ) {
+    return row[chunks[1]] === chunks[3];
+  }
+
+  // Inner compound: [sub1, {" and "}, sub2, ...] — skip separators, recurse
+  const subs = chunks.filter((c: any) => c?.value?.[0]?.trim() !== "and");
+  if (subs.length < chunks.length) {
+    return subs.every((sub: any) => evalDrizzleCondition(sub, row));
+  }
+
+  return true; // unknown shape — conservative pass-through
+}
+
+describe("requeueNoContactEmailInquiries", () => {
+  it("resets only the no-contact-email row and leaves an SMTP-error row untouched", async () => {
+    // Two in-memory rows for tenant-1.  Only the no-contact row should be
+    // reset; the SMTP-error row must remain completely unchanged.
+    const smtpError = "550 mailbox not found";
+    const lastAttempt = new Date("2026-07-01T00:00:00Z");
+    const fakeRows = [
+      {
+        tenantId: "tenant-1",
+        emailError: NO_CONTACT_EMAIL_ERROR,
+        emailAttempts: MAX_EMAIL_ATTEMPTS,
+        emailLastAttemptAt: lastAttempt,
+      },
+      {
+        tenantId: "tenant-1",
+        emailError: smtpError,
+        emailAttempts: MAX_EMAIL_ATTEMPTS,
+        emailLastAttemptAt: lastAttempt,
+      },
+    ];
+
+    // Row-aware update mock: applies the WHERE predicate against fakeRows using
+    // the drizzle-orm condition evaluator above so the test can assert which
+    // rows were actually mutated — not just that an UPDATE was issued.
+    vi.mocked(db.update).mockImplementationOnce((_table: any) => ({
+      set: (values: any) => ({
+        where: (condition: any) => {
+          fakeRows.forEach((row) => {
+            if (evalDrizzleCondition(condition, row)) Object.assign(row, values);
+          });
+          return Promise.resolve(undefined);
+        },
+      }),
+    }) as any);
+
+    await requeueNoContactEmailInquiries("tenant-1");
+
+    const [noContactRow, smtpRow] = fakeRows;
+
+    // No-contact row: emailAttempts and emailLastAttemptAt must be reset so
+    // the sweep candidate query (lt emailAttempts MAX) re-selects the row.
+    expect(noContactRow.emailAttempts).toBe(0);
+    expect(noContactRow.emailLastAttemptAt).toBeNull();
+
+    // SMTP-error row: must be completely untouched — attempt count, timestamp,
+    // and error message must all remain at their original values.
+    expect(smtpRow.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(smtpRow.emailLastAttemptAt).toEqual(lastAttempt);
+    expect(smtpRow.emailError).toBe(smtpError);
+  });
 });
 
 describe("sweepUnsentInquiryEmails", () => {
