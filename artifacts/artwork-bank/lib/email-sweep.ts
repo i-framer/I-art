@@ -13,7 +13,8 @@ import {
   inquiriesTable,
   artworksTable,
 } from "@workspace/db";
-import { and, eq, gte, isNull, isNotNull, lt, ne, not } from "drizzle-orm";
+import { and, eq, gte, isNull, isNotNull, lt, ne, not, or } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import {
   sendOrderConfirmation,
   sendOrderStatusUpdate,
@@ -35,6 +36,14 @@ export const NO_CONTACT_EMAIL_ERROR = "no gallery contact email";
 /** Base backoff: 5 min, then 10, 20, 40… doubling per prior attempt. */
 export const BASE_BACKOFF_MS = 5 * 60 * 1000;
 
+/**
+ * How long a sweep claim is considered active.  A non-null emailClaimNonce
+ * combined with an emailLastAttemptAt within this window means the row is
+ * currently held by a live sweep worker.  Once this window elapses the claim
+ * is considered expired (the worker crashed without completing), and requeue
+ * helpers and subsequent sweep passes may safely reclaim the row.
+ */
+export const CLAIM_LEASE_MS = 5 * 60 * 1000; // 5 minutes
 export function backoffMs(attempts: number): number {
   return BASE_BACKOFF_MS * 2 ** Math.max(0, attempts - 1);
 }
@@ -454,16 +463,31 @@ export async function sweepUnsentStatusEmails(
 export async function requeueNoContactEmailInquiries(
   tenantId: string,
 ): Promise<void> {
+  const claimCutoff = new Date(Date.now() - CLAIM_LEASE_MS);
   await db
     .update(inquiriesTable)
     .set({
       emailAttempts: 0,
       emailLastAttemptAt: null,
+      // Also clear any stale nonce left by a crashed worker.  For rows with no
+      // active claim (isNull nonce) this is a no-op.  For rows whose claim has
+      // expired (worker died), clearing the nonce here ensures the next CAS
+      // claim (which checks for a non-null nonce + non-null recent timestamp)
+      // can succeed when emailLastAttemptAt has already been reset to null.
+      emailClaimNonce: null,
     })
     .where(
       and(
         eq(inquiriesTable.tenantId, tenantId),
         eq(inquiriesTable.emailError, NO_CONTACT_EMAIL_ERROR),
+        // Skip rows whose claim is still active (nonce set AND claimed recently).
+        // Allow reset if the nonce is null (never claimed / already released) OR
+        // the claim has expired (emailLastAttemptAt is older than CLAIM_LEASE_MS)
+        // which indicates the worker crashed without completing its writes.
+        or(
+          isNull(inquiriesTable.emailClaimNonce),
+          lt(inquiriesTable.emailLastAttemptAt, claimCutoff),
+        ),
       ),
     );
 }
@@ -490,17 +514,25 @@ export async function requeueNoContactEmailInquiries(
 export async function retrySmtpErrorInquiries(
   tenantId: string,
 ): Promise<number> {
+  const claimCutoff = new Date(Date.now() - CLAIM_LEASE_MS);
   const result = await db
     .update(inquiriesTable)
     .set({
       emailAttempts: 0,
       emailLastAttemptAt: null,
+      emailClaimNonce: null, // clear any stale nonce from a crashed worker
     })
     .where(
       and(
         eq(inquiriesTable.tenantId, tenantId),
         isNotNull(inquiriesTable.emailError),
         not(eq(inquiriesTable.emailError, NO_CONTACT_EMAIL_ERROR)),
+        // Skip rows with an active sweep claim; allow expired claims to be
+        // reset — same lease-based guard as requeueNoContactEmailInquiries.
+        or(
+          isNull(inquiriesTable.emailClaimNonce),
+          lt(inquiriesTable.emailLastAttemptAt, claimCutoff),
+        ),
       ),
     );
   return result.rowCount ?? 0;
@@ -522,11 +554,13 @@ export async function retrySmtpErrorInquiries(
 export async function requeueExhaustedInquiries(
   tenantId: string,
 ): Promise<number> {
+  const claimCutoff = new Date(Date.now() - CLAIM_LEASE_MS);
   const rows = await db
     .update(inquiriesTable)
     .set({
       emailAttempts: 0,
       emailLastAttemptAt: null,
+      emailClaimNonce: null, // clear any stale nonce from a crashed worker
     })
     .where(
       and(
@@ -534,6 +568,12 @@ export async function requeueExhaustedInquiries(
         isNotNull(inquiriesTable.emailError),
         gte(inquiriesTable.emailAttempts, MAX_EMAIL_ATTEMPTS),
         isNull(inquiriesTable.archivedAt),
+        // Skip rows with an active sweep claim; allow expired claims to be
+        // reset — same lease-based guard as requeueNoContactEmailInquiries.
+        or(
+          isNull(inquiriesTable.emailClaimNonce),
+          lt(inquiriesTable.emailLastAttemptAt, claimCutoff),
+        ),
       ),
     )
     .returning({ id: inquiriesTable.id });
@@ -696,19 +736,41 @@ export async function sweepUnsentInquiryEmails(
       continue;
     }
 
-    // True compare-and-swap claim: stamp emailLastAttemptAt to `now` only
-    // if the DB still shows the exact snapshot value we read.  Because the
-    // stamp changes emailLastAttemptAt, a second concurrent sweep reading the
-    // same row will find a different value in the DB and get 0 rows back,
-    // preventing it from proceeding to delivery.
+    // True compare-and-swap claim: stamp emailLastAttemptAt and a fresh UUID
+    // nonce only if:
+    //  • the row still has the exact emailLastAttemptAt we snapshotted (CAS
+    //    pivot — rejects a concurrent live sweep that already claimed the row),
+    //    AND
+    //  • either the row has no active claim OR the existing claim has expired
+    //    (the worker that set it crashed before completing either write).
+    //
+    // The nonce guards requeue helpers: requeueNoContactEmailInquiries and the
+    // other requeue functions skip rows with a non-expired nonce, so a gallery-
+    // email save cannot reset emailLastAttemptAt→null and make the in-flight
+    // row re-claimable by a concurrent sweep pass.
+    //
+    // Claim expiry is detected via CLAIM_LEASE_MS: if emailLastAttemptAt is
+    // older than the lease window, the claim is considered abandoned and a new
+    // sweep pass may take it over.  The nonce fence on the completion writes
+    // ensures that a stale worker completing late cannot overwrite a new
+    // claimant's state.
+    const claimCutoff = new Date(now.getTime() - CLAIM_LEASE_MS);
+    const claimNonce = randomUUID();
     const [claimed] = await db
       .update(inquiriesTable)
-      .set({ emailLastAttemptAt: now })
+      .set({ emailLastAttemptAt: now, emailClaimNonce: claimNonce })
       .where(
         and(
           eq(inquiriesTable.id, inquiry.id),
           isNotNull(inquiriesTable.emailError),
-          // CAS pivot: the prior emailLastAttemptAt must still match.
+          // Allow claiming when: no active nonce OR existing nonce has expired.
+          or(
+            isNull(inquiriesTable.emailClaimNonce),
+            lt(inquiriesTable.emailLastAttemptAt, claimCutoff),
+          ),
+          // CAS pivot: the prior emailLastAttemptAt must still match the
+          // snapshot.  This additionally prevents two sweeps that both see an
+          // expired claim from racing to reclaim at the same instant.
           inquiry.emailLastAttemptAt
             ? eq(inquiriesTable.emailLastAttemptAt, inquiry.emailLastAttemptAt)
             : isNull(inquiriesTable.emailLastAttemptAt),
@@ -746,8 +808,17 @@ export async function sweepUnsentInquiryEmails(
           emailError: null,
           emailAttempts: inquiry.emailAttempts + 1,
           emailLastAttemptAt: now,
+          emailClaimNonce: null, // release the claim nonce set during CAS
         })
-        .where(eq(inquiriesTable.id, inquiry.id));
+        // Fence with the nonce: if a new sweep reclaimed the row after our
+        // lease expired (worker was stalled), this write becomes a no-op so
+        // we cannot overwrite the new claimant's in-progress state.
+        .where(
+          and(
+            eq(inquiriesTable.id, inquiry.id),
+            eq(inquiriesTable.emailClaimNonce, claimNonce),
+          ),
+        );
       result.sent++;
     } catch (err) {
       const message = (err as any)?.message ?? String(err);
@@ -764,8 +835,15 @@ export async function sweepUnsentInquiryEmails(
             emailError: message,
             emailAttempts: inquiry.emailAttempts + 1,
             emailLastAttemptAt: now,
+            emailClaimNonce: null, // release the claim nonce set during CAS
           })
-          .where(eq(inquiriesTable.id, inquiry.id));
+          // Same nonce fence as the success write.
+          .where(
+            and(
+              eq(inquiriesTable.id, inquiry.id),
+              eq(inquiriesTable.emailClaimNonce, claimNonce),
+            ),
+          );
       } catch (dbErr) {
         console.error(
           `Inquiry email sweep: could not persist failure state for inquiry ${inquiry.id}:`,

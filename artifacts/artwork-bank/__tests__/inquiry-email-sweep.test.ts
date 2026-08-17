@@ -48,11 +48,15 @@ vi.mock("@workspace/db", () => ({
     },
     update: vi.fn(() => ({
       set: (vals: any) => {
-        // Claim steps write only emailLastAttemptAt (single field).
-        // Skip those from tracking so assertion tests verify finalization writes.
-        const onlyStamp =
-          Object.keys(vals).length === 1 && "emailLastAttemptAt" in vals;
-        if (!onlyStamp) state.updates.push(vals);
+        // CAS claim steps set exactly { emailLastAttemptAt, emailClaimNonce }
+        // with a non-null UUID nonce.  Skip those from tracking so assertion
+        // tests only verify success/failure finalization writes.
+        const isClaim =
+          Object.keys(vals).length === 2 &&
+          "emailLastAttemptAt" in vals &&
+          "emailClaimNonce" in vals &&
+          vals.emailClaimNonce !== null;
+        if (!isClaim) state.updates.push(vals);
         const claimReturning = () => {
           if (state.claimShouldFail) return Promise.resolve([]);
           const wins = state.claimCallCount < state.claimSuccessLimit;
@@ -74,6 +78,8 @@ vi.mock("@workspace/db", () => ({
     emailError: "emailError",
     emailAttempts: "emailAttempts",
     emailLastAttemptAt: "emailLastAttemptAt",
+    emailClaimNonce: "emailClaimNonce",
+    archivedAt: "archivedAt",
   },
   artworksTable: { id: "id" },
   tenantsTable: { id: "id" },

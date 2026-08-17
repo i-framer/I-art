@@ -76,6 +76,7 @@ import {
   retrySmtpErrorInquiries,
   sweepUnsentInquiryEmails,
   NO_CONTACT_EMAIL_ERROR,
+  CLAIM_LEASE_MS,
 } from "@/lib/email-sweep";
 import { getNoContactEmailInquiryCount } from "@/app/(admin)/_actions/inquiry-count";
 
@@ -1344,6 +1345,273 @@ describeIntegration(
         expect(f3?.archivedAt).not.toBeNull();
         expect(f3?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
         expect(f3?.emailAttempts).toBe(0);
+      },
+    );
+
+    /**
+     * Task #969 — Confirm a requeue that fires between a sweep's CAS claim and
+     * its email send cannot cause a double-send.
+     *
+     * The sweep atomically claims a row by writing emailLastAttemptAt + a UUID
+     * nonce (emailClaimNonce).  requeueNoContactEmailInquiries now skips any
+     * row whose emailClaimNonce IS NOT NULL, so a concurrent gallery-email save
+     * cannot reset emailLastAttemptAt→null and make the in-flight row
+     * re-claimable by a second sweep pass.
+     *
+     * This test exercises the actual concurrent window using Promise
+     * coordination: sweep A is held inside the transport (post-claim, pre-
+     * success-write), the requeue fires and should skip the claimed row, sweep B
+     * runs and should be blocked by the backoff guard (emailLastAttemptAt is
+     * recent) and by the CAS nonce condition, then sweep A is released and
+     * completes normally.  sendArtworkInquiry must be called exactly once.
+     *
+     * Flow under test:
+     *  1. Seed a tenant WITH a contact email and an inquiry in the requeued
+     *     no-contact state (emailError set, emailAttempts=0,
+     *     emailLastAttemptAt=null).
+     *  2. Block sweep A inside the transport mock after its CAS claim succeeds.
+     *  3. Fire requeueNoContactEmailInquiries — it must skip the claimed row.
+     *  4. Run sweep B — it must be blocked (backoff + nonce CAS fail).
+     *  5. Release sweep A — it completes, clears emailError and emailClaimNonce.
+     *  6. Assert sendArtworkInquiry was called exactly once and emailError=null.
+     */
+    it(
+      "sends the email exactly once when requeue fires between CAS claim and success write (Task #969)",
+      { timeout: 30_000 },
+      async () => {
+        // ── Seed ─────────────────────────────────────────────────────────────
+
+        const tenantId = makeId("tenant-969");
+        const artworkId = makeId("artwork-969");
+        const inqId = makeId("inq-969");
+
+        // Tenant already has a contact email so the sweep proceeds past the
+        // no-email guard to the CAS claim.
+        await insertTenant(tenantId, {
+          contactEmail: "gallery-969@test.example",
+        });
+        await insertArtwork(artworkId, tenantId);
+
+        // Inquiry is in the requeued no-contact state: emailError is set (so
+        // the sweep candidate query selects it), emailAttempts=0 and
+        // emailLastAttemptAt=null (so the backoff guard is skipped).
+        CREATED_INQUIRY_IDS.push(inqId);
+        await db.insert(inquiriesTable).values({
+          id: inqId,
+          tenantId,
+          artworkId,
+          artworkTitle: "Test Artwork 969",
+          buyerName: "Race Buyer 969",
+          buyerEmail: "buyer-969@test.example",
+          message: "Is this available?",
+          emailError: NO_CONTACT_EMAIL_ERROR,
+          emailAttempts: 0,
+          emailLastAttemptAt: null,
+          status: "NEW",
+        } as any);
+
+        mockSession.tenantId = tenantId;
+
+        // ── Pre-condition checks ──────────────────────────────────────────────
+
+        const rowBefore = await fetchRow(inqId);
+        expect(rowBefore?.emailAttempts).toBe(0);
+        expect(rowBefore?.emailLastAttemptAt).toBeNull();
+        expect(rowBefore?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+        expect((rowBefore as any)?.emailClaimNonce).toBeNull();
+
+        // ── Concurrent race setup ─────────────────────────────────────────────
+        //
+        // Use a Promise pair to hold sweep A inside its transport call (after
+        // the CAS claim has committed to the DB) until we have verified that
+        // (a) the requeue skips the claimed row, and (b) a concurrent sweep B
+        // cannot re-claim and double-send.
+
+        let releaseSweepA!: () => void;
+        const sweepABlocker = new Promise<void>((res) => {
+          releaseSweepA = res;
+        });
+        const sweepATransportEntered = new Promise<void>((resolve) => {
+          sendArtworkInquiry.mockImplementationOnce(async () => {
+            resolve(); // signal: CAS claim is in the DB, we are mid-send
+            await sweepABlocker; // hold here until released
+            return true;
+          });
+        });
+        // If sweep B somehow gets through (it must not), give it a mock too.
+        sendArtworkInquiry.mockResolvedValue(true);
+
+        // ── Start sweep A (do not await) ──────────────────────────────────────
+
+        const sweepADone = sweepUnsentInquiryEmails(new Date(), tenantId);
+
+        // Wait until sweep A has entered the transport (= CAS claim in DB).
+        await sweepATransportEntered;
+
+        // ── Verify CAS claim is visible in the DB ─────────────────────────────
+
+        const rowMid = await fetchRow(inqId);
+        // emailLastAttemptAt and emailClaimNonce were both stamped by the CAS.
+        expect(rowMid?.emailLastAttemptAt).not.toBeNull();
+        expect((rowMid as any)?.emailClaimNonce).not.toBeNull();
+        // emailError is still set (success write has not fired yet).
+        expect(rowMid?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+
+        // ── Fire requeue — should skip the claimed row ────────────────────────
+        //
+        // The gallery owner saves a new contact email while sweep A is blocked
+        // mid-send.  With the emailClaimNonce guard in place, the requeue's
+        // WHERE clause includes isNull(emailClaimNonce) and therefore leaves
+        // the row untouched.
+
+        await requeueNoContactEmailInquiries(tenantId);
+
+        const rowAfterRequeue = await fetchRow(inqId);
+        // Requeue skipped the row: emailLastAttemptAt and emailClaimNonce must
+        // still be the values set by sweep A's CAS claim.
+        expect(rowAfterRequeue?.emailLastAttemptAt).toEqual(
+          rowMid?.emailLastAttemptAt,
+        );
+        expect((rowAfterRequeue as any)?.emailClaimNonce).toEqual(
+          (rowMid as any)?.emailClaimNonce,
+        );
+
+        // ── Run sweep B — must not send ───────────────────────────────────────
+        //
+        // Sweep B sees emailLastAttemptAt=T1 (recent, within the BASE_BACKOFF_MS
+        // window) and emailClaimNonce≠null.  The backoff guard skips the row
+        // before the CAS is even attempted.
+
+        const sweepBResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+        expect(sweepBResult.sent).toBe(0);
+        // Row was scanned (emailError still non-null) but skipped by backoff.
+        expect(sweepBResult.scanned).toBe(1);
+        expect(sweepBResult.skipped).toBe(1);
+        // Transport was not invoked by sweep B.
+        expect(sendArtworkInquiry).toHaveBeenCalledTimes(1);
+
+        // ── Release sweep A ───────────────────────────────────────────────────
+
+        releaseSweepA();
+        const sweepAResult = await sweepADone;
+
+        // Sweep A delivered successfully.
+        expect(sweepAResult.sent).toBe(1);
+        expect(sweepAResult.failed).toBe(0);
+
+        // ── Final DB state ────────────────────────────────────────────────────
+
+        const rowFinal = await fetchRow(inqId);
+        expect(rowFinal?.emailError).toBeNull();
+        expect(rowFinal?.emailAttempts).toBe(1);
+        // Claim nonce released by the success write.
+        expect((rowFinal as any)?.emailClaimNonce).toBeNull();
+
+        // ── Second sweep: no double-send ──────────────────────────────────────
+
+        const secondSweep = await sweepUnsentInquiryEmails(new Date(), tenantId);
+        expect(secondSweep.scanned).toBe(0);
+        expect(sendArtworkInquiry).toHaveBeenCalledTimes(1); // still 1
+      },
+    );
+
+    /**
+     * Task #969 — Expired-claim recovery: a row left with a non-null
+     * emailClaimNonce and an old emailLastAttemptAt (worker crashed before
+     * either completion write) must become deliverable again.
+     *
+     * Two recovery paths are exercised:
+     *  A. requeueNoContactEmailInquiries resets the row when the claim is
+     *     expired (emailLastAttemptAt < now − CLAIM_LEASE_MS).
+     *  B. A fresh sweep can reclaim an expired-claim row via the CAS (the
+     *     claim-expiry branch in the WHERE clause) and deliver it.
+     */
+    it(
+      "recovers a row whose sweep claim expired (worker crash simulation) (Task #969)",
+      { timeout: 30_000 },
+      async () => {
+        // ── Seed ─────────────────────────────────────────────────────────────
+
+        const tenantId = makeId("tenant-969b");
+        const artworkId = makeId("artwork-969b");
+        const inqId = makeId("inq-969b");
+
+        await insertTenant(tenantId, {
+          contactEmail: "gallery-969b@test.example",
+        });
+        await insertArtwork(artworkId, tenantId);
+        CREATED_INQUIRY_IDS.push(inqId);
+
+        // Simulate a crashed-worker scenario: the row was claimed (both
+        // emailClaimNonce and emailLastAttemptAt are set) but the worker died
+        // before issuing either the success or failure completion write.
+        // emailLastAttemptAt is set far enough in the past to exceed
+        // CLAIM_LEASE_MS so the claim is treated as expired.
+        const expiredClaimAt = new Date(Date.now() - CLAIM_LEASE_MS - 60_000);
+        const staleCrashNonce = "stale-nonce-from-crashed-worker";
+
+        await db.insert(inquiriesTable).values({
+          id: inqId,
+          tenantId,
+          artworkId,
+          artworkTitle: "Test Artwork 969b",
+          buyerName: "Race Buyer 969b",
+          buyerEmail: "buyer-969b@test.example",
+          message: "Is this available?",
+          emailError: NO_CONTACT_EMAIL_ERROR,
+          emailAttempts: 0,
+          emailLastAttemptAt: expiredClaimAt,
+          status: "NEW",
+        } as any);
+
+        // Manually stamp the stale nonce as if a previous worker died mid-claim.
+        await db
+          .update(inquiriesTable)
+          .set({ emailClaimNonce: staleCrashNonce } as any)
+          .where(eq(inquiriesTable.id, inqId));
+
+        mockSession.tenantId = tenantId;
+
+        // ── Pre-condition: claim is visible but expired ───────────────────────
+
+        const rowBefore = await fetchRow(inqId);
+        expect((rowBefore as any)?.emailClaimNonce).toBe(staleCrashNonce);
+        expect(rowBefore?.emailLastAttemptAt).toEqual(expiredClaimAt);
+        expect(rowBefore?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+
+        // ── Path A: requeue resets an expired-claim row ───────────────────────
+        //
+        // requeueNoContactEmailInquiries should NOT skip this row even though
+        // emailClaimNonce is non-null, because emailLastAttemptAt is older than
+        // CLAIM_LEASE_MS (the claim is expired / abandoned).
+
+        await requeueNoContactEmailInquiries(tenantId);
+
+        const rowAfterRequeue = await fetchRow(inqId);
+        // Expired claim → requeue was allowed to reset it.
+        expect(rowAfterRequeue?.emailAttempts).toBe(0);
+        expect(rowAfterRequeue?.emailLastAttemptAt).toBeNull();
+        // Note: requeue only resets emailAttempts and emailLastAttemptAt; the
+        // stale nonce is cleared by the sweep's completion write, not here.
+
+        // ── Path B: fresh sweep delivers after the requeue ────────────────────
+
+        sendArtworkInquiry.mockResolvedValue(true);
+        const sweepResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+        expect(sweepResult.sent).toBe(1);
+        expect(sweepResult.scanned).toBe(1);
+        expect(sendArtworkInquiry).toHaveBeenCalledTimes(1);
+
+        // ── Final DB state ────────────────────────────────────────────────────
+
+        const rowFinal = await fetchRow(inqId);
+        expect(rowFinal?.emailError).toBeNull();
+        expect(rowFinal?.emailAttempts).toBe(1);
+        // Sweep's completion write cleared the nonce (regardless of whether it
+        // was the stale or a newly-issued one).
+        expect((rowFinal as any)?.emailClaimNonce).toBeNull();
       },
     );
   },

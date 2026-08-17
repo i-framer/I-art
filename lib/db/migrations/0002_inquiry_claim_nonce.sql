@@ -1,0 +1,12 @@
+-- Add a claim-nonce column to the inquiry table so the email sweep can
+-- atomically mark a row as "in flight" during delivery.
+--
+-- The sweep sets email_claim_nonce to a random UUID when it claims a row
+-- (alongside email_last_attempt_at).  requeueNoContactEmailInquiries and
+-- related requeue helpers skip rows where the nonce is non-null, ensuring
+-- that a gallery email change cannot make an in-flight claimed row
+-- re-claimable and trigger a duplicate delivery.
+--
+-- The nonce is cleared to null in both the success and failure completion
+-- writes, releasing the claim for future sweep passes.
+ALTER TABLE "inquiry" ADD COLUMN "email_claim_nonce" text;

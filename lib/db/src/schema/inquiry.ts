@@ -24,6 +24,12 @@ export const inquiriesTable = pgTable("inquiry", {
   // emailAttempts counts every send attempt (initial + retries).
   emailAttempts: integer("email_attempts").default(0).notNull(),
   emailLastAttemptAt: timestamp("email_last_attempt_at", { withTimezone: true }),
+  // Set to a UUID when the sweep atomically claims a row for delivery; cleared
+  // to null on success or failure.  requeueNoContactEmailInquiries and other
+  // requeue helpers skip rows where this is non-null so a concurrent requeue
+  // cannot make an in-flight claimed row re-claimable (which would allow a
+  // second sweep pass to double-send the same inquiry email).
+  emailClaimNonce: text("email_claim_nonce"),
   status: inquiryStatusEnum("status").default("NEW").notNull(),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true })
