@@ -825,6 +825,167 @@ describeIntegration(
     );
 
     /**
+     * Task #972 — Confirm the no-contact banner count drops correctly when one
+     * inquiry in a batch fails to send.
+     *
+     * getNoContactEmailInquiryCount drives the warning banner in the gallery
+     * admin UI.  It counts rows where emailError = NO_CONTACT_EMAIL_ERROR.
+     *
+     * After a partial transport failure mid-sweep:
+     *  • The 2 successfully sent rows get emailError = null → no longer counted.
+     *  • The 1 failed row gets emailError = the transport error message (not
+     *    NO_CONTACT_EMAIL_ERROR) → also no longer counted by the no-contact
+     *    query.
+     *
+     * So the no-contact banner count drops from 3 to 0.  A regression that
+     * accidentally leaves the failed row's emailError as NO_CONTACT_EMAIL_ERROR
+     * (or forgets to update it at all) would cause the banner to show the
+     * wrong number of stuck inquiries.
+     *
+     * Scenario (mirrors Task #964):
+     *  1. Seed 3 inquiries at emailAttempts=1 with emailLastAttemptAt = "just
+     *     now" — all inside their backoff windows, all with NO_CONTACT_EMAIL_ERROR.
+     *  2. Call requeueNoContactEmailInquiries → resets all 3 to
+     *     emailAttempts=0, emailLastAttemptAt=null; emailError stays intact.
+     *  3. Persist a contact email so the sweep can attempt delivery.
+     *  4. Mock sendArtworkInquiry: succeed, reject, succeed.
+     *  5. Run sweepUnsentInquiryEmails; assert scanned=3, sent=2, failed=1.
+     *  6. Call getNoContactEmailInquiryCount; assert it equals 0.
+     *  7. Assert the failed row's emailError is non-null AND distinct from
+     *     NO_CONTACT_EMAIL_ERROR (it holds the transport error message).
+     */
+    it(
+      "no-contact banner count drops to 0 when 2 of 3 inquiries send and 1 fails mid-sweep (Task #972)",
+      async () => {
+        const tenantId = makeId("tenant-972");
+        // Start with NO contact email so all 3 inquiries land with NO_CONTACT_EMAIL_ERROR.
+        await insertTenant(tenantId);
+
+        const artworkId = makeId("artwork-972");
+        await insertArtwork(artworkId, tenantId);
+
+        // Seed 3 inquiries at emailAttempts=1 with emailLastAttemptAt "just now"
+        // so each is inside its backoff window.  Without the requeue they'd all
+        // be skipped on the next sweep pass.
+        const recentAt = new Date();
+
+        const inqId1 = makeId("inq-972-a");
+        const inqId2 = makeId("inq-972-b");
+        const inqId3 = makeId("inq-972-c");
+
+        await Promise.all([
+          insertNoContactInquiry(inqId1, tenantId, artworkId, 1, recentAt),
+          insertNoContactInquiry(inqId2, tenantId, artworkId, 1, recentAt),
+          insertNoContactInquiry(inqId3, tenantId, artworkId, 1, recentAt),
+        ]);
+
+        mockSession.tenantId = tenantId;
+
+        // ── Pre-condition: all 3 rows carry NO_CONTACT_EMAIL_ERROR ────────────
+
+        const countBefore = await getNoContactEmailInquiryCount();
+        expect(countBefore).toBe(3);
+
+        // ── Gallery owner saves a contact email → single bulk requeue ─────────
+
+        await requeueNoContactEmailInquiries(tenantId);
+
+        // Confirm all 3 rows are reset and still carry NO_CONTACT_EMAIL_ERROR.
+        const [a1, a2, a3] = await Promise.all([
+          fetchRow(inqId1),
+          fetchRow(inqId2),
+          fetchRow(inqId3),
+        ]);
+        expect(a1?.emailAttempts).toBe(0);
+        expect(a2?.emailAttempts).toBe(0);
+        expect(a3?.emailAttempts).toBe(0);
+        expect(a1?.emailLastAttemptAt).toBeNull();
+        expect(a2?.emailLastAttemptAt).toBeNull();
+        expect(a3?.emailLastAttemptAt).toBeNull();
+        expect(a1?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+        expect(a2?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+        expect(a3?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+
+        // No-contact count still 3 after requeue — emailError is preserved.
+        const countAfterRequeue = await getNoContactEmailInquiryCount();
+        expect(countAfterRequeue).toBe(3);
+
+        // ── Persist the contact email so the sweep can attempt delivery ────────
+
+        await db
+          .update(tenantsTable)
+          .set({ contactEmail: "owner-972@gallery.test" })
+          .where(eq(tenantsTable.id, tenantId));
+
+        // ── Mock transport: succeed for calls 1 and 3; reject for call 2 ──────
+
+        const transportError = new Error(
+          "Transport failure: connection refused (972)",
+        );
+        sendArtworkInquiry
+          .mockResolvedValueOnce(true)
+          .mockRejectedValueOnce(transportError)
+          .mockResolvedValueOnce(true);
+
+        // ── Sweep runs ────────────────────────────────────────────────────────
+
+        const sweepResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+        // The sweep must continue past the mid-loop rejection.
+        expect(sweepResult.scanned).toBe(3);
+        expect(sweepResult.sent).toBe(2);
+        expect(sweepResult.failed).toBe(1);
+        expect(sweepResult.skipped).toBe(0);
+        expect(sendArtworkInquiry).toHaveBeenCalledTimes(3);
+
+        // ── No-contact banner count drops to 0 ───────────────────────────────
+        //
+        // All three rows have left the NO_CONTACT_EMAIL_ERROR state:
+        //  • The 2 successful rows have emailError = null.
+        //  • The 1 failed row has emailError = transport error message (not
+        //    NO_CONTACT_EMAIL_ERROR), so it is also excluded from this count.
+        // A regression that forgets to update the failed row's emailError, or
+        // accidentally keeps it as NO_CONTACT_EMAIL_ERROR, would cause this
+        // assertion to fail.
+
+        const countAfterSweep = await getNoContactEmailInquiryCount();
+        expect(countAfterSweep).toBe(0);
+
+        // ── DB state ──────────────────────────────────────────────────────────
+
+        const [f1, f2, f3] = await Promise.all([
+          fetchRow(inqId1),
+          fetchRow(inqId2),
+          fetchRow(inqId3),
+        ]);
+
+        const allRows = [f1, f2, f3];
+        const successRows = allRows.filter((r) => r?.emailError === null);
+        const failedRows = allRows.filter(
+          (r) =>
+            r?.emailError !== null &&
+            r?.emailError !== NO_CONTACT_EMAIL_ERROR,
+        );
+
+        expect(successRows).toHaveLength(2);
+        expect(failedRows).toHaveLength(1);
+
+        // Successful rows: emailError cleared, attempts incremented.
+        for (const row of successRows) {
+          expect(row?.emailError).toBeNull();
+          expect(row?.emailAttempts).toBe(1);
+        }
+
+        // Failed row: emailError is the transport error message — non-null AND
+        // distinct from NO_CONTACT_EMAIL_ERROR.  This is the property that makes
+        // the no-contact banner count drop to 0 rather than 1.
+        expect(failedRows[0]?.emailError).toBe(transportError.message);
+        expect(failedRows[0]?.emailError).not.toBe(NO_CONTACT_EMAIL_ERROR);
+        expect(failedRows[0]?.emailAttempts).toBe(1);
+      },
+    );
+
+    /**
      * Task #953 — Confirm that requeueNoContactEmailInquiries clears the
      * backoff window so the freshly-requeued row is selected on the very next
      * sweep pass without any time-travel.
