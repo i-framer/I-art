@@ -395,6 +395,47 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(cleared?.aboutText).toBeNull();
   });
 
+  it("setting aboutText to a new value after clearing it persists correctly (null → non-null round-trip)", async () => {
+    // Arrange: start with a non-empty aboutText.
+    const { tenantId } = await createTenant();
+
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "",
+      aboutText: "A contemporary art gallery in Sydney.",
+      location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const withAbout = await tenantRow(tenantId);
+    expect(withAbout?.aboutText).toBe("A contemporary art gallery in Sydney.");
+
+    // Act: clear the aboutText (stores null).
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "",
+      aboutText: "",   // ← deliberate clear
+      location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const cleared = await tenantRow(tenantId);
+    expect(cleared?.aboutText).toBeNull();
+
+    // Act: set a different aboutText after the clear (null → non-null).
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "",
+      aboutText: "Now open in Melbourne.",   // ← new value after null
+      location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: the DB row must have the new text, not null.
+    const withNewAbout = await tenantRow(tenantId);
+    expect(withNewAbout?.aboutText).toBe("Now open in Melbourne.");
+  });
+
   it("foreign tenant row is not affected by own session update", async () => {
     const { tenantId: _ownId } = await createTenant("My Gallery");
 
