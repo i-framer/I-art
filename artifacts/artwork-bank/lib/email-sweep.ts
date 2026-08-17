@@ -472,14 +472,17 @@ export async function requeueNoContactEmailInquiries(
       // Also clear any stale nonce left by a crashed worker.  For rows with no
       // active claim (isNull nonce) this is a no-op.  For rows whose claim has
       // expired (worker died), clearing the nonce here ensures the next CAS
-      // claim (which checks for a non-null nonce + non-null recent timestamp)
-      // can succeed when emailLastAttemptAt has already been reset to null.
+      // claim can succeed when emailLastAttemptAt has already been reset to null.
       emailClaimNonce: null,
     })
     .where(
       and(
         eq(inquiriesTable.tenantId, tenantId),
         eq(inquiriesTable.emailError, NO_CONTACT_EMAIL_ERROR),
+        // Archived inquiries must not be resurrected — they were explicitly
+        // dismissed by the gallery owner and should remain outside the sweep
+        // candidate set even after a contact email is added.
+        isNull(inquiriesTable.archivedAt),
         // Skip rows whose claim is still active (nonce set AND claimed recently).
         // Allow reset if the nonce is null (never claimed / already released) OR
         // the claim has expired (emailLastAttemptAt is older than CLAIM_LEASE_MS)
@@ -603,6 +606,9 @@ export async function sweepUnsentInquiryEmails(
     where: and(
       isNotNull(inquiriesTable.emailError),
       lt(inquiriesTable.emailAttempts, MAX_EMAIL_ATTEMPTS),
+      // Archived inquiries are excluded from delivery — they were explicitly
+      // dismissed and must not receive a notification even if emailError is
+      // still set on the row.
       isNull(inquiriesTable.archivedAt),
       tenantId ? eq(inquiriesTable.tenantId, tenantId) : undefined,
     ),
