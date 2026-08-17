@@ -309,6 +309,46 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(withNewLocation?.location).toBe("Brisbane, QLD");
   });
 
+  it("whitespace-only location stores null, and re-setting it afterwards persists the new value", async () => {
+    // Arrange: start with a real, non-empty location.
+    const { tenantId } = await createTenant();
+
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "", aboutText: "",
+      location: "Adelaide, SA",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const withLocation = await tenantRow(tenantId);
+    expect(withLocation?.location).toBe("Adelaide, SA");
+
+    // Act: submit a whitespace-only location.
+    // `?.trim() || null` in actions.ts collapses "  " → "" → null, so the
+    // persisted value must be null, not the whitespace string.
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "", aboutText: "",
+      location: "   ",   // ← whitespace-only — must NOT be stored as-is
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const afterWhitespace = await tenantRow(tenantId);
+    expect(afterWhitespace?.location).toBeNull();
+
+    // Act: set a real location after the whitespace-induced null (null → non-null).
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "", aboutText: "",
+      location: "Perth, WA",   // ← real value after null
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: the DB row must contain the new location, not null.
+    const withNewLocation = await tenantRow(tenantId);
+    expect(withNewLocation?.location).toBe("Perth, WA");
+  });
+
   it("themeColor persists; clearing stores null", async () => {
     const { tenantId } = await createTenant();
 
