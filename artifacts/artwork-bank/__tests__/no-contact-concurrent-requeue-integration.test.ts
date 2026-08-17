@@ -166,6 +166,30 @@ async function insertSmtpErrorInquiry(
   } as any);
 }
 
+async function insertTransportErrorInquiry(
+  id: string,
+  tenantId: string,
+  artworkId: string,
+  emailError: string,
+  emailAttempts: number = 1,
+  emailLastAttemptAt: Date | null = new Date("2024-06-01T10:00:00Z"),
+): Promise<void> {
+  CREATED_INQUIRY_IDS.push(id);
+  await db.insert(inquiriesTable).values({
+    id,
+    tenantId,
+    artworkId,
+    artworkTitle: "Test Artwork 950",
+    buyerName: "Transport Error Buyer",
+    buyerEmail: "transport-buyer@example.com",
+    message: "Interested in purchasing.",
+    emailError,
+    emailAttempts,
+    emailLastAttemptAt,
+    status: "NEW",
+  } as any);
+}
+
 async function fetchRow(id: string) {
   return db.query.inquiriesTable.findFirst({
     where: eq(inquiriesTable.id, id),
@@ -1921,6 +1945,136 @@ describeIntegration(
         const activeFinal = await fetchRow(activeInqId);
         expect(activeFinal?.emailError).toBeNull();
         expect(activeFinal?.emailAttempts).toBe(1);
+      },
+    );
+
+    /**
+     * Task #985 — Confirm retrySmtpErrorInquiries skips no-contact rows even
+     * when both error types exist for the same tenant.
+     *
+     * retrySmtpErrorInquiries explicitly excludes rows where
+     * emailError = NO_CONTACT_EMAIL_ERROR.  This test seeds a tenant with BOTH
+     * a transport-error inquiry AND a no-contact-error inquiry side by side,
+     * then calls retrySmtpErrorInquiries and asserts that only the
+     * transport-error row is reset while the no-contact row is left completely
+     * untouched.
+     *
+     * A regression in the WHERE clause (e.g. dropping the NOT condition) would
+     * silently reset no-contact rows too, corrupting the no-contact banner count.
+     *
+     * Scenario:
+     *  1. Seed a tenant with 2 inquiries:
+     *     – one with emailError = NO_CONTACT_EMAIL_ERROR (emailAttempts=2,
+     *       emailLastAttemptAt=<timestamp>)
+     *     – one with emailError = transport error message (emailAttempts=2,
+     *       emailLastAttemptAt=<timestamp>)
+     *  2. Call retrySmtpErrorInquiries.
+     *  3. Assert resetCount = 1 (only the transport-error row).
+     *  4. Assert the no-contact row is completely unchanged (emailAttempts and
+     *     emailLastAttemptAt untouched).
+     *  5. Assert getNoContactEmailInquiryCount still returns 1.
+     *  6. Assert the transport-error row was reset (emailAttempts=0,
+     *     emailLastAttemptAt=null, emailError preserved).
+     */
+    it(
+      "retrySmtpErrorInquiries resets only the transport-error row; no-contact row is untouched (Task #985)",
+      async () => {
+        const tenantId = makeId("tenant-985");
+        // Tenant has a contact email already — this test is about the
+        // retrySmtpErrorInquiries filter, not the email-change requeue path.
+        await insertTenant(tenantId, {
+          contactEmail: "owner-985@gallery.test",
+        });
+
+        const artworkId = makeId("artwork-985");
+        await insertArtwork(artworkId, tenantId);
+
+        const noContactInqId = makeId("inq-985-nocontact");
+        const transportInqId = makeId("inq-985-transport");
+
+        const fixedAttemptAt = new Date("2024-07-01T09:00:00Z");
+        const transportErrorMsg =
+          "Transport failure: 550 mailbox not found (985)";
+
+        // No-contact inquiry: emailError = NO_CONTACT_EMAIL_ERROR.
+        await insertNoContactInquiry(
+          noContactInqId,
+          tenantId,
+          artworkId,
+          2,
+          fixedAttemptAt,
+        );
+
+        // Transport-error inquiry: emailError = transport error message.
+        await insertTransportErrorInquiry(
+          transportInqId,
+          tenantId,
+          artworkId,
+          transportErrorMsg,
+          2,
+          fixedAttemptAt,
+        );
+
+        mockSession.tenantId = tenantId;
+
+        // ── Pre-condition: verify both rows are seeded correctly ───────────────
+
+        const [noContactBefore, transportBefore] = await Promise.all([
+          fetchRow(noContactInqId),
+          fetchRow(transportInqId),
+        ]);
+
+        expect(noContactBefore?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+        expect(noContactBefore?.emailAttempts).toBe(2);
+        expect(noContactBefore?.emailLastAttemptAt).toEqual(fixedAttemptAt);
+
+        expect(transportBefore?.emailError).toBe(transportErrorMsg);
+        expect(transportBefore?.emailAttempts).toBe(2);
+        expect(transportBefore?.emailLastAttemptAt).toEqual(fixedAttemptAt);
+
+        // No-contact banner sees exactly 1 row.
+        const noContactCountBefore = await getNoContactEmailInquiryCount();
+        expect(noContactCountBefore).toBe(1);
+
+        // ── Call retrySmtpErrorInquiries ──────────────────────────────────────
+
+        const resetCount = await retrySmtpErrorInquiries(tenantId);
+
+        // Only the transport-error row should have been reset.
+        expect(resetCount).toBe(1);
+
+        // ── Verify no-contact row is completely untouched ─────────────────────
+
+        const noContactAfter = await fetchRow(noContactInqId);
+
+        // emailError must still be the no-contact sentinel.
+        expect(noContactAfter?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+        // emailAttempts must be unchanged — retrySmtpErrorInquiries must not
+        // have reset it to 0.
+        expect(noContactAfter?.emailAttempts).toBe(2);
+        // emailLastAttemptAt must be unchanged.
+        expect(noContactAfter?.emailLastAttemptAt).toEqual(fixedAttemptAt);
+
+        // ── Verify transport-error row was correctly reset ─────────────────────
+
+        const transportAfter = await fetchRow(transportInqId);
+
+        // emailAttempts reset to 0 — re-enters the sweep candidate set.
+        expect(transportAfter?.emailAttempts).toBe(0);
+        // emailLastAttemptAt cleared — no backoff delay on next sweep pass.
+        expect(transportAfter?.emailLastAttemptAt).toBeNull();
+        // emailError is preserved (not cleared, not changed to NO_CONTACT_EMAIL_ERROR).
+        expect(transportAfter?.emailError).toBe(transportErrorMsg);
+        expect(transportAfter?.emailError).not.toBe(NO_CONTACT_EMAIL_ERROR);
+
+        // ── No-contact banner count is still 1 ───────────────────────────────
+        //
+        // The no-contact row was not touched; its emailError is still the
+        // sentinel.  A regression that accidentally resets no-contact rows
+        // would cause this count to drop to 0.
+
+        const noContactCountAfter = await getNoContactEmailInquiryCount();
+        expect(noContactCountAfter).toBe(1);
       },
     );
   },

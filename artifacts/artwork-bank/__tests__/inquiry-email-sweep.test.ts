@@ -627,7 +627,8 @@ describe("sweepUnsentInquiryEmails", () => {
     expect(state.updates).toHaveLength(1);
 
     // The SET values are the reset values (emailAttempts back to 0).
-    // emailClaimNonce is also cleared so any stale sweep claim is released.
+    // emailClaimNonce is also cleared to release any stale sweep claim left by
+    // a crashed worker — this is an intentional part of the reset.
     expect(state.updates[0]).toEqual({
       emailAttempts: 0,
       emailLastAttemptAt: null,
