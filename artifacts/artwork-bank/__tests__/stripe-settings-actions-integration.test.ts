@@ -358,4 +358,45 @@ describeIntegration("Stripe settings actions — real-DB integration", () => {
     });
     expect(row?.stripeCustomerId).toBe("cus_staff_test");
   });
+
+  it("openBillingPortal: mid-flight session expiry to staff → redirects unauthorized with no Stripe or DB mutation", async () => {
+    // Simulates a session that passes the initial owner check but is then
+    // downgraded to "staff" (or expires) before the Stripe billing-portal call.
+    // The action re-validates the session immediately before hitting Stripe;
+    // the second check catches the downgrade and redirects to unauthorized
+    // without making any Stripe API call or writing to the DB.
+    const { getSession } = await import("@/lib/auth");
+    const tenantId = await createTenant({ stripeCustomerId: "cus_mid_flight" });
+
+    // First call  → "owner"  (passes the initial role guard at the top of the action).
+    // Second call → "staff"  (mid-flight downgrade, caught by the pre-Stripe re-check).
+    (getSession as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        userId: "u-owner-mid-flight",
+        tenantId,
+        email: "owner@gallery.test",
+        role: "owner",
+      })
+      .mockResolvedValueOnce({
+        userId: "u-owner-mid-flight",
+        tenantId,
+        email: "owner@gallery.test",
+        role: "staff",
+      });
+
+    await expect(openBillingPortal()).rejects.toThrow(
+      "REDIRECT:/settings/billing?billing=unauthorized",
+    );
+
+    // No Stripe API calls must have been made — the mid-flight guard fired
+    // before any external call.
+    expect(stripeCustomers.retrieve).not.toHaveBeenCalled();
+    expect(stripeBillingPortalSessions.create).not.toHaveBeenCalled();
+
+    // DB must be untouched — stripeCustomerId stays unchanged.
+    const row = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, tenantId),
+    });
+    expect(row?.stripeCustomerId).toBe("cus_mid_flight");
+  });
 });

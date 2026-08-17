@@ -517,6 +517,14 @@ export async function openBillingPortal() {
   });
   if (!tenant?.stripeCustomerId) redirect("/settings/billing");
 
+  // Re-validate the session immediately before making any external Stripe
+  // call.  The DB lookup above is async; a session can expire or be
+  // downgraded (e.g. owner → staff) between the initial role check and this
+  // point.  A second read prevents a mid-flight downgrade from reaching the
+  // billing-portal creation step.
+  const freshSession = await getSession();
+  if (freshSession.role !== "owner") redirect("/settings/billing?billing=unauthorized");
+
   const { getStripeClient } = await import("@/lib/stripe");
 
   let stripe;
