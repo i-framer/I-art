@@ -27,7 +27,7 @@ import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-const mockSession = { userId: "u-settings", tenantId: "PLACEHOLDER" };
+const mockSession = { userId: "u-settings", tenantId: "PLACEHOLDER", role: "owner" };
 vi.mock("@/lib/auth", () => ({
   getSession: vi.fn(async () => ({ ...mockSession })),
 }));

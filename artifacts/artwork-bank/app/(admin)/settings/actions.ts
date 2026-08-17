@@ -177,6 +177,7 @@ export async function saveCustomDomain(
 ): Promise<{ error: string | null }> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  if (session.role !== "owner") return { error: "Only owners can manage custom domains." };
 
   const rawDomain = (formData.get("customDomain") as string | null)
     ?.trim()
@@ -208,6 +209,7 @@ export async function saveCustomDomain(
 export async function removeCustomDomain() {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  if (session.role !== "owner") redirect("/settings?error=unauthorized");
 
   await db
     .update(tenantsTable)
@@ -306,6 +308,7 @@ function isStripeConnectNotEnabled(err: unknown): boolean {
 export async function startStripeOnboarding() {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  if (session.role !== "owner") redirect("/settings?stripe=unauthorized");
 
   const tenant = await db.query.tenantsTable.findFirst({
     where: eq(tenantsTable.id, session.tenantId),
@@ -411,6 +414,7 @@ function getBillingBaseUrl(): string {
 export async function startSubscriptionCheckout() {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  if (session.role !== "owner") redirect("/settings/billing?billing=unauthorized");
 
   const tenant = await db.query.tenantsTable.findFirst({
     where: eq(tenantsTable.id, session.tenantId),

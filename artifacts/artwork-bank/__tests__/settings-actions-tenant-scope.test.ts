@@ -95,6 +95,7 @@ import {
   verifyCustomDomain,
   removeTeamMember,
   startStripeOnboarding,
+  startSubscriptionCheckout,
   type InviteResultState,
 } from "@/app/(admin)/settings/actions";
 import { and, eq } from "drizzle-orm";
@@ -286,6 +287,41 @@ describe("startStripeOnboarding tenant scoping", () => {
     );
     expect(JSON.stringify(state.tenantFindWhere)).toEqual(
       JSON.stringify(eq(tables.tenantsTable.id as any, "tenant-B")),
+    );
+    expect(state.updates).toEqual([]);
+  });
+
+  it("rejects staff sessions with an unauthorized redirect and touches nothing", async () => {
+    asTenantB("staff");
+    await expect(startStripeOnboarding()).rejects.toThrow(
+      "REDIRECT:/settings?stripe=unauthorized",
+    );
+    expect(state.updates).toEqual([]);
+  });
+});
+
+describe("owner-only guards on destructive settings actions", () => {
+  it("saveCustomDomain rejects staff and returns an error without touching the DB", async () => {
+    asTenantB("staff");
+    const fd = new FormData();
+    fd.set("customDomain", "www.gallery-b.com");
+    const res = await saveCustomDomain({ error: null }, fd);
+    expect(res).toEqual({ error: "Only owners can manage custom domains." });
+    expect(state.updates).toEqual([]);
+  });
+
+  it("removeCustomDomain rejects staff with an unauthorized redirect and touches nothing", async () => {
+    asTenantB("staff");
+    await expect(removeCustomDomain()).rejects.toThrow(
+      "REDIRECT:/settings?error=unauthorized",
+    );
+    expect(state.updates).toEqual([]);
+  });
+
+  it("startSubscriptionCheckout rejects staff with an unauthorized redirect and touches nothing", async () => {
+    asTenantB("staff");
+    await expect(startSubscriptionCheckout()).rejects.toThrow(
+      "REDIRECT:/settings/billing?billing=unauthorized",
     );
     expect(state.updates).toEqual([]);
   });

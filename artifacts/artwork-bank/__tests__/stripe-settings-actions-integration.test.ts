@@ -33,6 +33,7 @@ vi.mock("@/lib/auth", () => ({
     userId: "u-stripe-settings",
     tenantId: mockTenantId.value,
     email: "owner@gallery.test",
+    role: "owner",
   })),
 }));
 vi.mock("@/lib/billing", () => ({

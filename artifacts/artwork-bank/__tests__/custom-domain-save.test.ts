@@ -89,7 +89,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   existingDomainRow = null;
   dbUpdates.length = 0;
-  getSession.mockResolvedValue({ userId: "u-1", tenantId: "tenant-A" });
+  getSession.mockResolvedValue({ userId: "u-1", tenantId: "tenant-A", role: "owner" });
 });
 
 describe("saveCustomDomain — authentication", () => {
