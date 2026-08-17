@@ -184,6 +184,41 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(row?.contactEmail).toBeNull();
   });
 
+  it("setting contactEmail to a new value after clearing it persists correctly (null → non-null round-trip)", async () => {
+    // Arrange: start with a non-empty contactEmail.
+    const { tenantId } = await createTenant();
+
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "first@gallery.test",
+      themeColor: "", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const withEmail = await tenantRow(tenantId);
+    expect(withEmail?.contactEmail).toBe("first@gallery.test");
+
+    // Act: clear the contactEmail (stores null).
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "",           // ← deliberate clear
+      themeColor: "", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const cleared = await tenantRow(tenantId);
+    expect(cleared?.contactEmail).toBeNull();
+
+    // Act: set a different contactEmail after the clear (null → non-null).
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "second@gallery.test",   // ← new value
+      themeColor: "", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: the DB row must have the new email, not null.
+    const withNewEmail = await tenantRow(tenantId);
+    expect(withNewEmail?.contactEmail).toBe("second@gallery.test");
+  });
+
   it("empty location stores null", async () => {
     const { tenantId } = await createTenant();
 
