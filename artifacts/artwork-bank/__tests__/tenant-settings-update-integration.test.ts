@@ -24,6 +24,8 @@
  *  17. Requeue is skipped entirely when contactEmail is cleared.
  *  18. Saving a contactEmail requeues exhausted no-contact-email inquiries.
  *  19. Requeue only resets inquiries with the exact 'no gallery contact email' error, not other failed inquiries.
+ *  20. Requeue is isolated to the restoring tenant — a concurrent restore from
+ *      a different tenant must not reset the other tenant's inquiries.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -802,5 +804,52 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(smtpRow?.emailError).toBe("SMTP error");
     // emailLastAttemptAt was set during insert — must still be non-null.
     expect(smtpRow?.emailLastAttemptAt).not.toBeNull();
+  });
+
+  it("requeue is isolated to the restoring tenant — a concurrent restore from a different tenant does not reset the other tenant's inquiries", async () => {
+    // Arrange: create two independent tenants, each starting without a
+    // contactEmail and each with one exhausted "no gallery contact email" inquiry.
+
+    // --- Tenant A ---
+    const { tenantId: tenantAId, userId: userAId } = await createTenant("Gallery A");
+    await db.update(tenantsTable).set({ contactEmail: null } as any).where(eq(tenantsTable.id, tenantAId));
+    const artworkAId = await createArtwork(tenantAId);
+    const inquiryAId = await createExhaustedNoEmailInquiry(tenantAId, artworkAId);
+
+    // --- Tenant B ---
+    // createTenant sets mockSession to the new tenant, so we restore A's session
+    // manually after creating B.
+    const { tenantId: tenantBId, userId: _userBId } = await createTenant("Gallery B");
+    await db.update(tenantsTable).set({ contactEmail: null } as any).where(eq(tenantsTable.id, tenantBId));
+    const artworkBId = await createArtwork(tenantBId);
+    const inquiryBId = await createExhaustedNoEmailInquiry(tenantBId, artworkBId);
+
+    // Verify both inquiries start exhausted.
+    const beforeA = await db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryAId) });
+    const beforeB = await db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryBId) });
+    expect(beforeA?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(beforeB?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+
+    // Act: restore contactEmail for tenant A only — switch the session to A.
+    mockSession.value = { userId: userAId, tenantId: tenantAId, role: "owner" };
+
+    await updateTenantSettings(fd({
+      businessName: "Gallery A",
+      contactEmail: "gallery-a@example.com",
+      themeColor: "", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: tenant A's inquiry must have been reset.
+    const afterA = await db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryAId) });
+    expect(afterA?.emailAttempts).toBe(0);
+    expect(afterA?.emailError).toBe("no gallery contact email");
+    expect(afterA?.emailLastAttemptAt).toBeNull();
+
+    // Assert: tenant B's inquiry must remain untouched — the WHERE clause in
+    // requeueNoContactEmailInquiries filters by tenantId, so tenant B's row
+    // must still be exhausted.
+    const afterB = await db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryBId) });
+    expect(afterB?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(afterB?.emailError).toBe("no gallery contact email");
   });
 });
