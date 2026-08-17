@@ -5,15 +5,24 @@
  *   Validates form fields (businessName, themeColor, aboutText, location, contactEmail)
  *   and updates the tenantsTable row for session.tenantId.
  *
- *  1. businessName update persists correctly.
- *  2. contactEmail update persists correctly.
- *  3. location update persists; empty string stores null.
- *  4. location null → non-null round-trip: re-setting after a clear persists.
- *  5. themeColor update persists; clearing stores null.
- *  6. aboutText update persists.
- *  7. Clearing an existing aboutText stores null (not empty string).
- *  8. Re-setting aboutText after clearing it persists the new value (null → non-null round-trip).
- *  9. Foreign tenant row is not affected by own session update.
+ *  1.  businessName update persists correctly.
+ *  2.  contactEmail update persists correctly.
+ *  3.  Clearing contactEmail stores null (not empty string).
+ *  4.  contactEmail null → non-null round-trip: re-setting after a clear persists.
+ *  5.  empty location stores null.
+ *  6.  Clearing an existing location stores null (not empty string).
+ *  7.  location null → non-null round-trip: re-setting after a clear persists.
+ *  8.  themeColor update persists; clearing stores null.
+ *  9.  Clearing an existing themeColor stores null (not empty string).
+ *  10. themeColor null → non-null round-trip: re-setting after a clear persists the new value.
+ *  11. aboutText update persists.
+ *  12. Clearing an existing aboutText stores null (not empty string).
+ *  13. aboutText null → non-null round-trip: re-setting after a clear persists the new value.
+ *  14. Foreign tenant row is not affected by own session update.
+ *  15. Settings save redirects and contactEmail is persisted when requeue silently throws.
+ *  16. Completes and redirects without logging errors when no inquiries need requeuing.
+ *  17. Requeue is skipped entirely when contactEmail is cleared.
+ *  18. Saving a contactEmail requeues exhausted no-contact-email inquiries.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
