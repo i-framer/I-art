@@ -575,6 +575,131 @@ describeIntegration(
     );
 
     /**
+     * Task #964 — Confirm the sweep continues and delivers the remaining rows
+     * when one sendArtworkInquiry call rejects mid-loop.
+     *
+     * Scenario:
+     *  1. Seed 3 inquiries at emailAttempts=1 (with emailLastAttemptAt set to
+     *     "just now") so all have NO_CONTACT_EMAIL_ERROR and are inside their
+     *     backoff windows.
+     *  2. Call requeueNoContactEmailInquiries — resets all 3 to
+     *     emailAttempts=0, emailLastAttemptAt=null, ready to be swept.
+     *  3. Persist a contact email on the tenant so the sweep can attempt delivery.
+     *  4. Mock sendArtworkInquiry to reject on the 2nd call only.
+     *  5. Run sweepUnsentInquiryEmails.
+     *  6. Assert sweepResult: sent=2, failed=1, scanned=3.
+     *  7. Assert DB state: the 2 successful rows have emailError=null; the
+     *     failed row retains its transport error message.
+     */
+    it(
+      "partial transport failure mid-sweep: sweep continues and delivers remaining rows (Task #964)",
+      async () => {
+        const tenantId = makeId("tenant-964");
+        // Start with NO contact email — all 3 inquiries will have NO_CONTACT_EMAIL_ERROR.
+        await insertTenant(tenantId);
+
+        const artworkId = makeId("artwork-964");
+        await insertArtwork(artworkId, tenantId);
+
+        // Seed 3 inquiries at emailAttempts=1 with emailLastAttemptAt "just now"
+        // so each is inside its backoff window.  Without the requeue they'd all
+        // be skipped on the next sweep pass.
+        const recentAt = new Date();
+
+        const inqId1 = makeId("inq-964-a");
+        const inqId2 = makeId("inq-964-b");
+        const inqId3 = makeId("inq-964-c");
+
+        await Promise.all([
+          insertNoContactInquiry(inqId1, tenantId, artworkId, 1, recentAt),
+          insertNoContactInquiry(inqId2, tenantId, artworkId, 1, recentAt),
+          insertNoContactInquiry(inqId3, tenantId, artworkId, 1, recentAt),
+        ]);
+
+        mockSession.tenantId = tenantId;
+
+        // ── Gallery owner saves a contact email → single bulk requeue ─────────
+
+        await requeueNoContactEmailInquiries(tenantId);
+
+        // All 3 rows must be reset: emailAttempts=0, emailLastAttemptAt=null.
+        const [a1, a2, a3] = await Promise.all([
+          fetchRow(inqId1),
+          fetchRow(inqId2),
+          fetchRow(inqId3),
+        ]);
+        expect(a1?.emailAttempts).toBe(0);
+        expect(a2?.emailAttempts).toBe(0);
+        expect(a3?.emailAttempts).toBe(0);
+        expect(a1?.emailLastAttemptAt).toBeNull();
+        expect(a2?.emailLastAttemptAt).toBeNull();
+        expect(a3?.emailLastAttemptAt).toBeNull();
+        // emailError stays intact so the sweep candidate query selects the rows.
+        expect(a1?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+        expect(a2?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+        expect(a3?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+
+        // ── Persist the contact email so the sweep can attempt delivery ────────
+
+        await db
+          .update(tenantsTable)
+          .set({ contactEmail: "owner-964@gallery.test" })
+          .where(eq(tenantsTable.id, tenantId));
+
+        // ── Mock transport: succeed for calls 1 and 3; reject for call 2 ──────
+
+        const transportError = new Error("Transport failure: connection refused");
+        sendArtworkInquiry
+          .mockResolvedValueOnce(true)
+          .mockRejectedValueOnce(transportError)
+          .mockResolvedValueOnce(true);
+
+        // ── Sweep runs ────────────────────────────────────────────────────────
+
+        const sweepResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+        // The sweep must continue past the mid-loop rejection.
+        expect(sweepResult.scanned).toBe(3);
+        expect(sweepResult.sent).toBe(2);
+        expect(sweepResult.failed).toBe(1);
+        expect(sweepResult.skipped).toBe(0);
+        expect(sendArtworkInquiry).toHaveBeenCalledTimes(3);
+
+        // ── DB state: fetch rows in the order the sweep processed them ─────────
+        //
+        // sweepUnsentInquiryEmails iterates the candidates in the order the DB
+        // returns them.  We don't control which row is 2nd, so we check that
+        // exactly 2 rows have emailError=null (success) and exactly 1 row
+        // retains its error string (failure), regardless of insertion order.
+
+        const [f1, f2, f3] = await Promise.all([
+          fetchRow(inqId1),
+          fetchRow(inqId2),
+          fetchRow(inqId3),
+        ]);
+
+        const allRows = [f1, f2, f3];
+        const successRows = allRows.filter((r) => r?.emailError === null);
+        const failedRows = allRows.filter(
+          (r) => r?.emailError !== null && r?.emailError !== NO_CONTACT_EMAIL_ERROR,
+        );
+
+        expect(successRows).toHaveLength(2);
+        expect(failedRows).toHaveLength(1);
+
+        // Successful rows must have emailAttempts incremented and emailError cleared.
+        for (const row of successRows) {
+          expect(row?.emailAttempts).toBe(1);
+          expect(row?.emailError).toBeNull();
+        }
+
+        // Failed row must retain the transport error message.
+        expect(failedRows[0]?.emailError).toBe(transportError.message);
+        expect(failedRows[0]?.emailAttempts).toBe(1);
+      },
+    );
+
+    /**
      * Task #960 — Confirm a row requeued twice in a row (with a recent
      * emailLastAttemptAt that would normally keep it inside the backoff window)
      * still sends immediately on the next sweep.
