@@ -277,4 +277,59 @@ describeIntegration("Stripe settings actions — real-DB integration", () => {
     expect(stripeCustomers.retrieve).not.toHaveBeenCalled();
     expect(stripeBillingPortalSessions.create).not.toHaveBeenCalled();
   });
+
+  // ── Staff role guard ──────────────────────────────────────────────────────
+
+  it("startStripeOnboarding: staff role → redirects to unauthorized with zero Stripe or DB calls", async () => {
+    const { getSession } = await import("@/lib/auth");
+    const tenantId = await createTenant({ stripeAccountId: null });
+
+    (getSession as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      userId: "u-stripe-staff",
+      tenantId,
+      email: "staff@gallery.test",
+      role: "staff",
+    });
+
+    await expect(startStripeOnboarding()).rejects.toThrow(
+      "REDIRECT:/settings?stripe=unauthorized",
+    );
+
+    // No Stripe API calls at all.
+    expect(stripeAccounts.create).not.toHaveBeenCalled();
+    expect(accountLinksMock.create).not.toHaveBeenCalled();
+
+    // DB must be untouched — stripeAccountId stays null.
+    const row = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, tenantId),
+    });
+    expect(row?.stripeAccountId).toBeNull();
+  });
+
+  it("startSubscriptionCheckout: staff role → redirects to unauthorized with zero Stripe or DB calls", async () => {
+    const { getSession } = await import("@/lib/auth");
+    const tenantId = await createTenant({ stripeCustomerId: null });
+
+    (getSession as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      userId: "u-stripe-staff",
+      tenantId,
+      email: "staff@gallery.test",
+      role: "staff",
+    });
+
+    await expect(startSubscriptionCheckout()).rejects.toThrow(
+      "REDIRECT:/settings/billing?billing=unauthorized",
+    );
+
+    // No Stripe API calls at all.
+    expect(stripeCustomers.create).not.toHaveBeenCalled();
+    expect(stripeCustomers.retrieve).not.toHaveBeenCalled();
+    expect(stripeCheckoutSessions.create).not.toHaveBeenCalled();
+
+    // DB must be untouched — stripeCustomerId stays null.
+    const row = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, tenantId),
+    });
+    expect(row?.stripeCustomerId).toBeNull();
+  });
 });
