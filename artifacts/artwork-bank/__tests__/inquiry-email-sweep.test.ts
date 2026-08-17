@@ -343,6 +343,78 @@ describe("sweepUnsentInquiryEmails", () => {
     expect(sendArtworkInquiry).not.toHaveBeenCalled();
   });
 
+  it("delivers to the new address when the gallery changes their contact email after a no-contact-email failure", async () => {
+    // Scenario: the gallery had email A when the inquiry arrived, but at the
+    // time the sweep ran contactEmail was null (e.g. removed or never set),
+    // so the sweep recorded NO_CONTACT_EMAIL_ERROR and eventually exhausted
+    // MAX_EMAIL_ATTEMPTS.  The gallery then sets a *different* address B.
+    // requeueNoContactEmailInquiries resets the row; the next sweep should
+    // deliver to address B, not any cached/old address.
+    const staleInquiry = inquiry({
+      emailError: NO_CONTACT_EMAIL_ERROR,
+      emailAttempts: MAX_EMAIL_ATTEMPTS, // exhausted — excluded from sweep candidate set
+      emailLastAttemptAt: new Date("2026-06-15T08:00:00Z"),
+    });
+
+    // Gallery owner updates their address.  The settings handler calls
+    // requeueNoContactEmailInquiries which resets emailAttempts → 0 and
+    // emailLastAttemptAt → null so the sweep re-selects the row.
+    await requeueNoContactEmailInquiries("tenant-1");
+
+    // Clear the update recorded by the requeue call so assertions below only
+    // inspect writes made by the subsequent sweep.
+    state.updates.length = 0;
+
+    // Simulate the post-reset DB state: attempts reset, error sentinel intact.
+    state.candidates = [
+      {
+        ...staleInquiry,
+        emailAttempts: 0,
+        emailLastAttemptAt: null,
+        // emailError remains NO_CONTACT_EMAIL_ERROR so the sweep's
+        // isNotNull(emailError) condition still selects the row.
+      },
+    ];
+
+    // Override the tenant mock to return the gallery's *new* email address —
+    // different from any address that was on file when the inquiry was queued.
+    // This verifies the sweep reads the live tenant record rather than caching
+    // the old one.
+    const newGalleryEmail = "new-address@gallery.example";
+    vi.mocked(db.query.tenantsTable.findFirst).mockResolvedValueOnce({
+      id: "tenant-1",
+      slug: "gallery-one",
+      businessName: "Gallery One",
+      contactEmail: newGalleryEmail,
+      customDomain: null,
+      customDomainVerified: null,
+    } as any);
+
+    sendArtworkInquiry.mockResolvedValue(true);
+
+    const result = await sweepUnsentInquiryEmails(NOW);
+
+    expect(result).toEqual({ scanned: 1, sent: 1, failed: 0, skipped: 0 });
+    // Must deliver to the *new* address, not any old/cached one.
+    expect(sendArtworkInquiry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        galleryEmail: newGalleryEmail,
+        buyerEmail: "alice@example.com",
+        artworkTitle: "Sunset",
+        artworkSku: "SKU-001",
+        tenantName: "Gallery One",
+      }),
+    );
+    // emailError must be cleared and emailAttempts incremented from 0 → 1.
+    expect(state.updates).toEqual([
+      expect.objectContaining({
+        emailError: null,
+        emailAttempts: 1,
+        emailLastAttemptAt: NOW,
+      }),
+    ]);
+  });
+
   it("processes multiple candidates independently", async () => {
     sendArtworkInquiry
       .mockResolvedValueOnce(true)
