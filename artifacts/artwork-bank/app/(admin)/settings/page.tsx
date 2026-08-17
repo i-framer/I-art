@@ -311,7 +311,7 @@ export default async function SettingsPage({
       </form>
 
       {/* ── Retry failed inquiry notifications ────────────────────────────── */}
-      {failedInquiriesCount > 0 && (
+      {failedInquiriesCount > 0 && session.role === "owner" && (
         <div className="mt-8 rounded-xl border border-amber-200 bg-amber-50 p-6 space-y-4">
           <div className="flex items-start gap-3">
             <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
