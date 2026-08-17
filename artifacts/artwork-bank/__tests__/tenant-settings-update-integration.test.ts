@@ -685,4 +685,68 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     // emailLastAttemptAt cleared so no backoff delay applies.
     expect(row?.emailLastAttemptAt).toBeNull();
   });
+
+  it("clearing contactEmail then re-adding it restores gallery notifications (requeue fires on restore)", async () => {
+    // Arrange: start with a contactEmail so the tenant has one set.
+    const { tenantId } = await createTenant("Gallery With Restored Email");
+
+    // Step 1: confirm the tenant has a contactEmail (set in createTenant).
+    const initialRow = await tenantRow(tenantId);
+    expect(initialRow?.contactEmail).toBe("original@test.com");
+
+    // Step 2: clear the contactEmail (stores null); requeue must NOT fire here.
+    const requeueSpy = vi.spyOn(emailSweepModule, "requeueNoContactEmailInquiries");
+    requeueSpy.mockClear();
+
+    await updateTenantSettings(fd({
+      businessName: "Gallery With Restored Email",
+      contactEmail: "",   // ← deliberate clear
+      themeColor: "", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const clearedRow = await tenantRow(tenantId);
+    expect(clearedRow?.contactEmail).toBeNull();
+    expect(requeueSpy).not.toHaveBeenCalled();
+
+    // Step 3: create an exhausted "no gallery contact email" inquiry — this
+    // represents a notification that piled up while the email was absent.
+    const artworkId = await createArtwork(tenantId);
+    const inquiryId = await createExhaustedNoEmailInquiry(tenantId, artworkId);
+
+    // Verify the inquiry is exhausted before the restore.
+    const exhaustedRow = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, inquiryId),
+    });
+    expect(exhaustedRow?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+
+    // Step 4: re-set a contactEmail — requeue MUST fire now.
+    requeueSpy.mockClear();
+
+    await updateTenantSettings(fd({
+      businessName: "Gallery With Restored Email",
+      contactEmail: "restored@gallery.test",   // ← restore
+      themeColor: "", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // contactEmail must be persisted with the new value.
+    const restoredRow = await tenantRow(tenantId);
+    expect(restoredRow?.contactEmail).toBe("restored@gallery.test");
+
+    // requeueNoContactEmailInquiries must have been called exactly once.
+    expect(requeueSpy).toHaveBeenCalledOnce();
+    expect(requeueSpy).toHaveBeenCalledWith(tenantId);
+
+    requeueSpy.mockRestore();
+
+    // Step 5: assert the inquiry was reset so the sweep can re-deliver it.
+    const requeuedRow = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, inquiryId),
+    });
+    // emailAttempts reset to 0 so the row re-enters the sweep candidate set.
+    expect(requeuedRow?.emailAttempts).toBe(0);
+    // emailError is kept non-null so the sweep knows this is a retry.
+    expect(requeuedRow?.emailError).toBe("no gallery contact email");
+    // emailLastAttemptAt cleared so no backoff delay applies.
+    expect(requeuedRow?.emailLastAttemptAt).toBeNull();
+  });
 });
