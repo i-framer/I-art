@@ -29,6 +29,8 @@
  *  21. Requeue resets ALL exhausted inquiries for the tenant, not just the first.
  *  22. Changing contactEmail from one non-null value to another also requeues
  *      exhausted no-contact-email inquiries (non-null → different non-null path).
+ *  23. requeueNoContactEmailInquiries preserves emailError on every row so the
+ *      sweep can distinguish retries from fresh inquiries (direct-call test).
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -959,5 +961,57 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(requeuedRow?.emailError).toBe("no gallery contact email");
     // emailLastAttemptAt cleared so no backoff delay applies.
     expect(requeuedRow?.emailLastAttemptAt).toBeNull();
+  });
+
+  it("requeueNoContactEmailInquiries preserves emailError on every row after a bulk reset (direct-call)", async () => {
+    // This test calls requeueNoContactEmailInquiries directly, bypassing
+    // updateTenantSettings, to assert the contract that emailError is
+    // deliberately left intact.  The sweep's candidate query filters on
+    // `emailError IS NOT NULL` — if a future change accidentally clears
+    // emailError during the reset, the row would silently disappear from
+    // the candidate set and never be re-delivered.
+
+    // Arrange: create three exhausted "no gallery contact email" inquiries.
+    const { tenantId } = await createTenant("Gallery Direct Requeue Test");
+    const artworkId = await createArtwork(tenantId);
+
+    const inquiryId1 = await createExhaustedNoEmailInquiry(tenantId, artworkId);
+    const inquiryId2 = await createExhaustedNoEmailInquiry(tenantId, artworkId);
+    const inquiryId3 = await createExhaustedNoEmailInquiry(tenantId, artworkId);
+
+    // Verify all three start out exhausted before the call.
+    const [before1, before2, before3] = await Promise.all([
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryId1) }),
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryId2) }),
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryId3) }),
+    ]);
+    expect(before1?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(before2?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(before3?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+
+    // Act: call the function directly — no settings form involved.
+    await emailSweepModule.requeueNoContactEmailInquiries(tenantId);
+
+    // Assert: every row must have been reset AND must still carry the error.
+    const [after1, after2, after3] = await Promise.all([
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryId1) }),
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryId2) }),
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryId3) }),
+    ]);
+
+    for (const [label, row] of [
+      ["inquiry 1", after1],
+      ["inquiry 2", after2],
+      ["inquiry 3", after3],
+    ] as const) {
+      // emailAttempts reset to 0 so the row re-enters the sweep candidate set.
+      expect(row?.emailAttempts, `${label}: emailAttempts`).toBe(0);
+      // emailLastAttemptAt cleared so no backoff delay is imposed.
+      expect(row?.emailLastAttemptAt, `${label}: emailLastAttemptAt`).toBeNull();
+      // emailError MUST be preserved — the sweep's WHERE clause filters on
+      // `emailError IS NOT NULL`.  Clearing it here would make the row
+      // invisible to the sweep even though emailAttempts was just reset to 0.
+      expect(row?.emailError, `${label}: emailError`).toBe("no gallery contact email");
+    }
   });
 });
