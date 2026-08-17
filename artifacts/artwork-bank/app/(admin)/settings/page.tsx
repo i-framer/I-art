@@ -4,7 +4,7 @@ import Link from "next/link";
 import { getSession } from "@/lib/auth";
 import { db } from "@workspace/db";
 import { tenantsTable, inquiriesTable } from "@workspace/db";
-import { and, count, eq, isNotNull } from "drizzle-orm";
+import { and, count, eq, isNotNull, ne } from "drizzle-orm";
 import { NO_CONTACT_EMAIL_ERROR } from "@/lib/email-sweep";
 import {
   updateTenantSettings,
@@ -94,6 +94,7 @@ export default async function SettingsPage({
         and(
           eq(inquiriesTable.tenantId, session.tenantId),
           isNotNull(inquiriesTable.emailError),
+          ne(inquiriesTable.emailError, NO_CONTACT_EMAIL_ERROR),
         ),
       ),
   ]);
@@ -140,7 +141,12 @@ export default async function SettingsPage({
           Settings saved successfully.
         </div>
       )}
-      {retry_result && retry_result !== "error" && (
+      {retry_result === "unauthorized" && (
+        <div className="mb-6 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          Only gallery owners can retry stuck notifications.
+        </div>
+      )}
+      {retry_result && retry_result !== "error" && retry_result !== "unauthorized" && (
         <div className="mb-6 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-700">
           {Number(retry_result) === 0
             ? "No stuck notifications found — nothing to retry."
@@ -323,7 +329,7 @@ export default async function SettingsPage({
                 {failedInquiriesCount === 1
                   ? "1 inquiry notification couldn't be delivered and has exhausted automatic retries."
                   : `${failedInquiriesCount} inquiry notifications couldn't be delivered and have exhausted automatic retries.`}{" "}
-                If you&apos;ve updated your contact email or resolved the delivery issue, you can retry them now.
+                If you&apos;ve resolved the delivery issue, you can retry them now.
               </p>
             </div>
           </div>

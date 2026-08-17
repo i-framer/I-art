@@ -35,6 +35,8 @@
  *      when the gallery switches to a different email address (email-A → email-B).
  *      Only "no gallery contact email" rows are reset; all other error strings are
  *      an explicit intentional boundary documented in email-sweep.ts.
+ *  25. retryFailedInquiryNotifications redirects to ?retry_result=unauthorized
+ *      when the session role is "staff" — inquiry rows must be completely untouched.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -86,7 +88,9 @@ vi.mock("@/lib/email-sweep", async (importActual) => {
 const sendArtworkInquirySpy = vi.hoisted(() => vi.fn(async () => true));
 
 // Stub the email transport so the sweep end-to-end test doesn't hit a real
-// mail server. Individual tests can override via mockRejectedValueOnce.
+// mail server.  sendArtworkInquirySpy.mockResolvedValue(true) simulates a
+// successful send; individual tests can override it via mockRejectedValueOnce
+// if they need to test failure paths.
 vi.mock("@/lib/email", async (importActual) => {
   const actual = await importActual<typeof import("@/lib/email")>();
   return {
@@ -95,7 +99,10 @@ vi.mock("@/lib/email", async (importActual) => {
   };
 });
 
-import { updateTenantSettings } from "@/app/(admin)/settings/actions";
+import {
+  updateTenantSettings,
+  retryFailedInquiryNotifications,
+} from "@/app/(admin)/settings/actions";
 import { MAX_EMAIL_ATTEMPTS, sweepUnsentInquiryEmails } from "@/lib/email-sweep";
 
 async function createTenant(businessName = "Settings Test Gallery") {
@@ -1176,7 +1183,57 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     });
     // emailAttempts incremented from 0 — the sweep processed the row.
     expect(afterSweep?.emailAttempts).toBeGreaterThan(0);
-    // On a successful mock send, emailError is cleared to null.
+    // On a successful mock send (mockResolvedValue(true)), emailError is
+    // cleared by the sweep's success path.
     expect(afterSweep?.emailError).toBeNull();
+  });
+
+  it("retryFailedInquiryNotifications redirects to ?retry_result=unauthorized for a staff member and leaves all inquiry rows untouched", async () => {
+    // Arrange: create a tenant with a staff session (role = "staff").
+    const { tenantId } = await createTenant("Staff Guard Test Gallery");
+    const artworkId = await createArtwork(tenantId);
+
+    // Plant an exhausted SMTP-error inquiry — it must remain untouched after
+    // the staff call is rejected.
+    const smtpInquiryId = await createExhaustedInquiryWithError(
+      tenantId,
+      artworkId,
+      "550 mailbox not found",
+    );
+
+    // Capture the row before the call so we can assert it is unchanged after.
+    const before = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, smtpInquiryId),
+    });
+    expect(before?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+
+    // Switch the session to "staff" for this test.
+    const originalSession = { ...mockSession.value };
+    mockSession.value = { ...originalSession, role: "staff" };
+
+    let redirectUrl: string | undefined;
+    try {
+      await retryFailedInquiryNotifications();
+    } catch (e: unknown) {
+      const msg = String((e as Error)?.message ?? e);
+      if (msg.startsWith("REDIRECT:")) redirectUrl = msg.slice("REDIRECT:".length);
+      else throw e;
+    } finally {
+      // Restore the owner session so afterEach cleanup can delete the rows.
+      mockSession.value = originalSession;
+    }
+
+    // The action must redirect to the unauthorized sentinel, not to a success URL.
+    expect(redirectUrl).toBe("/settings?retry_result=unauthorized");
+
+    // The inquiry row must be completely untouched.
+    const after = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, smtpInquiryId),
+    });
+    expect(after?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(after?.emailError).toBe("550 mailbox not found");
+    expect(after?.emailLastAttemptAt?.getTime()).toBe(
+      before?.emailLastAttemptAt?.getTime(),
+    );
   });
 });

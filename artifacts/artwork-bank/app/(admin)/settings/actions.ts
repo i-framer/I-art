@@ -12,7 +12,7 @@ import { z } from "zod";
 import { getSession, generateToken } from "@/lib/auth";
 import {
   requeueNoContactEmailInquiries,
-  requeueAllFailedInquiries,
+  retrySmtpErrorInquiries,
 } from "@/lib/email-sweep";
 
 const settingsSchema = z.object({
@@ -76,13 +76,16 @@ export async function updateTenantSettings(formData: FormData) {
 // ---------------------------------------------------------------------------
 
 /**
- * Resets ALL inquiries for the authenticated tenant that have a non-null
- * emailError, re-enqueuing them for the next sweep cycle.  Redirects to
- * /settings?retry_result=<count> on success, or ?retry_result=error on
- * failure.
+ * Re-enqueues inquiries for the authenticated tenant whose emailError is a
+ * genuine SMTP failure (non-null and not the "no gallery contact email"
+ * sentinel).  Redirects to /settings?retry_result=<count> on success, or
+ * ?retry_result=error on failure.
  *
- * Authentication: session.tenantId is used as the scope — this action can
- * never touch another tenant's rows.
+ * Authorization: owner-only.  Staff members receive a /settings?retry_result=unauthorized
+ * redirect so they never touch the retry queue.
+ *
+ * Scope: session.tenantId is used — this action can never touch another
+ * tenant's rows.
  */
 export async function retryFailedInquiryNotifications() {
   const session = await getSession();
@@ -91,10 +94,10 @@ export async function retryFailedInquiryNotifications() {
 
   let retried = 0;
   try {
-    retried = await requeueAllFailedInquiries(session.tenantId);
+    retried = await retrySmtpErrorInquiries(session.tenantId);
   } catch (err) {
     console.error(
-      `Settings: failed to retry inquiry notifications for tenant ${session.tenantId}:`,
+      `Settings: failed to retry SMTP-error inquiry notifications for tenant ${session.tenantId}:`,
       (err as any)?.message ?? String(err),
     );
     redirect("/settings?retry_result=error");

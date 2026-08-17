@@ -13,7 +13,7 @@ import {
   inquiriesTable,
   artworksTable,
 } from "@workspace/db";
-import { and, eq, gte, isNull, isNotNull, lt, ne } from "drizzle-orm";
+import { and, eq, gte, isNull, isNotNull, lt, ne, not } from "drizzle-orm";
 import {
   sendOrderConfirmation,
   sendOrderStatusUpdate,
@@ -469,31 +469,28 @@ export async function requeueNoContactEmailInquiries(
 }
 
 /**
- * Explicit "retry all failed notifications" escape hatch for gallery owners.
+ * Admin escape hatch: re-enqueue ALL inquiries for the tenant that are stuck
+ * with a genuine SMTP error (i.e. emailError is non-null and is NOT the
+ * "no gallery contact email" sentinel).
  *
- * Resets emailAttempts to 0 and emailLastAttemptAt to null for ALL inquiries
- * belonging to the tenant that have a non-null emailError — regardless of the
- * error type or current attempt count.  emailError is deliberately preserved
- * so the sweep can distinguish retries from fresh inquiries via the existing
- * `emailError IS NOT NULL` candidate filter.
+ * These rows are intentionally left untouched by requeueNoContactEmailInquiries
+ * and by the automatic email-change requeue path.  The only way to retry them
+ * is via an explicit admin action — for example, after the gallery owner has
+ * confirmed the buyer's address is valid or the SMTP issue has been resolved.
  *
- * Unlike requeueNoContactEmailInquiries (which is scoped to the
- * "no gallery contact email" sentinel and fires automatically on contact-email
- * save), this function is intentionally manual — it is triggered by the gallery
- * owner via the settings page after they have resolved the underlying issue
- * (e.g. updated their contact email or confirmed the buyer's address).
+ * The reset mirrors requeueNoContactEmailInquiries:
+ *  • emailAttempts → 0   re-enters the sweep candidate set (lt MAX_EMAIL_ATTEMPTS)
+ *  • emailLastAttemptAt → null   removes any backoff delay
+ *  • emailError is left unchanged   keeps emailError non-null so the sweep
+ *    candidate query (isNotNull(emailError)) still selects the row
  *
- * The reset is safe to call multiple times: a row with emailAttempts already
- * at 0 is re-set to 0 (no-op in practice).
- *
- * @param tenantId  The tenant whose failed inquiry notifications should be
- *                  re-enqueued.
- * @returns         The number of inquiry rows that were reset.
+ * @param tenantId  The tenant whose SMTP-error inquiries should be re-enqueued.
+ * @returns The number of rows reset.
  */
-export async function requeueAllFailedInquiries(
+export async function retrySmtpErrorInquiries(
   tenantId: string,
 ): Promise<number> {
-  const rows = await db
+  const result = await db
     .update(inquiriesTable)
     .set({
       emailAttempts: 0,
@@ -503,10 +500,10 @@ export async function requeueAllFailedInquiries(
       and(
         eq(inquiriesTable.tenantId, tenantId),
         isNotNull(inquiriesTable.emailError),
+        not(eq(inquiriesTable.emailError, NO_CONTACT_EMAIL_ERROR)),
       ),
-    )
-    .returning({ id: inquiriesTable.id });
-  return rows.length;
+    );
+  return result.rowCount ?? 0;
 }
 
 /**

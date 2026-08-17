@@ -1,29 +1,33 @@
 /**
- * requeueAllFailedInquiries + retryFailedInquiryNotifications — real-DB integration.
+ * retrySmtpErrorInquiries + retryFailedInquiryNotifications — real-DB integration.
  *
- * lib/email-sweep.ts: requeueAllFailedInquiries(tenantId)
+ * lib/email-sweep.ts: retrySmtpErrorInquiries(tenantId)
  * app/(admin)/settings/actions.ts: retryFailedInquiryNotifications()
  *
  * Tests:
- *  1.  requeueAllFailedInquiries resets emailAttempts to 0 and emailLastAttemptAt
- *      to null for all inquiries with a non-null emailError.
- *  2.  requeueAllFailedInquiries preserves emailError on every reset row so the
+ *  1.  retrySmtpErrorInquiries resets emailAttempts to 0 and emailLastAttemptAt
+ *      to null for SMTP-error inquiries and leaves the "no gallery contact email"
+ *      sentinel row completely untouched.
+ *  2.  retrySmtpErrorInquiries preserves emailError on every reset row so the
  *      sweep's `emailError IS NOT NULL` candidate filter can still select them.
- *  3.  requeueAllFailedInquiries resets rows regardless of error type (SMTP
- *      errors, no-contact-email sentinel, custom strings — all treated the same).
- *  4.  requeueAllFailedInquiries does NOT touch inquiries with a null emailError
+ *  3.  retrySmtpErrorInquiries does NOT reset the "no gallery contact email"
+ *      sentinel — that sentinel is managed exclusively by the automatic
+ *      email-change requeue path (requeueNoContactEmailInquiries).
+ *  4.  retrySmtpErrorInquiries does NOT touch inquiries with a null emailError
  *      (rows that are already sweep-eligible or successfully delivered).
- *  5.  requeueAllFailedInquiries is scoped to the specified tenant — a second
+ *  5.  retrySmtpErrorInquiries is scoped to the specified tenant — a second
  *      tenant's stuck inquiries are left completely untouched.
- *  6.  requeueAllFailedInquiries returns the exact count of rows that were reset.
- *  7.  requeueAllFailedInquiries is idempotent — calling it twice leaves every
- *      row at emailAttempts=0, emailLastAttemptAt=null.
- *  8.  retryFailedInquiryNotifications action resets all failed inquiries for
- *      the authenticated tenant and redirects to /settings?retry_result=<count>.
+ *  6.  retrySmtpErrorInquiries returns the exact count of rows that were reset
+ *      (sentinel rows excluded from the count).
+ *  7.  retrySmtpErrorInquiries is idempotent — calling it twice leaves every
+ *      SMTP-error row at emailAttempts=0, emailLastAttemptAt=null.
+ *  8.  retryFailedInquiryNotifications action resets only SMTP-error inquiries
+ *      and redirects to /settings?retry_result=<count>; the "no gallery contact
+ *      email" sentinel row is NOT reset and NOT counted.
  *  9.  retryFailedInquiryNotifications is scoped to the session tenant — a
  *      concurrent tenant's stuck inquiries are left untouched.
  *  10. retryFailedInquiryNotifications redirects to /settings?retry_result=0
- *      when no stuck inquiries exist (no-op path).
+ *      when no SMTP-error inquiries exist (no-op path).
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -37,7 +41,7 @@ import {
 } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { requeueAllFailedInquiries, MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
+import { retrySmtpErrorInquiries, MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
 
 const RUN = Date.now();
 let seq = 0;
@@ -153,30 +157,36 @@ afterAll(cleanup);
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-describeIntegration("requeueAllFailedInquiries + retryFailedInquiryNotifications — real-DB integration", () => {
-  it("resets emailAttempts to 0 and emailLastAttemptAt to null for all inquiries with a non-null emailError", async () => {
+describeIntegration("retrySmtpErrorInquiries + retryFailedInquiryNotifications — real-DB integration", () => {
+  it("resets SMTP-error inquiries and leaves the 'no gallery contact email' sentinel row completely untouched", async () => {
     const { tenantId } = await createTenant();
     const artworkId = await createArtwork(tenantId);
 
     const id1 = await createFailedInquiry(tenantId, artworkId, "550 mailbox not found");
     const id2 = await createFailedInquiry(tenantId, artworkId, "SMTP connection timeout");
-    const id3 = await createFailedInquiry(tenantId, artworkId, "no gallery contact email");
+    const sentinelId = await createFailedInquiry(tenantId, artworkId, "no gallery contact email");
 
     // All three start exhausted.
-    for (const id of [id1, id2, id3]) {
+    for (const id of [id1, id2, sentinelId]) {
       const row = await inquiryRow(id);
       expect(row?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
       expect(row?.emailLastAttemptAt).not.toBeNull();
     }
 
-    await requeueAllFailedInquiries(tenantId);
+    await retrySmtpErrorInquiries(tenantId);
 
-    // All three must now have emailAttempts=0 and emailLastAttemptAt=null.
-    for (const [label, id] of [["id1", id1], ["id2", id2], ["id3", id3]] as const) {
+    // SMTP-error rows must be reset.
+    for (const [label, id] of [["id1", id1], ["id2", id2]] as const) {
       const row = await inquiryRow(id);
       expect(row?.emailAttempts, `${label}: emailAttempts`).toBe(0);
       expect(row?.emailLastAttemptAt, `${label}: emailLastAttemptAt`).toBeNull();
     }
+
+    // Sentinel row must be completely untouched.
+    const sentinelRow = await inquiryRow(sentinelId);
+    expect(sentinelRow?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(sentinelRow?.emailLastAttemptAt).not.toBeNull();
+    expect(sentinelRow?.emailError).toBe("no gallery contact email");
   });
 
   it("preserves emailError on every reset row so the sweep candidate filter still selects them", async () => {
@@ -184,37 +194,48 @@ describeIntegration("requeueAllFailedInquiries + retryFailedInquiryNotifications
     const artworkId = await createArtwork(tenantId);
 
     const smtpId = await createFailedInquiry(tenantId, artworkId, "550 mailbox not found");
-    const noEmailId = await createFailedInquiry(tenantId, artworkId, "no gallery contact email");
+    const timeoutId = await createFailedInquiry(tenantId, artworkId, "SMTP connection timeout");
 
-    await requeueAllFailedInquiries(tenantId);
+    await retrySmtpErrorInquiries(tenantId);
 
     // emailError must be preserved — the sweep uses `emailError IS NOT NULL`
     // to select candidates.  Clearing it would make the row invisible to the sweep.
     const smtpRow = await inquiryRow(smtpId);
     expect(smtpRow?.emailError).toBe("550 mailbox not found");
+    expect(smtpRow?.emailAttempts).toBe(0);
 
-    const noEmailRow = await inquiryRow(noEmailId);
-    expect(noEmailRow?.emailError).toBe("no gallery contact email");
+    const timeoutRow = await inquiryRow(timeoutId);
+    expect(timeoutRow?.emailError).toBe("SMTP connection timeout");
+    expect(timeoutRow?.emailAttempts).toBe(0);
   });
 
-  it("resets rows regardless of error type — SMTP errors, no-contact sentinel, and custom strings all treated the same", async () => {
+  it("does NOT reset the 'no gallery contact email' sentinel — that sentinel is managed by the automatic email-change requeue path", async () => {
+    // This is the key exclusion boundary: retrySmtpErrorInquiries must skip
+    // the sentinel so that gallery owners who haven't set a contact email do
+    // not accidentally get their "no contact email" rows reset via the manual
+    // retry action.  Those rows are only reset by requeueNoContactEmailInquiries
+    // (triggered automatically when the gallery owner saves a contact email).
     const { tenantId } = await createTenant();
     const artworkId = await createArtwork(tenantId);
 
-    const ids = await Promise.all([
-      createFailedInquiry(tenantId, artworkId, "550 mailbox not found"),
-      createFailedInquiry(tenantId, artworkId, "no gallery contact email"),
-      createFailedInquiry(tenantId, artworkId, "SMTP connection refused"),
-      createFailedInquiry(tenantId, artworkId, "custom error string"),
-    ]);
+    const sentinelId = await createFailedInquiry(tenantId, artworkId, "no gallery contact email");
+    const smtpId = await createFailedInquiry(tenantId, artworkId, "550 mailbox not found");
 
-    await requeueAllFailedInquiries(tenantId);
+    const resetCount = await retrySmtpErrorInquiries(tenantId);
 
-    for (const [i, id] of ids.entries()) {
-      const row = await inquiryRow(id);
-      expect(row?.emailAttempts, `id[${i}]: emailAttempts`).toBe(0);
-      expect(row?.emailLastAttemptAt, `id[${i}]: emailLastAttemptAt`).toBeNull();
-    }
+    // Only the SMTP-error row is counted; the sentinel is not.
+    expect(resetCount).toBe(1);
+
+    // Sentinel row: every field must be exactly as it was before the call.
+    const sentinelRow = await inquiryRow(sentinelId);
+    expect(sentinelRow?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(sentinelRow?.emailLastAttemptAt).not.toBeNull();
+    expect(sentinelRow?.emailError).toBe("no gallery contact email");
+
+    // SMTP-error row: reset as expected.
+    const smtpRow = await inquiryRow(smtpId);
+    expect(smtpRow?.emailAttempts).toBe(0);
+    expect(smtpRow?.emailLastAttemptAt).toBeNull();
   });
 
   it("does NOT touch inquiries with a null emailError", async () => {
@@ -224,7 +245,7 @@ describeIntegration("requeueAllFailedInquiries + retryFailedInquiryNotifications
     const cleanId = await createCleanInquiry(tenantId, artworkId);
     const failedId = await createFailedInquiry(tenantId, artworkId, "SMTP error");
 
-    await requeueAllFailedInquiries(tenantId);
+    await retrySmtpErrorInquiries(tenantId);
 
     // The clean inquiry must be completely untouched.
     const cleanRow = await inquiryRow(cleanId);
@@ -249,7 +270,7 @@ describeIntegration("requeueAllFailedInquiries + retryFailedInquiryNotifications
     const idB = await createFailedInquiry(tenantB, artworkB, "SMTP error");
 
     // Reset only tenant A's inquiries.
-    await requeueAllFailedInquiries(tenantA);
+    await retrySmtpErrorInquiries(tenantA);
 
     // Tenant A's inquiry must be reset.
     const rowA = await inquiryRow(idA);
@@ -263,41 +284,43 @@ describeIntegration("requeueAllFailedInquiries + retryFailedInquiryNotifications
     expect(rowB?.emailError).toBe("SMTP error");
   });
 
-  it("returns the exact count of rows that were reset", async () => {
+  it("returns the exact count of SMTP-error rows reset (sentinel and clean rows excluded from count)", async () => {
     const { tenantId } = await createTenant();
     const artworkId = await createArtwork(tenantId);
 
-    // 3 failed, 1 clean.
-    await createFailedInquiry(tenantId, artworkId, "error 1");
-    await createFailedInquiry(tenantId, artworkId, "error 2");
-    await createFailedInquiry(tenantId, artworkId, "error 3");
+    // 2 genuine SMTP errors, 1 sentinel, 1 clean.
+    await createFailedInquiry(tenantId, artworkId, "550 mailbox not found");
+    await createFailedInquiry(tenantId, artworkId, "SMTP connection refused");
+    await createFailedInquiry(tenantId, artworkId, "no gallery contact email");
     await createCleanInquiry(tenantId, artworkId);
 
-    const count = await requeueAllFailedInquiries(tenantId);
-    // Must return 3 — only the failed rows are counted, not the clean one.
-    expect(count).toBe(3);
+    const count = await retrySmtpErrorInquiries(tenantId);
+    // Must return 2 — only the SMTP-error rows are counted.
+    expect(count).toBe(2);
   });
 
-  it("returns 0 when there are no stuck inquiries (idempotent no-op)", async () => {
+  it("returns 0 when there are no SMTP-error inquiries (no-op path)", async () => {
     const { tenantId } = await createTenant();
     const artworkId = await createArtwork(tenantId);
+    // Only a clean inquiry and a sentinel — no SMTP errors to reset.
     await createCleanInquiry(tenantId, artworkId);
+    await createFailedInquiry(tenantId, artworkId, "no gallery contact email");
 
-    const count = await requeueAllFailedInquiries(tenantId);
+    const count = await retrySmtpErrorInquiries(tenantId);
     expect(count).toBe(0);
   });
 
-  it("is idempotent — calling it twice leaves every row at emailAttempts=0 and emailLastAttemptAt=null", async () => {
+  it("is idempotent — calling it twice leaves every SMTP-error row at emailAttempts=0 and emailLastAttemptAt=null", async () => {
     const { tenantId } = await createTenant();
     const artworkId = await createArtwork(tenantId);
     const id = await createFailedInquiry(tenantId, artworkId, "SMTP error");
 
-    const count1 = await requeueAllFailedInquiries(tenantId);
+    const count1 = await retrySmtpErrorInquiries(tenantId);
     expect(count1).toBe(1);
 
-    // Second call: row is already at emailAttempts=0; it will be selected again
-    // because emailError is still non-null (preserved by the first call).
-    const count2 = await requeueAllFailedInquiries(tenantId);
+    // Second call: row is at emailAttempts=0 but emailError is still non-null,
+    // so the WHERE clause matches again.
+    const count2 = await retrySmtpErrorInquiries(tenantId);
     expect(count2).toBe(1);
 
     // Row remains correctly reset after both calls.
@@ -307,12 +330,14 @@ describeIntegration("requeueAllFailedInquiries + retryFailedInquiryNotifications
     expect(row?.emailError).toBe("SMTP error");
   });
 
-  it("retryFailedInquiryNotifications action resets all failed inquiries for the authenticated tenant and redirects to /settings?retry_result=<count>", async () => {
+  it("retryFailedInquiryNotifications resets only SMTP-error inquiries, redirects to /settings?retry_result=<count>, and does NOT reset the sentinel row", async () => {
     const { tenantId } = await createTenant("Gallery With Failed Inquiries");
     const artworkId = await createArtwork(tenantId);
 
-    const id1 = await createFailedInquiry(tenantId, artworkId, "550 mailbox not found");
-    const id2 = await createFailedInquiry(tenantId, artworkId, "SMTP connection timeout");
+    const smtpId1 = await createFailedInquiry(tenantId, artworkId, "550 mailbox not found");
+    const smtpId2 = await createFailedInquiry(tenantId, artworkId, "SMTP connection timeout");
+    // Sentinel row: must NOT be reset or counted by the action.
+    const sentinelId = await createFailedInquiry(tenantId, artworkId, "no gallery contact email");
 
     let caughtError: unknown;
     try {
@@ -321,15 +346,20 @@ describeIntegration("requeueAllFailedInquiries + retryFailedInquiryNotifications
       caughtError = e;
     }
 
-    // Must redirect to /settings?retry_result=2 (both rows reset).
+    // Must redirect to /settings?retry_result=2 — only the 2 SMTP-error rows.
     expect(String(caughtError)).toContain("REDIRECT:/settings?retry_result=2");
 
-    // Both inquiries must have been reset.
-    for (const [label, id] of [["id1", id1], ["id2", id2]] as const) {
+    // Both SMTP-error rows must have been reset.
+    for (const [label, id] of [["smtpId1", smtpId1], ["smtpId2", smtpId2]] as const) {
       const row = await inquiryRow(id);
       expect(row?.emailAttempts, `${label}: emailAttempts`).toBe(0);
       expect(row?.emailLastAttemptAt, `${label}: emailLastAttemptAt`).toBeNull();
     }
+
+    // Sentinel row must be completely untouched.
+    const sentinelRow = await inquiryRow(sentinelId);
+    expect(sentinelRow?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(sentinelRow?.emailError).toBe("no gallery contact email");
   });
 
   it("retryFailedInquiryNotifications is scoped to the session tenant — a concurrent tenant's stuck inquiries are left untouched", async () => {

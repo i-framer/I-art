@@ -22,6 +22,9 @@
  * 14. After an email-A → email-B change, the sweep does NOT re-select exhausted
  *     SMTP-error inquiries — their emailAttempts, emailError, and
  *     emailLastAttemptAt remain completely unchanged.
+ * 15. retrySmtpErrorInquiries resets exhausted SMTP-error rows (but not the
+ *     "no gallery contact email" sentinel rows) so the sweep delivers them on
+ *     the next run.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -54,6 +57,7 @@ vi.mock("@/lib/base-url", () => ({
 import {
   sweepUnsentInquiryEmails,
   requeueNoContactEmailInquiries,
+  retrySmtpErrorInquiries,
   MAX_EMAIL_ATTEMPTS,
   BASE_BACKOFF_MS,
 } from "@/lib/email-sweep";
@@ -694,6 +698,93 @@ describeIntegration(
         where: eq(inquiriesTable.id, inquiryId),
       });
       expect(delivered?.emailError).toBeNull();
+    });
+
+    it("retrySmtpErrorInquiries resets exhausted SMTP-error rows so the sweep delivers on the next run", async () => {
+      // Simulate the full stuck → admin retry → delivered cycle:
+      //  1. Tenant has a contact email configured from the start.
+      //  2. Two inquiries are exhausted with genuine SMTP errors (not the
+      //     "no gallery contact email" sentinel) — they are excluded from the
+      //     sweep candidate set because emailAttempts = MAX_EMAIL_ATTEMPTS.
+      //  3. Admin triggers retrySmtpErrorInquiries → both rows are reset.
+      //  4. One additional inquiry with the "no gallery contact email" sentinel
+      //     must NOT be reset by this call (that sentinel is owned by the
+      //     automatic email-change requeue path).
+      //  5. Next sweep run delivers both SMTP-error inquiries.
+      const tenantId = await createTenant("gallery@test.com");
+      const artworkId = await createArtwork(tenantId);
+
+      // Inquiry A: exhausted with a permanent bounce error.
+      const smtpBounceId = await createFailedInquiry(tenantId, artworkId, {
+        emailAttempts: MAX_EMAIL_ATTEMPTS,
+        emailError: "550 mailbox not found",
+        emailLastAttemptAt: new Date(Date.now() - 60_000),
+      });
+
+      // Inquiry B: exhausted with a transient timeout error.
+      const smtpTimeoutId = await createFailedInquiry(tenantId, artworkId, {
+        emailAttempts: MAX_EMAIL_ATTEMPTS,
+        emailError: "SMTP connection timeout",
+        emailLastAttemptAt: new Date(Date.now() - 60_000),
+      });
+
+      // Inquiry C: exhausted with the "no gallery contact email" sentinel —
+      // must NOT be touched by retrySmtpErrorInquiries.
+      const noContactId = await createFailedInquiry(tenantId, artworkId, {
+        emailAttempts: MAX_EMAIL_ATTEMPTS,
+        emailError: "no gallery contact email",
+        emailLastAttemptAt: new Date(Date.now() - 60_000),
+      });
+
+      // Confirm all three are excluded from the sweep before the retry action.
+      const beforeRetry = await sweepUnsentInquiryEmails(new Date(), tenantId);
+      expect(beforeRetry).toEqual({ scanned: 0, sent: 0, failed: 0, skipped: 0 });
+      expect(sendArtworkInquiry).not.toHaveBeenCalled();
+
+      // Admin triggers the retry action.
+      const resetCount = await retrySmtpErrorInquiries(tenantId);
+
+      // Only the two SMTP-error rows should have been reset.
+      expect(resetCount).toBe(2);
+
+      // SMTP-error rows are reset: attempts back to 0, lastAttemptAt cleared.
+      const [afterA, afterB] = await Promise.all([
+        db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, smtpBounceId) }),
+        db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, smtpTimeoutId) }),
+      ]);
+      expect(afterA?.emailAttempts).toBe(0);
+      expect(afterA?.emailLastAttemptAt).toBeNull();
+      expect(afterA?.emailError).toBe("550 mailbox not found"); // non-null → still eligible
+      expect(afterB?.emailAttempts).toBe(0);
+      expect(afterB?.emailLastAttemptAt).toBeNull();
+      expect(afterB?.emailError).toBe("SMTP connection timeout");
+
+      // "no gallery contact email" row must be completely untouched.
+      const afterC = await db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, noContactId),
+      });
+      expect(afterC?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(afterC?.emailError).toBe("no gallery contact email");
+
+      // Next sweep run delivers both SMTP-error inquiries (gallery has a
+      // contact email, artwork exists, backoff windows are cleared).
+      sendArtworkInquiry.mockResolvedValue(true);
+      const deliveryResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+      // scanned=2 (the two SMTP-error rows); the "no gallery contact email"
+      // row is still at MAX_EMAIL_ATTEMPTS and is not selected.
+      expect(deliveryResult).toEqual({ scanned: 2, sent: 2, failed: 0, skipped: 0 });
+      expect(sendArtworkInquiry).toHaveBeenCalledTimes(2);
+
+      // Both SMTP-error rows are now delivered.
+      const [deliveredA, deliveredB] = await Promise.all([
+        db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, smtpBounceId) }),
+        db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, smtpTimeoutId) }),
+      ]);
+      expect(deliveredA?.emailError).toBeNull();
+      expect(deliveredA?.emailAttempts).toBe(1);
+      expect(deliveredB?.emailError).toBeNull();
+      expect(deliveredB?.emailAttempts).toBe(1);
     });
 
     it("sweep does not re-select exhausted SMTP-error inquiries after a gallery email-A → email-B change", async () => {
