@@ -2077,5 +2077,93 @@ describeIntegration(
         expect(noContactCountAfter).toBe(1);
       },
     );
+
+    /**
+     * Cross-tenant isolation (Task #989):
+     *
+     *  Seed tenant A and tenant B, each with a transport-error inquiry.
+     *  Call retrySmtpErrorInquiries(tenantA).
+     *  Tenant A's row must be reset to emailAttempts=0 / emailLastAttemptAt=null.
+     *  Tenant B's row must be completely untouched — a regression that drops
+     *  the tenantId filter would silently bulk-reset every transport-error
+     *  inquiry across all tenants.
+     */
+    it(
+      "retrySmtpErrorInquiries does not reset another gallery's transport-error rows (Task #989)",
+      async () => {
+        const tenantAId = makeId("tenant-989a");
+        const tenantBId = makeId("tenant-989b");
+
+        await insertTenant(tenantAId, {
+          contactEmail: "owner-989a@gallery.test",
+        });
+        await insertTenant(tenantBId, {
+          contactEmail: "owner-989b@gallery.test",
+        });
+
+        const artworkAId = makeId("artwork-989a");
+        const artworkBId = makeId("artwork-989b");
+        await insertArtwork(artworkAId, tenantAId);
+        await insertArtwork(artworkBId, tenantBId);
+
+        const inqAId = makeId("inq-989a");
+        const inqBId = makeId("inq-989b");
+
+        const fixedAttemptAt = new Date("2024-07-15T08:00:00Z");
+        const transportErrorMsg = "Transport failure: 550 mailbox not found (989)";
+
+        await insertTransportErrorInquiry(
+          inqAId,
+          tenantAId,
+          artworkAId,
+          transportErrorMsg,
+          3,
+          fixedAttemptAt,
+        );
+
+        await insertTransportErrorInquiry(
+          inqBId,
+          tenantBId,
+          artworkBId,
+          transportErrorMsg,
+          3,
+          fixedAttemptAt,
+        );
+
+        // ── Pre-condition: both rows are in the errored state ─────────────────
+
+        const aBefore = await fetchRow(inqAId);
+        expect(aBefore?.emailAttempts).toBe(3);
+        expect(aBefore?.emailLastAttemptAt).toEqual(fixedAttemptAt);
+        expect(aBefore?.emailError).toBe(transportErrorMsg);
+
+        const bBefore = await fetchRow(inqBId);
+        expect(bBefore?.emailAttempts).toBe(3);
+        expect(bBefore?.emailLastAttemptAt).toEqual(fixedAttemptAt);
+        expect(bBefore?.emailError).toBe(transportErrorMsg);
+
+        // ── Call retrySmtpErrorInquiries for tenant A only ────────────────────
+
+        const resetCount = await retrySmtpErrorInquiries(tenantAId);
+
+        // Exactly one row was reset (only tenant A's inquiry).
+        expect(resetCount).toBe(1);
+
+        // ── Tenant A's row must be reset ──────────────────────────────────────
+
+        const aAfter = await fetchRow(inqAId);
+        expect(aAfter?.emailAttempts).toBe(0);
+        expect(aAfter?.emailLastAttemptAt).toBeNull();
+        // emailError is preserved so the sweep can still select the row.
+        expect(aAfter?.emailError).toBe(transportErrorMsg);
+
+        // ── Tenant B's row must be completely unchanged ───────────────────────
+
+        const bAfter = await fetchRow(inqBId);
+        expect(bAfter?.emailAttempts).toBe(3);
+        expect(bAfter?.emailLastAttemptAt).toEqual(fixedAttemptAt);
+        expect(bAfter?.emailError).toBe(transportErrorMsg);
+      },
+    );
   },
 );
