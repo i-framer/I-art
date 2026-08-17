@@ -250,6 +250,32 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(cleared?.themeColor).toBeNull();
   });
 
+  it("clearing an existing themeColor stores null in the DB (not an empty string)", async () => {
+    // Arrange: first save a non-empty themeColor so the tenant has one set.
+    const { tenantId } = await createTenant();
+
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "#FF5733", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    const withColor = await tenantRow(tenantId);
+    expect(withColor?.themeColor).toBe("#FF5733");
+
+    // Act: submit with an empty themeColor to clear it.
+    await updateTenantSettings(fd({
+      businessName: "Settings Test Gallery",
+      contactEmail: "owner@test.com",
+      themeColor: "",   // ← deliberate clear
+      aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: the DB row must have null, not an empty string.
+    const cleared = await tenantRow(tenantId);
+    expect(cleared?.themeColor).toBeNull();
+  });
+
   it("aboutText update persists", async () => {
     const { tenantId } = await createTenant();
 
