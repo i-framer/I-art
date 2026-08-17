@@ -73,6 +73,7 @@ vi.mock("@/lib/email", () => ({
 
 import {
   requeueNoContactEmailInquiries,
+  retrySmtpErrorInquiries,
   sweepUnsentInquiryEmails,
   NO_CONTACT_EMAIL_ERROR,
 } from "@/lib/email-sweep";
@@ -980,6 +981,170 @@ describeIntegration(
         expect(failedRows[0]?.emailError).toBe(transportError.message);
         expect(failedRows[0]?.emailError).not.toBe(NO_CONTACT_EMAIL_ERROR);
         expect(failedRows[0]?.emailAttempts).toBe(1);
+      },
+    );
+
+    /**
+     * Task #982 — Confirm the transport-error inquiry re-enters the sweep after
+     * an admin retry, not the no-contact queue.
+     *
+     * After a partial transport failure mid-sweep, the failed inquiry has
+     * emailError = transport error message (NOT NO_CONTACT_EMAIL_ERROR).
+     * When an admin calls retrySmtpErrorInquiries, that row should re-enter
+     * the sweep candidate set — but it must NOT be counted by
+     * getNoContactEmailInquiryCount, which only tracks the no-contact sentinel.
+     *
+     * Scenario:
+     *  1. Seed a tenant with a contact email and 3 inquiries at emailAttempts=0,
+     *     emailError=NO_CONTACT_EMAIL_ERROR (ready for the sweep to attempt).
+     *  2. Run sweepUnsentInquiryEmails with 2 successes and 1 transport failure:
+     *     scanned=3, sent=2, failed=1.
+     *  3. Assert the failed row has emailError = transport error message (not
+     *     NO_CONTACT_EMAIL_ERROR) and emailAttempts=1.
+     *  4. Assert getNoContactEmailInquiryCount is 0 — the failed row escaped
+     *     the no-contact sentinel.
+     *  5. Call retrySmtpErrorInquiries — resets emailAttempts→0,
+     *     emailLastAttemptAt→null for the failed row; emailError is preserved.
+     *  6. Assert getNoContactEmailInquiryCount is still 0 (the retry must not
+     *     flip emailError to NO_CONTACT_EMAIL_ERROR).
+     *  7. Run sweepUnsentInquiryEmails again; assert the failed row is
+     *     re-selected and the email is delivered: scanned=1, sent=1.
+     */
+    it(
+      "transport-error inquiry re-enters sweep after retrySmtpErrorInquiries; getNoContactEmailInquiryCount stays 0 (Task #982)",
+      async () => {
+        const tenantId = makeId("tenant-982");
+        // Tenant has a contact email from the start so the sweep attempts delivery.
+        await insertTenant(tenantId, { contactEmail: "owner-982@gallery.test" });
+
+        const artworkId = makeId("artwork-982");
+        await insertArtwork(artworkId, tenantId);
+
+        // Seed 3 inquiries with emailError = NO_CONTACT_EMAIL_ERROR at
+        // emailAttempts=0, emailLastAttemptAt=null.  Even though the tenant now
+        // has a contact email, the rows still have the sentinel set (they were
+        // recorded before the email was added).  sweepUnsentInquiryEmails will
+        // see: emailError IS NOT NULL, emailAttempts < MAX → candidate.  Because
+        // the tenant's contactEmail is set, the sweep reaches the delivery path
+        // and calls sendArtworkInquiry.
+        const inqId1 = makeId("inq-982-a");
+        const inqId2 = makeId("inq-982-b");
+        const inqId3 = makeId("inq-982-c");
+
+        await Promise.all([
+          insertNoContactInquiry(inqId1, tenantId, artworkId, 0, null),
+          insertNoContactInquiry(inqId2, tenantId, artworkId, 0, null),
+          insertNoContactInquiry(inqId3, tenantId, artworkId, 0, null),
+        ]);
+
+        mockSession.tenantId = tenantId;
+
+        // ── Pre-condition: all 3 rows carry NO_CONTACT_EMAIL_ERROR ────────────
+
+        const countBefore = await getNoContactEmailInquiryCount();
+        expect(countBefore).toBe(3);
+
+        // ── Sweep pass 1: 2 succeed, 1 fails with a transport error ───────────
+
+        const transportError = new Error(
+          "Transport failure: connection refused (982)",
+        );
+        sendArtworkInquiry
+          .mockResolvedValueOnce(true)
+          .mockRejectedValueOnce(transportError)
+          .mockResolvedValueOnce(true);
+
+        const sweep1 = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+        expect(sweep1.scanned).toBe(3);
+        expect(sweep1.sent).toBe(2);
+        expect(sweep1.failed).toBe(1);
+        expect(sweep1.skipped).toBe(0);
+        expect(sendArtworkInquiry).toHaveBeenCalledTimes(3);
+
+        // ── DB state after sweep 1 ────────────────────────────────────────────
+
+        const [p1, p2, p3] = await Promise.all([
+          fetchRow(inqId1),
+          fetchRow(inqId2),
+          fetchRow(inqId3),
+        ]);
+
+        const allRows = [p1, p2, p3];
+        const successRows = allRows.filter((r) => r?.emailError === null);
+        const failedRows = allRows.filter(
+          (r) =>
+            r?.emailError !== null &&
+            r?.emailError !== NO_CONTACT_EMAIL_ERROR,
+        );
+
+        expect(successRows).toHaveLength(2);
+        expect(failedRows).toHaveLength(1);
+
+        // The failed row carries the transport error message — never NO_CONTACT_EMAIL_ERROR.
+        expect(failedRows[0]?.emailError).toBe(transportError.message);
+        expect(failedRows[0]?.emailError).not.toBe(NO_CONTACT_EMAIL_ERROR);
+        expect(failedRows[0]?.emailAttempts).toBe(1);
+
+        // ── getNoContactEmailInquiryCount must be 0 after sweep 1 ─────────────
+        //
+        // All 3 rows have left the NO_CONTACT_EMAIL_ERROR state:
+        //  • 2 successful rows: emailError = null.
+        //  • 1 failed row: emailError = transport error message.
+        // Neither is the no-contact sentinel, so the count must be 0.
+
+        const countAfterSweep1 = await getNoContactEmailInquiryCount();
+        expect(countAfterSweep1).toBe(0);
+
+        // ── Admin calls retrySmtpErrorInquiries ───────────────────────────────
+        //
+        // Resets the failed row: emailAttempts→0, emailLastAttemptAt→null.
+        // emailError is preserved (still the transport error message) so the
+        // sweep candidate query (isNotNull emailError) still selects the row.
+        // Rows with emailError = null (the 2 successful rows) are NOT touched.
+
+        const resetCount = await retrySmtpErrorInquiries(tenantId);
+        expect(resetCount).toBe(1);
+
+        const failedRowAfterRetry = await fetchRow(failedRows[0]!.id);
+        expect(failedRowAfterRetry?.emailAttempts).toBe(0);
+        expect(failedRowAfterRetry?.emailLastAttemptAt).toBeNull();
+        // emailError must be preserved — not cleared, not changed to NO_CONTACT_EMAIL_ERROR.
+        expect(failedRowAfterRetry?.emailError).toBe(transportError.message);
+        expect(failedRowAfterRetry?.emailError).not.toBe(NO_CONTACT_EMAIL_ERROR);
+
+        // ── getNoContactEmailInquiryCount is still 0 after retry ──────────────
+        //
+        // retrySmtpErrorInquiries must NOT flip emailError to NO_CONTACT_EMAIL_ERROR.
+        // The failed row must never enter the no-contact queue.
+
+        const countAfterRetry = await getNoContactEmailInquiryCount();
+        expect(countAfterRetry).toBe(0);
+
+        // ── Sweep pass 2: the failed row is re-selected and delivered ─────────
+        //
+        // emailAttempts=0 < MAX_EMAIL_ATTEMPTS → candidate.
+        // emailLastAttemptAt=null → backoff guard is skipped.
+        // The 2 successful rows have emailError=null → not selected (isNotNull guard).
+
+        sendArtworkInquiry.mockResolvedValue(true);
+        const sweep2 = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+        expect(sweep2.scanned).toBe(1);
+        expect(sweep2.sent).toBe(1);
+        expect(sweep2.failed).toBe(0);
+        expect(sweep2.skipped).toBe(0);
+
+        // ── DB: failed row is now delivered ───────────────────────────────────
+
+        const finalRow = await fetchRow(failedRows[0]!.id);
+        expect(finalRow?.emailError).toBeNull();
+        expect(finalRow?.emailAttempts).toBe(1);
+
+        // ── No-contact count unchanged ────────────────────────────────────────
+
+        const countFinal = await getNoContactEmailInquiryCount();
+        expect(countFinal).toBe(0);
       },
     );
 
