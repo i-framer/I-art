@@ -425,6 +425,30 @@ export async function sweepUnsentStatusEmails(
  * It is safe to call unconditionally on every settings save — it is a no-op
  * when there are no no-contact-email inquiries for the tenant.
  *
+ * ── Decision: SMTP-error inquiries are NOT reset on email change ─────────────
+ *
+ * Inquiries that exhausted their attempts with an SMTP error (e.g. "550
+ * mailbox not found" for the gallery's *old* address) are intentionally left
+ * untouched here, even when the gallery owner switches to a different email.
+ *
+ * Rationale:
+ *  • SMTP failures are tied to the *buyer's* address or the mail-server path,
+ *    not solely to the gallery's contact email.  A "550 mailbox not found"
+ *    reply from the remote MX could mean the buyer's address is invalid; that
+ *    would still fail after an email change.
+ *  • Silently re-enqueuing SMTP-error rows on every address change would risk
+ *    flooding a newly configured address with a burst of old, potentially
+ *    un-deliverable notifications.
+ *  • The "no gallery contact email" sentinel is the only error that is
+ *    *structurally* caused by the gallery's own configuration state and whose
+ *    root cause is definitively resolved by adding an address.  Resetting only
+ *    that sentinel keeps the requeue semantics narrow and predictable.
+ *
+ * If a gallery wants to retry SMTP-error inquiries after fixing their email
+ * address they can do so explicitly via a future admin action (e.g. "retry all
+ * failed inquiries").  The integration tests in
+ * tenant-settings-update-integration.test.ts assert this boundary explicitly.
+ *
  * @param tenantId  The tenant whose contact email was just set.
  */
 export async function requeueNoContactEmailInquiries(

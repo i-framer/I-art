@@ -31,6 +31,10 @@
  *      exhausted no-contact-email inquiries (non-null → different non-null path).
  *  23. requeueNoContactEmailInquiries preserves emailError on every row so the
  *      sweep can distinguish retries from fresh inquiries (direct-call test).
+ *  24. SMTP-error inquiries exhausted against the old address are left untouched
+ *      when the gallery switches to a different email address (email-A → email-B).
+ *      Only "no gallery contact email" rows are reset; all other error strings are
+ *      an explicit intentional boundary documented in email-sweep.ts.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -910,6 +914,77 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
       // emailError is preserved so the sweep knows this is a retry attempt.
       expect(row?.emailError, `${label}: emailError`).toBe("no gallery contact email");
     }
+  });
+
+  it("SMTP-error inquiries exhausted against the old address are left untouched when the gallery switches to a different email address (email-A → email-B)", async () => {
+    // Arrange: the gallery starts with a real contact email ("original@test.com"
+    // from createTenant).  Two inquiries have been filed and sent; the delivery
+    // attempt failed with a genuine SMTP error tied to the *old* address.
+    // These rows have exhausted MAX_EMAIL_ATTEMPTS and carry an SMTP error string
+    // (NOT the "no gallery contact email" sentinel).
+    //
+    // Decision boundary (documented in email-sweep.ts requeueNoContactEmailInquiries):
+    // Only inquiries with emailError = "no gallery contact email" are reset when
+    // the gallery saves a contact email.  SMTP-error rows are intentionally left
+    // untouched because:
+    //  • The error may be tied to the *buyer's* address, not the gallery's.
+    //  • Silently re-enqueuing them risks flooding the new address with old,
+    //    potentially un-deliverable notifications.
+    const { tenantId } = await createTenant("Gallery Switching Email");
+    const initialRow = await tenantRow(tenantId);
+    expect(initialRow?.contactEmail).toBe("original@test.com");
+
+    const artworkId = await createArtwork(tenantId);
+
+    // Inquiry that failed with "550 mailbox not found" — a real SMTP bounce.
+    const smtpBounceId = await createExhaustedInquiryWithError(
+      tenantId,
+      artworkId,
+      "550 mailbox not found",
+    );
+
+    // Inquiry that failed with a different SMTP error.
+    const smtpTimeoutId = await createExhaustedInquiryWithError(
+      tenantId,
+      artworkId,
+      "SMTP connection timeout",
+    );
+
+    // Verify both start exhausted.
+    const [beforeBounce, beforeTimeout] = await Promise.all([
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, smtpBounceId) }),
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, smtpTimeoutId) }),
+    ]);
+    expect(beforeBounce?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(beforeTimeout?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+
+    // Act: gallery owner changes to a *different* non-null email (email-A → email-B).
+    await updateTenantSettings(fd({
+      businessName: "Gallery Switching Email",
+      contactEmail: "new-address@gallery.test",  // ← different valid email
+      themeColor: "", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: contactEmail is updated.
+    const updatedRow = await tenantRow(tenantId);
+    expect(updatedRow?.contactEmail).toBe("new-address@gallery.test");
+
+    // Assert: SMTP-error inquiries are completely untouched — same attempt
+    // count, same error message, same non-null timestamp.  Changing the gallery
+    // contact email does NOT reset these rows; that would require an explicit
+    // admin action to retry non-contact-error failures.
+    const [afterBounce, afterTimeout] = await Promise.all([
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, smtpBounceId) }),
+      db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, smtpTimeoutId) }),
+    ]);
+
+    expect(afterBounce?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(afterBounce?.emailError).toBe("550 mailbox not found");
+    expect(afterBounce?.emailLastAttemptAt).not.toBeNull();
+
+    expect(afterTimeout?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(afterTimeout?.emailError).toBe("SMTP connection timeout");
+    expect(afterTimeout?.emailLastAttemptAt).not.toBeNull();
   });
 
   it("changing contactEmail from one non-null value to another also requeues exhausted no-contact-email inquiries (non-null → different non-null)", async () => {
