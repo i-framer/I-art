@@ -508,6 +508,40 @@ export async function requeueAllFailedInquiries(
     .returning({ id: inquiriesTable.id });
   return rows.length;
 }
+
+/**
+ * Resets only the inquiries that are counted by the "permanently failed"
+ * alert banner on the Inquiries page: non-archived rows whose emailError is
+ * set AND whose emailAttempts have reached MAX_EMAIL_ATTEMPTS.
+ *
+ * This is the narrower counterpart to requeueAllFailedInquiries — it ensures
+ * the success-banner count matches the alert-banner count, and never
+ * re-queues archived or still-retrying rows.
+ *
+ * @param tenantId  The tenant whose exhausted inquiry notifications should be
+ *                  re-enqueued.
+ * @returns         The number of inquiry rows that were reset.
+ */
+export async function requeueExhaustedInquiries(
+  tenantId: string,
+): Promise<number> {
+  const rows = await db
+    .update(inquiriesTable)
+    .set({
+      emailAttempts: 0,
+      emailLastAttemptAt: null,
+    })
+    .where(
+      and(
+        eq(inquiriesTable.tenantId, tenantId),
+        isNotNull(inquiriesTable.emailError),
+        gte(inquiriesTable.emailAttempts, MAX_EMAIL_ATTEMPTS),
+        isNull(inquiriesTable.archivedAt),
+      ),
+    )
+    .returning({ id: inquiriesTable.id });
+  return rows.length;
+}
 /**
  * Find inquiries whose notification email to the gallery was never delivered
  * (emailError IS NOT NULL) and retry sending with exponential back-off.

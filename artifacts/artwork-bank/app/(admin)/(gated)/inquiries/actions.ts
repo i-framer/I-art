@@ -12,6 +12,7 @@ import {
 import { and, eq, inArray } from "drizzle-orm";
 import { getSession } from "@/lib/auth";
 import { sendInquiryReply, EmailSendError } from "@/lib/email";
+import { requeueExhaustedInquiries } from "@/lib/email-sweep";
 
 export async function setInquiryStatus(formData: FormData): Promise<void> {
   const session = await getSession();
@@ -234,4 +235,32 @@ export async function replyToInquiry(
   revalidatePath("/inquiries");
   revalidatePath("/", "layout");
   return { status: "sent" };
+}
+
+// ---------------------------------------------------------------------------
+// Retry failed inquiry notifications (from the inquiries panel)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resets ALL inquiries for the authenticated tenant that have a non-null
+ * emailError, re-enqueuing them for the next sweep cycle.  Redirects to
+ * /inquiries?retry_result=<count> on success, or ?retry_result=error on
+ * failure.
+ */
+export async function retryFailedInquiryNotifications(): Promise<void> {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  let retried = 0;
+  try {
+    retried = await requeueExhaustedInquiries(session.tenantId);
+  } catch (err) {
+    console.error(
+      `Inquiries: failed to retry inquiry notifications for tenant ${session.tenantId}:`,
+      (err as any)?.message ?? String(err),
+    );
+    redirect("/inquiries?retry_result=error");
+  }
+
+  redirect(`/inquiries?retry_result=${retried}`);
 }

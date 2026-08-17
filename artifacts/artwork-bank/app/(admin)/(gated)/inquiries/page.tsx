@@ -11,7 +11,7 @@ import {
 } from "@workspace/db";
 import { eq, desc, count, and, inArray, asc, isNull, isNotNull } from "drizzle-orm";
 // isNotNull kept for the archived-filter query (isNotNull(inquiriesTable.archivedAt))
-import { setInquiryStatus, setInquiryArchived } from "./actions";
+import { setInquiryStatus, setInquiryArchived, retryFailedInquiryNotifications } from "./actions";
 import {
   getEmailFailCount,
   getNoContactEmailInquiryCount,
@@ -62,7 +62,7 @@ type FilterKey = (typeof FILTERS)[number]["key"];
 export default async function InquiriesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string; status?: string }>;
+  searchParams: Promise<{ page?: string; status?: string; retry_result?: string }>;
 }) {
   const session = await getSession();
   if (!session.userId) redirect("/login");
@@ -74,6 +74,7 @@ export default async function InquiriesPage({
     sp.status === "new" || sp.status === "handled" || sp.status === "archived"
       ? sp.status
       : "all";
+  const retryResult = sp.retry_result;
 
   const tenantWhere = eq(inquiriesTable.tenantId, session.tenantId);
   const where =
@@ -172,6 +173,54 @@ export default async function InquiriesPage({
         </p>
       </div>
 
+      {retryResult && retryResult !== "error" && (
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-green-200 bg-green-50 px-5 py-4">
+          <svg
+            className="mt-0.5 h-5 w-5 shrink-0 text-green-500"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+            />
+          </svg>
+          <p className="text-sm font-medium text-green-800">
+            {retryResult === "0"
+              ? "No failed notifications to retry — all are already queued."
+              : retryResult === "1"
+                ? "1 failed notification has been re-queued and will be retried shortly."
+                : `${retryResult} failed notifications have been re-queued and will be retried shortly.`}
+          </p>
+        </div>
+      )}
+
+      {retryResult === "error" && (
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 px-5 py-4">
+          <svg
+            className="mt-0.5 h-5 w-5 shrink-0 text-orange-500"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
+            />
+          </svg>
+          <p className="text-sm font-medium text-orange-800">
+            Something went wrong while re-queuing notifications. Please try again.
+          </p>
+        </div>
+      )}
+
       {emailFailCount > 0 && (
         <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-4">
           <svg
@@ -203,6 +252,14 @@ export default async function InquiriesPage({
               Contact the buyer directly via the email address shown.
             </p>
           </div>
+          <form action={retryFailedInquiryNotifications} className="shrink-0">
+            <button
+              type="submit"
+              className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-medium text-red-700 transition-colors hover:bg-red-200 whitespace-nowrap"
+            >
+              Retry failed notifications
+            </button>
+          </form>
         </div>
       )}
 
