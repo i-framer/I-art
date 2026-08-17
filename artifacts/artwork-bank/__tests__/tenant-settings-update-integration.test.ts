@@ -23,6 +23,7 @@
  *  16. Completes and redirects without logging errors when no inquiries need requeuing.
  *  17. Requeue is skipped entirely when contactEmail is cleared.
  *  18. Saving a contactEmail requeues exhausted no-contact-email inquiries.
+ *  19. Requeue only resets inquiries with the exact 'no gallery contact email' error, not other failed inquiries.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -112,6 +113,10 @@ async function createArtwork(tenantId: string) {
 }
 
 async function createExhaustedNoEmailInquiry(tenantId: string, artworkId: string) {
+  return createExhaustedInquiryWithError(tenantId, artworkId, "no gallery contact email");
+}
+
+async function createExhaustedInquiryWithError(tenantId: string, artworkId: string, emailError: string) {
   const id = uid();
   await db.insert(inquiriesTable).values({
     id,
@@ -121,7 +126,7 @@ async function createExhaustedNoEmailInquiry(tenantId: string, artworkId: string
     buyerName: "Test Buyer",
     buyerEmail: `buyer-${id}@test.com`,
     message: "Is this available?",
-    emailError: "no gallery contact email",
+    emailError,
     emailAttempts: MAX_EMAIL_ATTEMPTS,
     emailLastAttemptAt: new Date(Date.now() - 60_000),
   } as any);
@@ -748,5 +753,54 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(requeuedRow?.emailError).toBe("no gallery contact email");
     // emailLastAttemptAt cleared so no backoff delay applies.
     expect(requeuedRow?.emailLastAttemptAt).toBeNull();
+  });
+
+  it("requeue only resets inquiries with the exact 'no gallery contact email' error, not other failed inquiries", async () => {
+    // Arrange: tenant starts with no contactEmail so inquiries have piled up.
+    const { tenantId } = await createTenant("Gallery With Mixed Errors");
+    await db.update(tenantsTable).set({ contactEmail: null } as any).where(eq(tenantsTable.id, tenantId));
+
+    const artworkId = await createArtwork(tenantId);
+
+    // Inquiry 1: failed because there was no gallery contact email — the only
+    // kind that requeueNoContactEmailInquiries should touch.
+    const noEmailInquiryId = await createExhaustedInquiryWithError(
+      tenantId,
+      artworkId,
+      "no gallery contact email",
+    );
+
+    // Inquiry 2: failed for a completely different reason (SMTP error).
+    // requeueNoContactEmailInquiries must leave this one completely untouched.
+    const smtpErrorInquiryId = await createExhaustedInquiryWithError(
+      tenantId,
+      artworkId,
+      "SMTP error",
+    );
+
+    // Act: gallery owner restores the contact email via the settings route.
+    await updateTenantSettings(fd({
+      businessName: "Gallery With Mixed Errors",
+      contactEmail: "gallery@example.com",
+      themeColor: "", aboutText: "", location: "",
+    })).catch(e => { if (!String(e).includes("REDIRECT")) throw e; });
+
+    // Assert: only the "no gallery contact email" inquiry was reset.
+    const noEmailRow = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, noEmailInquiryId),
+    });
+    expect(noEmailRow?.emailAttempts).toBe(0);
+    expect(noEmailRow?.emailError).toBe("no gallery contact email");
+    expect(noEmailRow?.emailLastAttemptAt).toBeNull();
+
+    // Assert: the SMTP-error inquiry is completely unchanged — same attempt
+    // count, same error message, same timestamp.
+    const smtpRow = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, smtpErrorInquiryId),
+    });
+    expect(smtpRow?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(smtpRow?.emailError).toBe("SMTP error");
+    // emailLastAttemptAt was set during insert — must still be non-null.
+    expect(smtpRow?.emailLastAttemptAt).not.toBeNull();
   });
 });
