@@ -103,7 +103,12 @@ vi.mock("@/lib/base-url", () => ({
 }));
 
 import { db } from "@workspace/db";
-import { sweepUnsentInquiryEmails } from "@/lib/email-sweep";
+import {
+  sweepUnsentInquiryEmails,
+  requeueNoContactEmailInquiries,
+  NO_CONTACT_EMAIL_ERROR,
+  MAX_EMAIL_ATTEMPTS,
+} from "@/lib/email-sweep";
 
 const NOW = new Date("2026-07-19T12:00:00Z");
 
@@ -350,5 +355,62 @@ describe("sweepUnsentInquiryEmails", () => {
     const result = await sweepUnsentInquiryEmails(NOW);
 
     expect(result).toEqual({ scanned: 2, sent: 1, failed: 1, skipped: 0 });
+  });
+
+  it("re-delivers a stale no-contact-email inquiry after requeueNoContactEmailInquiries resets it", async () => {
+    // Simulate an inquiry that was previously stuck with NO_CONTACT_EMAIL_ERROR
+    // after attempts were exhausted while the gallery had no contact email.
+    const staleInquiry = inquiry({
+      emailError: NO_CONTACT_EMAIL_ERROR,
+      emailAttempts: MAX_EMAIL_ATTEMPTS, // exhausted — excluded from sweep candidate set
+      emailLastAttemptAt: new Date("2026-07-01T00:00:00Z"),
+    });
+
+    // The gallery owner now adds a contact email.  The settings handler calls
+    // requeueNoContactEmailInquiries, which resets emailAttempts → 0 and
+    // emailLastAttemptAt → null so the sweep re-selects the row.
+    // In this unit test the DB mock is a no-op for the UPDATE; we apply the
+    // same mutation to state.candidates manually to mirror what the real
+    // database row would look like after the reset.
+    await requeueNoContactEmailInquiries("tenant-1");
+
+    // Clear the update recorded by the requeue call itself so that the
+    // subsequent assertions only inspect writes made by the sweep.
+    state.updates.length = 0;
+
+    state.candidates = [
+      {
+        ...staleInquiry,
+        emailAttempts: 0,
+        emailLastAttemptAt: null,
+        // emailError remains NO_CONTACT_EMAIL_ERROR so the sweep's
+        // isNotNull(emailError) condition still selects the row.
+      },
+    ];
+
+    // The default tenant mock now returns contactEmail: "gallery@example.com",
+    // simulating the gallery having saved their address.
+    sendArtworkInquiry.mockResolvedValue(true);
+
+    const result = await sweepUnsentInquiryEmails(NOW);
+
+    expect(result).toEqual({ scanned: 1, sent: 1, failed: 0, skipped: 0 });
+    expect(sendArtworkInquiry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        galleryEmail: "gallery@example.com",
+        buyerEmail: "alice@example.com",
+        artworkTitle: "Sunset",
+        artworkSku: "SKU-001",
+        tenantName: "Gallery One",
+      }),
+    );
+    // emailError must be cleared and emailAttempts incremented from 0 → 1.
+    expect(state.updates).toEqual([
+      expect.objectContaining({
+        emailError: null,
+        emailAttempts: 1,
+        emailLastAttemptAt: NOW,
+      }),
+    ]);
   });
 });
