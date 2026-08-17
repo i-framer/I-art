@@ -851,5 +851,7 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     const afterB = await db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inquiryBId) });
     expect(afterB?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
     expect(afterB?.emailError).toBe("no gallery contact email");
+    // emailLastAttemptAt was set during insert — must still be non-null.
+    expect(afterB?.emailLastAttemptAt).not.toBeNull();
   });
 });
