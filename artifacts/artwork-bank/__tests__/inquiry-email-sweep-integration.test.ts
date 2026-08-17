@@ -19,6 +19,9 @@
  * 11a. No-email inquiry is permanently excluded: second sweep run finds scanned=0 after first bump reaches MAX.
  * 12. requeueNoContactEmailInquiries resets exhausted rows → sweep delivers on next run.
  * 13. Requeue at MAX-1 (near-exhaustion interleave) still lets the sweep deliver.
+ * 14. After an email-A → email-B change, the sweep does NOT re-select exhausted
+ *     SMTP-error inquiries — their emailAttempts, emailError, and
+ *     emailLastAttemptAt remain completely unchanged.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -691,6 +694,81 @@ describeIntegration(
         where: eq(inquiriesTable.id, inquiryId),
       });
       expect(delivered?.emailError).toBeNull();
+    });
+
+    it("sweep does not re-select exhausted SMTP-error inquiries after a gallery email-A → email-B change", async () => {
+      // Arrange: tenant starts with a real contact email (email A).
+      // Two inquiries were filed and their delivery attempts exhausted with
+      // genuine SMTP errors — errors that are tied to the buyer's address or
+      // the mail-server path, NOT to the gallery having no contact email.
+      // These rows have emailAttempts = MAX_EMAIL_ATTEMPTS and an SMTP error
+      // string (not the "no gallery contact email" sentinel).
+      const tenantId = await createTenant("gallery-a@test.com"); // email A
+
+      const artworkId = await createArtwork(tenantId);
+
+      // Inquiry 1: "550 mailbox not found" — a permanent SMTP bounce.
+      const smtpBounceId = await createFailedInquiry(tenantId, artworkId, {
+        emailAttempts: MAX_EMAIL_ATTEMPTS,
+        emailError: "550 mailbox not found",
+        emailLastAttemptAt: new Date(Date.now() - 60_000),
+      });
+
+      // Inquiry 2: "SMTP connection timeout" — a transient but exhausted error.
+      const smtpTimeoutId = await createFailedInquiry(tenantId, artworkId, {
+        emailAttempts: MAX_EMAIL_ATTEMPTS,
+        emailError: "SMTP connection timeout",
+        emailLastAttemptAt: new Date(Date.now() - 60_000),
+      });
+
+      // Capture the timestamps before the email change so we can assert they
+      // are not mutated by either the requeue step or the subsequent sweep.
+      const [beforeBounce, beforeTimeout] = await Promise.all([
+        db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, smtpBounceId) }),
+        db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, smtpTimeoutId) }),
+      ]);
+      expect(beforeBounce?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(beforeTimeout?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+
+      // Act step 1: gallery owner changes contact email to email B.
+      // Mirror exactly what updateTenantSettings does: update the tenant row
+      // then call requeueNoContactEmailInquiries (which is a no-op here because
+      // neither inquiry has the "no gallery contact email" sentinel).
+      await db
+        .update(tenantsTable)
+        .set({ contactEmail: "gallery-b@test.com" } as any)
+        .where(eq(tenantsTable.id, tenantId));
+      await requeueNoContactEmailInquiries(tenantId);
+
+      // Act step 2: run the sweep for this tenant.  The sweep's candidate query
+      // filters on lt(emailAttempts, MAX_EMAIL_ATTEMPTS), so exhausted rows
+      // (emailAttempts = MAX) must not be selected at all.
+      const result = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+      // The sweep must find zero candidates for this tenant — both rows are
+      // excluded by the lt(emailAttempts, MAX_EMAIL_ATTEMPTS) guard.
+      expect(result).toEqual({ scanned: 0, sent: 0, failed: 0, skipped: 0 });
+      expect(sendArtworkInquiry).not.toHaveBeenCalled();
+
+      // Assert: every field on both SMTP-error rows is completely unchanged.
+      const [afterBounce, afterTimeout] = await Promise.all([
+        db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, smtpBounceId) }),
+        db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, smtpTimeoutId) }),
+      ]);
+
+      // emailAttempts must still be MAX — not reset and not incremented.
+      expect(afterBounce?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(afterBounce?.emailError).toBe("550 mailbox not found");
+      // emailLastAttemptAt must be exactly the value written at insert time.
+      expect(afterBounce?.emailLastAttemptAt?.getTime()).toBe(
+        beforeBounce?.emailLastAttemptAt?.getTime(),
+      );
+
+      expect(afterTimeout?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      expect(afterTimeout?.emailError).toBe("SMTP connection timeout");
+      expect(afterTimeout?.emailLastAttemptAt?.getTime()).toBe(
+        beforeTimeout?.emailLastAttemptAt?.getTime(),
+      );
     });
   },
 );
