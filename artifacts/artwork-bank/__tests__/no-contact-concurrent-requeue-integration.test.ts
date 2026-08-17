@@ -75,7 +75,6 @@ import {
   requeueNoContactEmailInquiries,
   sweepUnsentInquiryEmails,
   NO_CONTACT_EMAIL_ERROR,
-  MAX_EMAIL_ATTEMPTS,
 } from "@/lib/email-sweep";
 import { getNoContactEmailInquiryCount } from "@/app/(admin)/_actions/inquiry-count";
 
@@ -219,7 +218,7 @@ describeIntegration(
 
         const noContactBefore = await getNoContactEmailInquiryCount();
 
-        const rowAfterFirst = await fetchRow(inqId);
+        const _rowAfterFirst = await fetchRow(inqId);
         expect(noContactBefore).toBe(1);
 
         // ── Simulate the concurrent sweep's snapshot ──────────────────────────
@@ -234,7 +233,6 @@ describeIntegration(
         const rowAfterRequeue = await fetchRow(inqId);
         expect(rowAfterRequeue?.emailAttempts).toBe(0);
 
-        const now = new Date();
         const staleResult = await db
           .update(inquiriesTable)
           .set({
@@ -1071,6 +1069,123 @@ describeIntegration(
 
         const noContactAfter = await getNoContactEmailInquiryCount();
         expect(noContactAfter).toBe(0);
+      },
+    );
+
+    /**
+     * Task #981 — Confirm the no-contact banner count drops correctly when
+     * archived inquiries are excluded from a partial-failure sweep.
+     *
+     * getNoContactEmailInquiryCount already filters out archived rows
+     * (archivedAt IS NULL).  sweepUnsentInquiryEmails must also skip archived
+     * rows so that a batch containing a mix of live and archived inquiries
+     * produces the right scanned count, and the banner count reflects only
+     * the live unarchived rows after the sweep completes.
+     *
+     * Scenario:
+     *  1. Seed 3 inquiries at emailAttempts=0 / emailLastAttemptAt=null, all
+     *     with NO_CONTACT_EMAIL_ERROR.
+     *  2. Archive 1 of them (set archivedAt = now).
+     *  3. Verify getNoContactEmailInquiryCount = 2 (archived row excluded).
+     *  4. Persist a contact email on the tenant so the sweep can deliver.
+     *  5. Run sweepUnsentInquiryEmails → scanned=2 (archived row not selected),
+     *     sent=2, failed=0.
+     *  6. Assert getNoContactEmailInquiryCount drops to 0.
+     *  7. Assert the archived row's emailError is still NO_CONTACT_EMAIL_ERROR
+     *     (the sweep left it untouched).
+     */
+    it(
+      "archived inquiry is excluded from sweep scan and banner count reflects only live rows (Task #981)",
+      async () => {
+        const tenantId = makeId("tenant-981");
+        // Insert tenant with a contact email already set so the sweep can
+        // attempt delivery immediately — no requeue needed.
+        await insertTenant(tenantId, {
+          contactEmail: "owner-981@gallery.test",
+        });
+
+        const artworkId = makeId("artwork-981");
+        await insertArtwork(artworkId, tenantId);
+
+        // Seed 3 inquiries: all have NO_CONTACT_EMAIL_ERROR, emailAttempts=0,
+        // emailLastAttemptAt=null → ready to be swept immediately.
+        const inqId1 = makeId("inq-981-a");
+        const inqId2 = makeId("inq-981-b");
+        const inqId3 = makeId("inq-981-c");
+
+        await Promise.all([
+          insertNoContactInquiry(inqId1, tenantId, artworkId, 0, null),
+          insertNoContactInquiry(inqId2, tenantId, artworkId, 0, null),
+          insertNoContactInquiry(inqId3, tenantId, artworkId, 0, null),
+        ]);
+
+        mockSession.tenantId = tenantId;
+
+        // ── Pre-condition: all 3 are counted before archiving ─────────────────
+
+        const countBefore = await getNoContactEmailInquiryCount();
+        expect(countBefore).toBe(3);
+
+        // ── Archive 1 inquiry ─────────────────────────────────────────────────
+        //
+        // Simulates the gallery owner archiving a resolved lead while the
+        // sweep is yet to run.  The archived row should be excluded both from
+        // the sweep's candidate set and from the banner count.
+
+        const archivedAt = new Date();
+        await db
+          .update(inquiriesTable)
+          .set({ archivedAt })
+          .where(eq(inquiriesTable.id, inqId3));
+
+        // ── Banner count drops to 2 immediately after archiving ───────────────
+
+        const countAfterArchive = await getNoContactEmailInquiryCount();
+        expect(countAfterArchive).toBe(2);
+
+        // ── Sweep runs ────────────────────────────────────────────────────────
+        //
+        // sweepUnsentInquiryEmails must filter out archived rows — only the 2
+        // live inquiries (inqId1, inqId2) should appear in the candidate set.
+
+        sendArtworkInquiry.mockResolvedValue(true);
+        const sweepResult = await sweepUnsentInquiryEmails(new Date(), tenantId);
+
+        // scanned=2 proves the archived row was excluded from the candidate query.
+        expect(sweepResult.scanned).toBe(2);
+        expect(sweepResult.sent).toBe(2);
+        expect(sweepResult.failed).toBe(0);
+        expect(sweepResult.skipped).toBe(0);
+        expect(sendArtworkInquiry).toHaveBeenCalledTimes(2);
+
+        // ── Banner count drops to 0 ───────────────────────────────────────────
+        //
+        // The 2 live rows now have emailError = null (delivered), so the
+        // no-contact count is 0.  The archived row is still excluded regardless
+        // of its emailError value.
+
+        const countAfterSweep = await getNoContactEmailInquiryCount();
+        expect(countAfterSweep).toBe(0);
+
+        // ── DB state ──────────────────────────────────────────────────────────
+
+        const [f1, f2, f3] = await Promise.all([
+          fetchRow(inqId1),
+          fetchRow(inqId2),
+          fetchRow(inqId3),
+        ]);
+
+        // Live rows were delivered: emailError cleared, emailAttempts incremented.
+        expect(f1?.emailError).toBeNull();
+        expect(f1?.emailAttempts).toBe(1);
+        expect(f2?.emailError).toBeNull();
+        expect(f2?.emailAttempts).toBe(1);
+
+        // Archived row was NOT touched by the sweep: emailError and
+        // emailAttempts are unchanged from their seeded values.
+        expect(f3?.archivedAt).not.toBeNull();
+        expect(f3?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
+        expect(f3?.emailAttempts).toBe(0);
       },
     );
   },

@@ -563,6 +563,7 @@ export async function sweepUnsentInquiryEmails(
     where: and(
       isNotNull(inquiriesTable.emailError),
       lt(inquiriesTable.emailAttempts, MAX_EMAIL_ATTEMPTS),
+      isNull(inquiriesTable.archivedAt),
       tenantId ? eq(inquiriesTable.tenantId, tenantId) : undefined,
     ),
     limit: 50,
