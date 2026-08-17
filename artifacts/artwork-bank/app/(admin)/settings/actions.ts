@@ -510,6 +510,7 @@ export async function startSubscriptionCheckout() {
 export async function openBillingPortal() {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  if (session.role !== "owner") redirect("/settings/billing?billing=unauthorized");
 
   const tenant = await db.query.tenantsTable.findFirst({
     where: eq(tenantsTable.id, session.tenantId),

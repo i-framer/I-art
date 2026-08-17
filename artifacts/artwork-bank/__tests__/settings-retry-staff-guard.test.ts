@@ -16,10 +16,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // ── DB mock ────────────────────────────────────────────────────────────────────
-const requeueAllFailedInquiries = vi.hoisted(() => vi.fn(async () => 3));
+const retrySmtpErrorInquiries = vi.hoisted(() => vi.fn(async () => 3));
 
 vi.mock("@/lib/email-sweep", () => ({
-  requeueAllFailedInquiries,
+  retrySmtpErrorInquiries,
   requeueNoContactEmailInquiries: vi.fn(async () => {}),
   NO_CONTACT_EMAIL_ERROR: "no gallery contact email",
 }));
@@ -70,8 +70,8 @@ describe("retryFailedInquiryNotifications — staff guard", () => {
       "REDIRECT:/settings?retry_result=unauthorized",
     );
 
-    // The requeue function must NOT have been called — the guard fires first.
-    expect(requeueAllFailedInquiries).not.toHaveBeenCalled();
+    // The retry function must NOT have been called — the guard fires first.
+    expect(retrySmtpErrorInquiries).not.toHaveBeenCalled();
   });
 
   it("proceeds past the guard and calls requeueAllFailedInquiries for an owner session", async () => {
@@ -86,7 +86,7 @@ describe("retryFailedInquiryNotifications — staff guard", () => {
       "REDIRECT:/settings?retry_result=3",
     );
 
-    expect(requeueAllFailedInquiries).toHaveBeenCalledWith("tenant-X");
+    expect(retrySmtpErrorInquiries).toHaveBeenCalledWith("tenant-X");
   });
 
   it("redirects to /login instead of /settings when the session has no userId", async () => {
@@ -96,6 +96,6 @@ describe("retryFailedInquiryNotifications — staff guard", () => {
       "REDIRECT:/login",
     );
 
-    expect(requeueAllFailedInquiries).not.toHaveBeenCalled();
+    expect(retrySmtpErrorInquiries).not.toHaveBeenCalled();
   });
 });

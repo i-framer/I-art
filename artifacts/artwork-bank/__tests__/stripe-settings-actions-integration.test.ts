@@ -332,4 +332,30 @@ describeIntegration("Stripe settings actions — real-DB integration", () => {
     });
     expect(row?.stripeCustomerId).toBeNull();
   });
+
+  it("openBillingPortal: staff role → redirects to unauthorized with zero Stripe or DB calls", async () => {
+    const { getSession } = await import("@/lib/auth");
+    const tenantId = await createTenant({ stripeCustomerId: "cus_staff_test" });
+
+    (getSession as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      userId: "u-stripe-staff",
+      tenantId,
+      email: "staff@gallery.test",
+      role: "staff",
+    });
+
+    await expect(openBillingPortal()).rejects.toThrow(
+      "REDIRECT:/settings/billing?billing=unauthorized",
+    );
+
+    // No Stripe API calls at all.
+    expect(stripeCustomers.retrieve).not.toHaveBeenCalled();
+    expect(stripeBillingPortalSessions.create).not.toHaveBeenCalled();
+
+    // DB must be untouched — stripeCustomerId stays unchanged.
+    const row = await db.query.tenantsTable.findFirst({
+      where: eq(tenantsTable.id, tenantId),
+    });
+    expect(row?.stripeCustomerId).toBe("cus_staff_test");
+  });
 });

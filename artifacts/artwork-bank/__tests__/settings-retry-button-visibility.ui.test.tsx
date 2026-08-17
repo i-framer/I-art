@@ -84,6 +84,7 @@ vi.mock("@workspace/db", () => ({
 vi.mock("drizzle-orm", () => ({
   and: (...args: any[]) => ({ and: args }),
   eq: (col: any, val: any) => ({ eq: [col, val] }),
+  ne: (col: any, val: any) => ({ ne: [col, val] }),
   isNotNull: (col: any) => ({ isNotNull: col }),
   count: () => ({ count: true }),
 }));
