@@ -11,7 +11,8 @@
  *  4. themeColor update persists; clearing stores null.
  *  5. aboutText update persists.
  *  6. Clearing an existing aboutText stores null (not empty string).
- *  7. Foreign tenant row is not affected by own session update.
+ *  7. Re-setting aboutText after clearing it persists the new value (null → non-null round-trip).
+ *  8. Foreign tenant row is not affected by own session update.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
