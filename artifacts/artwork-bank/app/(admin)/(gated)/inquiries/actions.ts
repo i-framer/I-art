@@ -251,6 +251,7 @@ export async function replyToInquiry(
 export async function clearStuckInquiryNonces(): Promise<void> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  await requireActiveBillingAccess(session.tenantId);
 
   let cleared = 0;
   try {
@@ -281,6 +282,7 @@ export async function clearStuckInquiryNonces(): Promise<void> {
 export async function retryFailedInquiryNotifications(): Promise<void> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
+  await requireActiveBillingAccess(session.tenantId);
 
   let retried = 0;
   try {
