@@ -17,6 +17,7 @@
  */
 
 import { del as blobDel, list as blobList, put as blobPut } from "@vercel/blob";
+import { getPlatformBaseUrl } from "@/lib/base-url";
 
 export type StorageProvider = "replit" | "vercel-blob";
 
@@ -174,7 +175,14 @@ export async function getServeUrl(
     return signObjectURL(bucketName, objectName, "GET", ttlSec);
   }
 
-  return blobUrlFor(entityId);
+  // Vercel Blob: the production store is PRIVATE, so raw blob URLs return
+  // 403 to browsers.  Serve through the app's public image route instead,
+  // which streams the object using server-side credentials.  Return an
+  // absolute URL when the platform base URL is known (required for external
+  // consumers such as Stripe checkout line-item images).
+  const publicPath = `/api/storage/public?path=${encodeURIComponent(objectPath)}`;
+  const base = getPlatformBaseUrl();
+  return base ? `${base}${publicPath}` : publicPath;
 }
 
 /**
