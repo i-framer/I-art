@@ -263,6 +263,8 @@ export async function clearStuckInquiryNonces(): Promise<void> {
     redirect("/inquiries?stuck_result=error");
   }
 
+  revalidatePath("/inquiries");
+  revalidatePath("/", "layout");
   redirect(`/inquiries?stuck_result=${cleared}`);
 }
 
@@ -291,5 +293,7 @@ export async function retryFailedInquiryNotifications(): Promise<void> {
     redirect("/inquiries?retry_result=error");
   }
 
+  revalidatePath("/inquiries");
+  revalidatePath("/", "layout");
   redirect(`/inquiries?retry_result=${retried}`);
 }
