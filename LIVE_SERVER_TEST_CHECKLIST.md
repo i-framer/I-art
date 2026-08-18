@@ -21,7 +21,7 @@ _Last updated: 2026-08-11 (agent probe — storage routes deployed; manual UI ve
 
 ## 1. Core buyer flow (real Stripe — use a cheap test artwork)
 
-- [ ] 1.1 Visit a gallery storefront (`{slug}.i-art.com.au`) — loads with correct branding
+- [x] 1.1 Visit a gallery storefront (`{slug}.i-art.com.au`) — loads with correct branding (info11925 2026-08-18; brand colour applies to accents/buttons by design)
 - [x] 1.2 Open an artwork page — images, price, and details render correctly (info11925 2026-08-18, Stripe test mode)
 - [x] 1.3 Buy an artwork with a real card — Stripe Checkout completes and redirects to the success page (info11925 2026-08-18, Stripe TEST mode — re-verify with live card at go-live)
 - [x] 1.4 Artwork shows as SOLD immediately after purchase (webhook processed) (info11925 2026-08-18, Stripe test mode)
