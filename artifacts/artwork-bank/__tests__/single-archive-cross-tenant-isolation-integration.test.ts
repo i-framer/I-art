@@ -1,5 +1,6 @@
 /**
  * Task #1020 — Confirm archiving a single inquiry can't reach another gallery's records.
+ * Task #1024 — Confirm un-archiving a single inquiry also can't touch another gallery's records.
  *
  * Background:
  *   setInquiryArchived scopes its UPDATE to the session tenant via an
@@ -7,7 +8,8 @@
  *   "Inquiry not found." when zero rows are updated.  Passing a foreign
  *   inquiry ID must therefore be rejected — not silently accepted.
  *   This integration test confirms the cross-tenant isolation holds
- *   end-to-end against a real PostgreSQL database.
+ *   end-to-end against a real PostgreSQL database, in both the archive
+ *   (archived=true) and unarchive (archived=false) directions.
  *
  * Scenarios:
  *  1. Session is tenant A; calling setInquiryArchived with a FormData holding
@@ -16,6 +18,10 @@
  *     cross-tenant call.
  *  3. getEmailFailCount for tenant B is unchanged after tenant A's
  *     single-archive call — the email-fail banner for tenant B stays accurate.
+ *  4. Session is tenant A; calling setInquiryArchived with archived="false" and
+ *     tenant B's already-archived inquiry ID throws "Inquiry not found.".
+ *  5. Tenant B's inquiry remains archived (archivedAt IS NOT NULL) after the
+ *     cross-tenant unarchive attempt.
  *
  * All assertions run against a real PostgreSQL database.
  * revalidatePath and requireActiveBillingAccess are mocked so we can import
@@ -99,6 +105,28 @@ async function insertArtwork(id: string, tenantId: string): Promise<void> {
     title: "Test Artwork 1020",
     sku: `sku-1020-${RUN}-${id.slice(-6)}`,
     status: "AVAILABLE",
+  } as any);
+}
+
+/**
+ * Insert an already-archived inquiry (archivedAt IS NOT NULL).
+ */
+async function insertArchivedInquiry(
+  id: string,
+  tenantId: string,
+  artworkId: string,
+): Promise<void> {
+  CREATED_INQUIRY_IDS.push(id);
+  await db.insert(inquiriesTable).values({
+    id,
+    tenantId,
+    artworkId,
+    artworkTitle: "Test Artwork 1024",
+    buyerName: "Cross-Tenant Test Buyer",
+    buyerEmail: "buyer-1024@example.com",
+    message: "Is this available?",
+    status: "NEW",
+    archivedAt: new Date(Date.now() - 60_000),
   } as any);
 }
 
@@ -235,6 +263,75 @@ describeIntegration(
 
         expect(row).toBeDefined();
         expect(row!.archivedAt).toBeNull();
+      },
+    );
+
+    // ── Scenario 4 (Task #1024) ───────────────────────────────────────────────
+
+    it(
+      "setInquiryArchived throws 'Inquiry not found.' when tenant A tries to unarchive tenant B's already-archived inquiry",
+      { timeout: 30_000 },
+      async () => {
+        // Seed tenant A with its own inquiry (not archived).
+        const tenantIdA = makeId("tenant-a");
+        await insertTenant(tenantIdA);
+        const artworkIdA = makeId("artwork-a");
+        await insertArtwork(artworkIdA, tenantIdA);
+        const inqIdA = makeId("inq-a");
+        await insertExhaustedInquiry(inqIdA, tenantIdA, artworkIdA);
+
+        // Seed tenant B with an already-archived inquiry.
+        const tenantIdB = makeId("tenant-b");
+        await insertTenant(tenantIdB);
+        const artworkIdB = makeId("artwork-b");
+        await insertArtwork(artworkIdB, tenantIdB);
+        const inqIdB = makeId("inq-b");
+        await insertArchivedInquiry(inqIdB, tenantIdB, artworkIdB);
+
+        // Session is tenant A — attempt to unarchive tenant B's inquiry.
+        mockSession.tenantId = tenantIdA;
+        await expect(
+          setInquiryArchived(makeArchiveFormData(inqIdB, "false")),
+        ).rejects.toThrow("Inquiry not found.");
+      },
+    );
+
+    // ── Scenario 5 (Task #1024) ───────────────────────────────────────────────
+
+    it(
+      "tenant B's inquiry remains archived (archivedAt IS NOT NULL) after tenant A's cross-tenant unarchive attempt",
+      { timeout: 30_000 },
+      async () => {
+        // Seed tenant A.
+        const tenantIdA = makeId("tenant-a");
+        await insertTenant(tenantIdA);
+        const artworkIdA = makeId("artwork-a");
+        await insertArtwork(artworkIdA, tenantIdA);
+        const inqIdA = makeId("inq-a");
+        await insertExhaustedInquiry(inqIdA, tenantIdA, artworkIdA);
+
+        // Seed tenant B with an already-archived inquiry.
+        const tenantIdB = makeId("tenant-b");
+        await insertTenant(tenantIdB);
+        const artworkIdB = makeId("artwork-b");
+        await insertArtwork(artworkIdB, tenantIdB);
+        const inqIdB = makeId("inq-b");
+        await insertArchivedInquiry(inqIdB, tenantIdB, artworkIdB);
+
+        // Tenant A session — attempt to unarchive tenant B's inquiry (will throw).
+        mockSession.tenantId = tenantIdA;
+        await expect(
+          setInquiryArchived(makeArchiveFormData(inqIdB, "false")),
+        ).rejects.toThrow("Inquiry not found.");
+
+        // Tenant B's inquiry must still be archived (archivedAt IS NOT NULL).
+        const [row] = await db
+          .select({ archivedAt: inquiriesTable.archivedAt })
+          .from(inquiriesTable)
+          .where(eq(inquiriesTable.id, inqIdB));
+
+        expect(row).toBeDefined();
+        expect(row!.archivedAt).not.toBeNull();
       },
     );
 
