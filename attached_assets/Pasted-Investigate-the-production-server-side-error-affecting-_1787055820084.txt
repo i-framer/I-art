@@ -1,0 +1,63 @@
+Investigate the production server-side error affecting the **Create New Artwork** page.
+
+## Issue
+
+Opening the following page causes a server-side application exception:
+
+* URL: `https://www.i-art.com.au/catalog/new`
+* Error digest: `4183200643`
+* Environment: Production
+
+The page fails before the artwork form loads and before any image is selected or uploaded.
+
+## Important context
+
+* Uploading a new image to an **existing artwork works correctly**.
+* Therefore, do not assume this is a Vercel Blob or image-upload problem.
+* The issue appears specific to loading the Create New Artwork form or retrieving the data required by that form.
+* It may involve authentication, tenant resolution, artist records, categories, form defaults, database queries, schema mismatches, or missing production data/configuration.
+
+## Investigation requirements
+
+1. Locate the production exception in the Vercel logs using:
+
+   * Route: `/catalog/new`
+   * Digest: `4183200643`
+   * Approximate time of the latest reproduction
+
+2. Trace the complete server-side code path used to render `/catalog/new`.
+
+3. Identify the exact failing function, query, component, and source line.
+
+4. Check whether the failure is caused by:
+
+   * Missing or invalid session data
+   * Missing tenant or artist profile
+   * Cross-tenant filtering
+   * A database schema or migration mismatch
+   * A query expecting a record that does not exist
+   * Incorrect handling of `null` or `undefined`
+   * Missing categories, artwork types, or other form-reference data
+   * A missing production environment variable
+
+5. Compare the production behavior with local or preview behavior.
+
+6. Review existing tests and the task backlog to confirm whether this exact issue is already covered.
+
+## Deliverables
+
+Report:
+
+* Exact root cause
+* Affected code path and source lines
+* Evidence from the production logs and code
+* Why existing-artwork image uploads still work
+* Whether existing tests cover this failure
+* Whether an existing task already covers it
+* Recommended fix
+* Regression tests required
+* Estimated effort
+
+If the root cause is confirmed, the fix is self-contained, and no human action or production credential change is required, create a task and implement the fix. Add a regression test that reproduces the failure, then run the relevant tests, type-check, and lint.
+
+Do not modify the working image-upload flow unless evidence proves it is involved. Do not make speculative changes without first confirming the root cause.
