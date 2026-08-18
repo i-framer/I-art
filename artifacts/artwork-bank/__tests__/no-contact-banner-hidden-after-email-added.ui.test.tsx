@@ -153,6 +153,7 @@ vi.mock(
     setInquiryArchived: vi.fn(async () => {}),
     retryFailedInquiryNotifications: vi.fn(async () => {}),
     clearStuckInquiryNonces: vi.fn(async () => {}),
+    getInquiryReplies: vi.fn(async () => []),
   }),
 );
 

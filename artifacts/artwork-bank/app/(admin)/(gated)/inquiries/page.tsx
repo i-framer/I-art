@@ -5,13 +5,11 @@ import { getSession } from "@/lib/auth";
 import { db } from "@workspace/db";
 import {
   inquiriesTable,
-  inquiryRepliesTable,
   tenantsTable,
-  usersTable,
 } from "@workspace/db";
-import { eq, desc, count, and, inArray, asc, isNull, isNotNull } from "drizzle-orm";
+import { eq, desc, count, and, isNull, isNotNull } from "drizzle-orm";
 // isNotNull kept for the archived-filter query (isNotNull(inquiriesTable.archivedAt))
-import { setInquiryStatus, setInquiryArchived, retryFailedInquiryNotifications, clearStuckInquiryNonces } from "./actions";
+import { setInquiryStatus, setInquiryArchived, retryFailedInquiryNotifications, clearStuckInquiryNonces, getInquiryReplies } from "./actions";
 import {
   getEmailFailCount,
   getNoContactEmailInquiryCount,
@@ -121,32 +119,7 @@ export default async function InquiriesPage({
     }),
   ]);
 
-  const replies =
-    rows.length > 0
-      ? await db
-          .select({
-            id: inquiryRepliesTable.id,
-            inquiryId: inquiryRepliesTable.inquiryId,
-            message: inquiryRepliesTable.message,
-            sentAt: inquiryRepliesTable.sentAt,
-            senderEmail: usersTable.email,
-          })
-          .from(inquiryRepliesTable)
-          .leftJoin(
-            usersTable,
-            eq(inquiryRepliesTable.sentByUserId, usersTable.id),
-          )
-          .where(
-            and(
-              eq(inquiryRepliesTable.tenantId, session.tenantId),
-              inArray(
-                inquiryRepliesTable.inquiryId,
-                rows.map((r) => r.id),
-              ),
-            ),
-          )
-          .orderBy(asc(inquiryRepliesTable.sentAt))
-      : [];
+  const replies = await getInquiryReplies(rows.map((r) => r.id));
   const repliesByInquiry = new Map<string, typeof replies>();
   for (const reply of replies) {
     const list = repliesByInquiry.get(reply.inquiryId);

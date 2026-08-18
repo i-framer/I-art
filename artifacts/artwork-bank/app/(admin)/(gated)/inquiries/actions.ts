@@ -8,8 +8,9 @@ import {
   inquiriesTable,
   inquiryRepliesTable,
   tenantsTable,
+  usersTable,
 } from "@workspace/db";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { getSession } from "@/lib/auth";
 import { sendInquiryReply, EmailSendError } from "@/lib/email";
 import { requeueExhaustedInquiries, clearStuckNonces } from "@/lib/email-sweep";
@@ -37,6 +38,43 @@ export async function getInquiryDetail(inquiryId: string) {
       eq(inquiriesTable.tenantId, session.tenantId),
     ),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Inquiry reply-list query — scoped to the authenticated tenant
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetches reply rows for the given inquiry IDs, scoped to the currently
+ * authenticated tenant.  The WHERE clause includes BOTH the tenantId AND
+ * the supplied inquiry IDs so that a cross-tenant caller receives an empty
+ * array even when they know the inquiry IDs.
+ *
+ * Returns `[]` when `inquiryIds` is empty or when the session is
+ * unauthenticated.
+ */
+export async function getInquiryReplies(inquiryIds: string[]) {
+  if (inquiryIds.length === 0) return [];
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  return db
+    .select({
+      id: inquiryRepliesTable.id,
+      inquiryId: inquiryRepliesTable.inquiryId,
+      message: inquiryRepliesTable.message,
+      sentAt: inquiryRepliesTable.sentAt,
+      senderEmail: usersTable.email,
+    })
+    .from(inquiryRepliesTable)
+    .leftJoin(usersTable, eq(inquiryRepliesTable.sentByUserId, usersTable.id))
+    .where(
+      and(
+        eq(inquiryRepliesTable.tenantId, session.tenantId),
+        inArray(inquiryRepliesTable.inquiryId, inquiryIds),
+      ),
+    )
+    .orderBy(asc(inquiryRepliesTable.sentAt));
 }
 
 export async function setInquiryStatus(formData: FormData): Promise<void> {
