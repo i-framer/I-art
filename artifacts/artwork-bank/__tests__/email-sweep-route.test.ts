@@ -33,12 +33,14 @@ const sweepUnsentStatusEmails = vi.hoisted(() =>
 const sweepUnsentInquiryEmails = vi.hoisted(() =>
   vi.fn().mockResolvedValue({ scanned: 0, sent: 0, failed: 0, skipped: 0 })
 );
+const clearAllStuckNonces = vi.hoisted(() => vi.fn().mockResolvedValue(0));
 
 vi.mock("@/lib/email-sweep", () => ({
   sweepUnsentConfirmationEmails,
   sweepUnsentGalleryAlerts,
   sweepUnsentStatusEmails,
   sweepUnsentInquiryEmails,
+  clearAllStuckNonces,
 }));
 
 // ── Import the route handlers after mocks are in place ────────────────────────
@@ -87,6 +89,7 @@ function restoreEnv() {
 
 beforeEach(() => {
   sweepUnsentConfirmationEmails.mockClear();
+  clearAllStuckNonces.mockClear();
 });
 
 afterEach(() => {
@@ -280,6 +283,51 @@ describe("email-sweep route — authentication guard", () => {
       const res = await GET(makeRequest());
 
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe("self-heal: clearAllStuckNonces is called each sweep cycle", () => {
+    it("calls clearAllStuckNonces before the inquiry sweep and includes stuckNoncesCleared=0 in the response when no stuck rows exist", async () => {
+      setEnv({
+        NODE_ENV: "test",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: undefined,
+      });
+      clearAllStuckNonces.mockResolvedValueOnce(0);
+
+      const res = await GET(makeRequest());
+
+      expect(res.status).toBe(200);
+      expect(clearAllStuckNonces).toHaveBeenCalledOnce();
+      expect((res.body as any).stuckNoncesCleared).toBe(0);
+    });
+
+    it("includes stuckNoncesCleared in the response body when stuck rows are auto-healed", async () => {
+      setEnv({
+        NODE_ENV: "test",
+        EMAIL_SWEEP_SECRET: undefined,
+        CRON_SECRET: undefined,
+      });
+      clearAllStuckNonces.mockResolvedValueOnce(3);
+
+      const res = await GET(makeRequest());
+
+      expect(res.status).toBe(200);
+      expect(clearAllStuckNonces).toHaveBeenCalledOnce();
+      expect((res.body as any).stuckNoncesCleared).toBe(3);
+    });
+
+    it("clearAllStuckNonces is NOT called when the request is unauthorized", async () => {
+      setEnv({
+        NODE_ENV: "test",
+        EMAIL_SWEEP_SECRET: "correct-secret",
+        CRON_SECRET: undefined,
+      });
+
+      const res = await GET(makeRequest()); // no Authorization header
+
+      expect(res.status).toBe(401);
+      expect(clearAllStuckNonces).not.toHaveBeenCalled();
     });
   });
 });

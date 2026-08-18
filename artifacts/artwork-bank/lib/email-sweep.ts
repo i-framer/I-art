@@ -496,6 +496,40 @@ export async function requeueNoContactEmailInquiries(
 }
 
 /**
+ * Sweep self-heal: clear the emailClaimNonce on ALL inquiry rows that are
+ * permanently stuck in the "claimed-but-never-attempted" state, across every
+ * tenant.  This is called once per sweep cycle so that stuck rows are
+ * automatically made retryable within one sweep interval — no admin action
+ * required.
+ *
+ * The "stuck" condition:
+ *   emailClaimNonce IS NOT NULL  AND  emailLastAttemptAt IS NULL
+ *
+ * This arises when a sweep worker claims a row (writes the nonce) but crashes
+ * before it can write emailLastAttemptAt in the CAS stamp.  Because
+ * emailLastAttemptAt remains NULL, the normal claim-expiry guard never fires
+ * and subsequent passes skip the row forever.
+ *
+ * Only non-archived rows are touched; archived rows were explicitly dismissed.
+ *
+ * @returns The total number of rows whose nonce was cleared across all tenants.
+ */
+export async function clearAllStuckNonces(): Promise<number> {
+  const rows = await db
+    .update(inquiriesTable)
+    .set({ emailClaimNonce: null })
+    .where(
+      and(
+        isNotNull(inquiriesTable.emailClaimNonce),
+        isNull(inquiriesTable.emailLastAttemptAt),
+        isNull(inquiriesTable.archivedAt),
+      ),
+    )
+    .returning({ id: inquiriesTable.id });
+  return rows.length;
+}
+
+/**
  * Admin escape hatch: clear the emailClaimNonce on any inquiry row that is
  * permanently stuck in the "claimed-but-never-attempted" state:
  *

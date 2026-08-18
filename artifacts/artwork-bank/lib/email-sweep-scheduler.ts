@@ -10,6 +10,7 @@ import {
   sweepUnsentConfirmationEmails,
   sweepUnsentStatusEmails,
   sweepUnsentInquiryEmails,
+  clearAllStuckNonces,
 } from "@/lib/email-sweep";
 import { sweepStaleReservations } from "@/lib/reservation-sweep";
 
@@ -46,6 +47,16 @@ export function ensureEmailSweepScheduler(): void {
       }
     } catch (err: any) {
       console.error("Status email sweep run failed:", err?.message ?? err);
+    }
+    // Self-heal: clear any stuck-nonce rows (crashed before CAS stamp) so they
+    // are retryable in this same scheduled cycle — no admin action required.
+    try {
+      const healed = await clearAllStuckNonces();
+      if (healed > 0) {
+        console.log(`Inquiry email sweep: self-heal cleared ${healed} stuck-nonce row(s)`);
+      }
+    } catch (err: any) {
+      console.error("Stuck-nonce self-heal failed:", err?.message ?? err);
     }
     try {
       const result = await sweepUnsentInquiryEmails();

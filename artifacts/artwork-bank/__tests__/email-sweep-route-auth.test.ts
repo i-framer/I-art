@@ -27,6 +27,7 @@ vi.mock("@/lib/email-sweep", () => ({
   sweepUnsentGalleryAlerts: vi.fn().mockResolvedValue({ scanned: 0, sent: 0, failed: 0, skipped: 0 }),
   sweepUnsentStatusEmails: vi.fn().mockResolvedValue({ scanned: 0, sent: 0, failed: 0, skipped: 0 }),
   sweepUnsentInquiryEmails: vi.fn().mockResolvedValue({ scanned: 0, sent: 0, failed: 0, skipped: 0 }),
+  clearAllStuckNonces: vi.fn().mockResolvedValue(0),
 }));
 
 // ── next/server mock ──────────────────────────────────────────────────────────

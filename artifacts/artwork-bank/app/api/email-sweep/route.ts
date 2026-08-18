@@ -16,6 +16,7 @@ import {
   sweepUnsentGalleryAlerts,
   sweepUnsentStatusEmails,
   sweepUnsentInquiryEmails,
+  clearAllStuckNonces,
 } from "@/lib/email-sweep";
 
 export const dynamic = "force-dynamic";
@@ -61,6 +62,15 @@ async function runSweep(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
+    // Self-heal: clear stuck-nonce rows (emailClaimNonce IS NOT NULL AND
+    // emailLastAttemptAt IS NULL) across all tenants before the inquiry sweep
+    // runs.  This makes crashed-worker rows retryable within one sweep cycle
+    // instead of waiting for manual admin action.
+    const stuckNoncesCleared = await clearAllStuckNonces();
+    if (stuckNoncesCleared > 0) {
+      console.log(`[email-sweep] self-heal: cleared ${stuckNoncesCleared} stuck-nonce inquiry row(s)`);
+    }
+
     const [confirmResult, galleryResult, statusResult, inquiryResult] = await Promise.all([
       sweepUnsentConfirmationEmails(),
       sweepUnsentGalleryAlerts(),
@@ -72,7 +82,7 @@ async function runSweep(request: Request) {
     const sent    = confirmResult.sent    + galleryResult.sent    + statusResult.sent    + inquiryResult.sent;
     const failed  = confirmResult.failed  + galleryResult.failed  + statusResult.failed  + inquiryResult.failed;
     const skipped = confirmResult.skipped + galleryResult.skipped + statusResult.skipped + inquiryResult.skipped;
-    const body = { scanned, sent, failed, skipped, confirmResult, galleryResult, statusResult, inquiryResult };
+    const body = { scanned, sent, failed, skipped, stuckNoncesCleared, confirmResult, galleryResult, statusResult, inquiryResult };
     console.log("[email-sweep] completed:", body);
     // 207 Multi-Status when any pass had per-row failures.
     return NextResponse.json(body, { status: failed > 0 ? 207 : 200 });
