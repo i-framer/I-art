@@ -57,6 +57,31 @@ export async function getEmailFailCount(): Promise<number> {
 }
 
 /**
+ * Returns the number of non-archived inquiries that are stuck in the
+ * "claimed-but-never-attempted" state: emailClaimNonce IS NOT NULL AND
+ * emailLastAttemptAt IS NULL.  A non-zero count surfaces an admin banner
+ * offering a one-click repair via clearStuckInquiryNonces.
+ */
+export async function getStuckNonceCount(): Promise<number> {
+  const session = await getSession();
+  if (!session.userId) return 0;
+
+  const [row] = await db
+    .select({ count: count() })
+    .from(inquiriesTable)
+    .where(
+      and(
+        eq(inquiriesTable.tenantId, session.tenantId),
+        isNotNull(inquiriesTable.emailClaimNonce),
+        isNull(inquiriesTable.emailLastAttemptAt),
+        isNull(inquiriesTable.archivedAt),
+      ),
+    );
+
+  return row?.count ?? 0;
+}
+
+/**
  * Returns the number of non-archived inquiries that carry the
  * "no gallery contact email" sentinel — i.e. inquiries that could not be
  * delivered because the gallery has no contact email configured.

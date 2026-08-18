@@ -12,7 +12,7 @@ import {
 import { and, eq, inArray } from "drizzle-orm";
 import { getSession } from "@/lib/auth";
 import { sendInquiryReply, EmailSendError } from "@/lib/email";
-import { requeueExhaustedInquiries } from "@/lib/email-sweep";
+import { requeueExhaustedInquiries, clearStuckNonces } from "@/lib/email-sweep";
 
 export async function setInquiryStatus(formData: FormData): Promise<void> {
   const session = await getSession();
@@ -235,6 +235,35 @@ export async function replyToInquiry(
   revalidatePath("/inquiries");
   revalidatePath("/", "layout");
   return { status: "sent" };
+}
+
+// ---------------------------------------------------------------------------
+// Clear stuck-nonce inquiries (crashed-worker repair)
+// ---------------------------------------------------------------------------
+
+/**
+ * Clears emailClaimNonce on any inquiry that is stuck in the
+ * "claimed-but-never-attempted" state (emailClaimNonce IS NOT NULL AND
+ * emailLastAttemptAt IS NULL).  Redirects to
+ * /inquiries?stuck_result=<count> on success, or ?stuck_result=error on
+ * failure.
+ */
+export async function clearStuckInquiryNonces(): Promise<void> {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  let cleared = 0;
+  try {
+    cleared = await clearStuckNonces(session.tenantId);
+  } catch (err) {
+    console.error(
+      `Inquiries: failed to clear stuck nonces for tenant ${session.tenantId}:`,
+      (err as any)?.message ?? String(err),
+    );
+    redirect("/inquiries?stuck_result=error");
+  }
+
+  redirect(`/inquiries?stuck_result=${cleared}`);
 }
 
 // ---------------------------------------------------------------------------

@@ -117,6 +117,7 @@ const getNoContactEmailInquiryCountMock = vi.hoisted(() => vi.fn(async () => 0))
 vi.mock("@/app/(admin)/_actions/inquiry-count", () => ({
   getEmailFailCount: () => getEmailFailCountMock(),
   getNoContactEmailInquiryCount: () => getNoContactEmailInquiryCountMock(),
+  getStuckNonceCount: async () => 0,
 }));
 
 // ── email-sweep ────────────────────────────────────────────────────────────────
@@ -149,6 +150,7 @@ vi.mock(
     setInquiryStatus: vi.fn(async () => {}),
     setInquiryArchived: vi.fn(async () => {}),
     retryFailedInquiryNotifications: vi.fn(async () => {}),
+    clearStuckInquiryNonces: vi.fn(async () => {}),
   }),
 );
 

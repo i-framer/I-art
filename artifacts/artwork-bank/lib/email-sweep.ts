@@ -496,6 +496,44 @@ export async function requeueNoContactEmailInquiries(
 }
 
 /**
+ * Admin escape hatch: clear the emailClaimNonce on any inquiry row that is
+ * permanently stuck in the "claimed-but-never-attempted" state:
+ *
+ *   emailClaimNonce IS NOT NULL  AND  emailLastAttemptAt IS NULL
+ *
+ * This can arise when a sweep worker:
+ *  1. Sets emailClaimNonce (claiming the row), but
+ *  2. Crashes before it can write emailLastAttemptAt in the CAS stamp.
+ *
+ * Because emailLastAttemptAt is still NULL, the normal claim-expiry guard
+ * (`lt(emailLastAttemptAt, claimCutoff)`) never fires — the row appears
+ * "freshly unclaimed" to the leasing logic but the non-null nonce blocks all
+ * requeue helpers from resetting it.  Clearing the nonce lets the next sweep
+ * pass reclaim and deliver the row normally.
+ *
+ * Only non-archived inquiries are touched; archived rows were explicitly
+ * dismissed and must not be resurrected.
+ *
+ * @param tenantId  The gallery whose stuck-nonce inquiries should be repaired.
+ * @returns         The number of rows whose nonce was cleared.
+ */
+export async function clearStuckNonces(tenantId: string): Promise<number> {
+  const rows = await db
+    .update(inquiriesTable)
+    .set({ emailClaimNonce: null })
+    .where(
+      and(
+        eq(inquiriesTable.tenantId, tenantId),
+        isNotNull(inquiriesTable.emailClaimNonce),
+        isNull(inquiriesTable.emailLastAttemptAt),
+        isNull(inquiriesTable.archivedAt),
+      ),
+    )
+    .returning({ id: inquiriesTable.id });
+  return rows.length;
+}
+
+/**
  * Admin escape hatch: re-enqueue ALL inquiries for the tenant that are stuck
  * with a genuine SMTP error (i.e. emailError is non-null and is NOT the
  * "no gallery contact email" sentinel).
