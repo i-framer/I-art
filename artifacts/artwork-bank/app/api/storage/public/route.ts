@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchObject, StorageNotConfiguredError } from "@/lib/object-storage";
 import { BlobError, BlobNotFoundError } from "@vercel/blob";
-import { db, artworkImagesTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, artworkImagesTable, artworksTable } from "@workspace/db";
+import { and, eq } from "drizzle-orm";
 
 /**
  * Public artwork-image serving route.
@@ -35,18 +35,37 @@ function isActiveContentType(contentType: string): boolean {
   return ACTIVE_CONTENT_TYPES.has(base);
 }
 
+/**
+ * Exact canonical object path: "/objects/uploads/<uuid>" — nothing else.
+ * Rejects traversal-shaped or otherwise non-canonical paths outright.
+ */
+const CANONICAL_PATH_RE =
+  /^\/objects\/uploads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: NextRequest) {
   const objectPath = request.nextUrl.searchParams.get("path");
-  if (!objectPath || !objectPath.startsWith("/objects/uploads/")) {
+  if (!objectPath || !CANONICAL_PATH_RE.test(objectPath)) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
 
-  // Only serve objects that are registered artwork images.
-  const imageRow = await db.query.artworkImagesTable.findFirst({
-    where: eq(artworkImagesTable.objectPath, objectPath),
-    columns: { id: true },
-  });
-  if (!imageRow) {
+  // Only serve images that belong to an artwork currently shown in the public
+  // gallery.  Registration in artworkImagesTable alone is NOT sufficient —
+  // hidden/draft artwork images must not be publicly readable.
+  const [row] = await db
+    .select({ id: artworkImagesTable.id })
+    .from(artworkImagesTable)
+    .innerJoin(
+      artworksTable,
+      eq(artworksTable.id, artworkImagesTable.artworkId),
+    )
+    .where(
+      and(
+        eq(artworkImagesTable.objectPath, objectPath),
+        eq(artworksTable.showInGallery, true),
+      ),
+    )
+    .limit(1);
+  if (!row) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -64,9 +83,10 @@ export async function GET(request: NextRequest) {
       "Content-Disposition": isActiveContentType(contentType)
         ? "attachment"
         : "inline",
-      // Artwork images are immutable (a new upload gets a new UUID), so allow
-      // long shared caching to keep storefront pages fast.
-      "Cache-Control": "public, max-age=86400, s-maxage=604800, immutable",
+      // Objects are immutable (a new upload gets a new UUID), but visibility
+      // can be revoked (showInGallery toggled off), so keep shared-cache TTL
+      // short enough that revocation takes effect within the hour.
+      "Cache-Control": "public, max-age=3600, s-maxage=3600",
     });
     if (contentLength) headers.set("Content-Length", contentLength);
 

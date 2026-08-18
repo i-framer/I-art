@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, integer, timestamp, index } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { artworksTable } from "./artwork";
 import { tenantsTable } from "./tenant";
@@ -22,7 +22,11 @@ export const artworkImagesTable = pgTable("artwork_image", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-});
+}, (table) => [
+  // The public image-serving route looks rows up by object path on every
+  // cache miss — keep that lookup indexed.
+  index("artwork_image_object_path_idx").on(table.objectPath),
+]);
 
 export type ArtworkImage = typeof artworkImagesTable.$inferSelect;
 export type InsertArtworkImage = typeof artworkImagesTable.$inferInsert;
