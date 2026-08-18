@@ -2507,5 +2507,157 @@ describeIntegration(
         expect(rowAfter?.emailError).toBe(transportErrorMsg);
       },
     );
+
+    /**
+     * Task #993 — Confirm the crashed-worker row becomes retryable once an
+     * operator clears the stale nonce.
+     *
+     * Background (Task #992):
+     *   When a sweep worker crashes after setting emailClaimNonce but before
+     *   writing emailLastAttemptAt, the row is left with:
+     *     emailClaimNonce IS NOT NULL   (set by the worker)
+     *     emailLastAttemptAt IS NULL    (never written)
+     *
+     *   The lease-expiry guard in retrySmtpErrorInquiries is:
+     *     OR(emailClaimNonce IS NULL, emailLastAttemptAt < claimCutoff)
+     *
+     *   With a non-null nonce and a null timestamp, SQL evaluates this as
+     *     OR(false, NULL < cutoff) = OR(false, NULL) = NULL  →  falsy
+     *   and the row is permanently excluded — it cannot time out because there
+     *   is no timestamp anchor to compare against.
+     *
+     * Repair path documented here:
+     *   An operator (or an admin action) clears emailClaimNonce to NULL.
+     *   This makes the first branch of the OR true, so the row is treated as
+     *   unclaimed and retrySmtpErrorInquiries resets it to emailAttempts=0,
+     *   emailLastAttemptAt=null — ready for the next sweep pass to deliver.
+     *
+     * Flow under test:
+     *  1. Seed a transport-error inquiry with emailClaimNonce set and
+     *     emailLastAttemptAt IS NULL — the crashed-worker stuck state.
+     *  2. Call retrySmtpErrorInquiries → confirm 0 rows reset (stuck).
+     *  3. Admin clears emailClaimNonce (sets it to NULL).
+     *  4. Call retrySmtpErrorInquiries → confirm the row is now reset:
+     *       emailAttempts = 0, emailLastAttemptAt = null, emailClaimNonce = null,
+     *       emailError preserved (so the sweep still selects the row).
+     *  5. Run sweepUnsentInquiryEmails → confirm the email is delivered and
+     *     emailError is cleared.
+     */
+    it(
+      "crashed-worker row becomes retryable once the stale nonce is cleared (Task #993)",
+      async () => {
+        // ── Seed ─────────────────────────────────────────────────────────────
+
+        const tenantId = makeId("tenant-993");
+
+        await insertTenant(tenantId, {
+          contactEmail: "owner-993@gallery.test",
+        });
+
+        const artworkId = makeId("artwork-993");
+        await insertArtwork(artworkId, tenantId);
+
+        const inqId = makeId("inq-993");
+
+        const transportErrorMsg =
+          "Transport failure: 550 mailbox not found (993)";
+
+        // Insert with emailLastAttemptAt = null (worker crashed before writing it).
+        await insertTransportErrorInquiry(
+          inqId,
+          tenantId,
+          artworkId,
+          transportErrorMsg,
+          1,
+          null, // emailLastAttemptAt IS NULL — the crashed-worker state
+        );
+
+        // Stamp a non-null nonce — simulates a worker that set the claim nonce
+        // but crashed before it could atomically write emailLastAttemptAt.
+        const crashedNonce = "crashed-nonce-993";
+        await db
+          .update(inquiriesTable)
+          .set({ emailClaimNonce: crashedNonce } as any)
+          .where(eq(inquiriesTable.id, inqId));
+
+        // ── Pre-conditions: confirm the row is in the stuck state ─────────────
+
+        const rowBefore = await fetchRow(inqId);
+        expect(rowBefore?.emailAttempts).toBe(1);
+        expect(rowBefore?.emailLastAttemptAt).toBeNull();
+        expect((rowBefore as any)?.emailClaimNonce).toBe(crashedNonce);
+        expect(rowBefore?.emailError).toBe(transportErrorMsg);
+
+        // ── Step 1: confirm the row is excluded (Task #992 behaviour) ─────────
+        //
+        // OR(emailClaimNonce IS NULL, emailLastAttemptAt < claimCutoff)
+        // = OR(false, NULL) = NULL  →  row is skipped.
+
+        const resetCountBefore = await retrySmtpErrorInquiries(tenantId);
+        expect(resetCountBefore).toBe(0);
+
+        // Row must still be completely untouched.
+        const rowStillStuck = await fetchRow(inqId);
+        expect(rowStillStuck?.emailAttempts).toBe(1);
+        expect(rowStillStuck?.emailLastAttemptAt).toBeNull();
+        expect((rowStillStuck as any)?.emailClaimNonce).toBe(crashedNonce);
+
+        // ── Step 2: operator clears the stale nonce ───────────────────────────
+        //
+        // In production an admin action (or a manual DB fix) would do this.
+        // Clearing emailClaimNonce to NULL makes the lease guard's first branch
+        // (emailClaimNonce IS NULL) evaluate to true, so the row is no longer
+        // treated as actively held.
+
+        await db
+          .update(inquiriesTable)
+          .set({ emailClaimNonce: null } as any)
+          .where(eq(inquiriesTable.id, inqId));
+
+        const rowAfterClear = await fetchRow(inqId);
+        expect((rowAfterClear as any)?.emailClaimNonce).toBeNull();
+        expect(rowAfterClear?.emailLastAttemptAt).toBeNull(); // timestamp still null
+
+        // ── Step 3: retrySmtpErrorInquiries now resets the row ────────────────
+        //
+        // With emailClaimNonce IS NULL the lease guard's first branch is true,
+        // so the row is included in the UPDATE regardless of emailLastAttemptAt.
+
+        const resetCountAfter = await retrySmtpErrorInquiries(tenantId);
+        expect(resetCountAfter).toBe(1);
+
+        // Row must be fully reset and retryable.
+        const rowReset = await fetchRow(inqId);
+        expect(rowReset?.emailAttempts).toBe(0);
+        expect(rowReset?.emailLastAttemptAt).toBeNull();
+        expect((rowReset as any)?.emailClaimNonce).toBeNull();
+        // emailError is preserved — sweepUnsentInquiryEmails selects on
+        // isNotNull(emailError), so the row must stay in the candidate set.
+        expect(rowReset?.emailError).toBe(transportErrorMsg);
+
+        // ── Step 4: sweep delivers the email end-to-end ───────────────────────
+        //
+        // With emailAttempts=0, emailLastAttemptAt=null, and emailError set, the
+        // row is a first-class sweep candidate.  sweepUnsentInquiryEmails should
+        // claim it, call sendArtworkInquiry, and clear emailError.
+
+        sendArtworkInquiry.mockResolvedValueOnce(true);
+
+        const sweepResult = await sweepUnsentInquiryEmails(
+          new Date(),
+          tenantId,
+        );
+
+        expect(sweepResult.sent).toBe(1);
+        expect(sweepResult.failed).toBe(0);
+        expect(sendArtworkInquiry).toHaveBeenCalledTimes(1);
+
+        // emailError must be cleared — the row is no longer in a failure state.
+        const rowDelivered = await fetchRow(inqId);
+        expect(rowDelivered?.emailError).toBeNull();
+        expect(rowDelivered?.emailAttempts).toBe(1);
+        expect((rowDelivered as any)?.emailClaimNonce).toBeNull();
+      },
+    );
   },
 );
