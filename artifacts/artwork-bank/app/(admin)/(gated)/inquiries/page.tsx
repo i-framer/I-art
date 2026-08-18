@@ -17,7 +17,11 @@ import {
   getNoContactEmailInquiryCount,
   getStuckNonceCount,
 } from "@/app/(admin)/_actions/inquiry-count";
-import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
+import {
+  getInquiryEmailBadgeLabel,
+  BADGE_RETRYING,
+  BADGE_PERMANENT,
+} from "@/lib/inquiry-badge";
 import { ReplyForm } from "./reply-form";
 import {
   BulkSelectionProvider,
@@ -471,16 +475,19 @@ export default async function InquiriesPage({
                   <p className="text-xs text-stone-500">
                     {formatDate(inq.createdAt)}
                   </p>
-                  {inq.emailError &&
-                    (inq.emailAttempts >= MAX_EMAIL_ATTEMPTS ? (
+                  {(() => {
+                    const badge = getInquiryEmailBadgeLabel(inq.emailError, inq.emailAttempts);
+                    if (!badge) return null;
+                    return badge === BADGE_PERMANENT ? (
                       <span className="mt-1 inline-flex rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">
-                        Notification permanently failed
+                        {BADGE_PERMANENT}
                       </span>
                     ) : (
                       <span className="mt-1 inline-flex rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-700">
-                        Email delivery failed — retrying
+                        {BADGE_RETRYING}
                       </span>
-                    ))}
+                    );
+                  })()}
                 </div>
               </div>
               <p className="mt-3 whitespace-pre-wrap text-sm text-stone-700">
