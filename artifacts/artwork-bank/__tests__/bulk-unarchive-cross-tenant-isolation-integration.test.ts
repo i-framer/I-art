@@ -16,6 +16,8 @@
  *  2. Tenant B's own fail count is 0 — the foreign IDs don't bleed across.
  *  3. Mixed batch: tenant B submits its own ID plus tenant A's IDs → only B's
  *     own row is un-archived; A's rows remain archived.
+ *  4. (Task #1022) Pure-foreign batch (no own IDs at all) → action completes
+ *     without throwing; both tenant A and tenant B fail counts remain 0.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -210,6 +212,42 @@ describeIntegration(
         // Tenant B's own fail count must be 0 — no foreign rows surfaced.
         const countB = await getEmailFailCount();
         expect(countB).toBe(0);
+      },
+    );
+
+    it(
+      "pure-foreign batch (no own IDs): action completes without throwing; both tenant fail counts remain 0",
+      async () => {
+        // Seed two archived exhausted inquiries for tenant A.
+        const tenantAId = makeId("tenantA");
+        const tenantBId = makeId("tenantB");
+        await insertTenant(tenantAId);
+        await insertTenant(tenantBId);
+
+        const artworkAId = makeId("artA");
+        await insertArtwork(artworkAId, tenantAId);
+
+        const inqA1 = makeId("inqA1");
+        const inqA2 = makeId("inqA2");
+        await insertArchivedExhaustedInquiry(inqA1, tenantAId, artworkAId);
+        await insertArchivedExhaustedInquiry(inqA2, tenantAId, artworkAId);
+
+        // Tenant B submits a batch that is 100% foreign IDs (no own IDs at all).
+        // The action must complete without throwing even though zero rows matched.
+        mockSession.tenantId = tenantBId;
+        await expect(
+          bulkSetInquiriesArchived([inqA1, inqA2], false),
+        ).resolves.not.toThrow();
+
+        // Tenant A's rows remain archived → fail count still 0.
+        mockSession.tenantId = tenantAId;
+        const countAAfter = await getEmailFailCount();
+        expect(countAAfter).toBe(0);
+
+        // Tenant B has no rows at all → fail count is also 0.
+        mockSession.tenantId = tenantBId;
+        const countBAfter = await getEmailFailCount();
+        expect(countBAfter).toBe(0);
       },
     );
 
