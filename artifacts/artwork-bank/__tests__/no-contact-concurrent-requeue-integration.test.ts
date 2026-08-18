@@ -2414,5 +2414,98 @@ describeIntegration(
         expect(bAfter?.emailError).toBe(transportErrorMsg);
       },
     );
+
+    /**
+     * Task #992 — Confirm retrySmtpErrorInquiries skips rows with a null
+     * emailLastAttemptAt when a nonce is set.
+     *
+     * The lease guard in retrySmtpErrorInquiries uses:
+     *   OR(emailClaimNonce IS NULL, emailLastAttemptAt < claimCutoff)
+     *
+     * If a worker sets emailClaimNonce but crashes before writing
+     * emailLastAttemptAt, the row has a non-null nonce and a null timestamp.
+     * In SQL, NULL < cutoff evaluates to NULL (falsy), so the OR expression
+     * resolves to OR(false, NULL) = NULL, which is also falsy.  The row is
+     * therefore excluded from the UPDATE — consistent with treating it as
+     * actively claimed (the claim has no timestamp anchor, so it cannot be
+     * proven expired).
+     *
+     * Setup:
+     *  • Seed a transport-error inquiry with emailClaimNonce set and
+     *    emailLastAttemptAt IS NULL (worker crashed after setting the nonce
+     *    but before writing the timestamp).
+     *
+     * Call retrySmtpErrorInquiries for that tenant.
+     *
+     * Expected:
+     *  • resetCount === 0  (no rows are modified).
+     *  • The row is completely untouched: emailAttempts, emailLastAttemptAt,
+     *    emailClaimNonce, and emailError all retain their seeded values.
+     */
+    it(
+      "retrySmtpErrorInquiries skips a row whose nonce is set but emailLastAttemptAt is null (Task #992)",
+      async () => {
+        // ── Seed ─────────────────────────────────────────────────────────────
+
+        const tenantId = makeId("tenant-992");
+
+        await insertTenant(tenantId, {
+          contactEmail: "owner-992@gallery.test",
+        });
+
+        const artworkId = makeId("artwork-992");
+        await insertArtwork(artworkId, tenantId);
+
+        const inqId = makeId("inq-992");
+
+        const transportErrorMsg =
+          "Transport failure: 550 mailbox not found (992)";
+
+        // Insert with emailLastAttemptAt = null (worker crashed before writing it).
+        await insertTransportErrorInquiry(
+          inqId,
+          tenantId,
+          artworkId,
+          transportErrorMsg,
+          1,
+          null, // emailLastAttemptAt IS NULL
+        );
+
+        // Set a non-null nonce — simulates a worker that stamped the nonce
+        // but crashed before it could write emailLastAttemptAt.
+        const crashedNonce = "crashed-nonce-992";
+        await db
+          .update(inquiriesTable)
+          .set({ emailClaimNonce: crashedNonce } as any)
+          .where(eq(inquiriesTable.id, inqId));
+
+        // ── Pre-conditions ────────────────────────────────────────────────────
+
+        const rowBefore = await fetchRow(inqId);
+        expect(rowBefore?.emailAttempts).toBe(1);
+        expect(rowBefore?.emailLastAttemptAt).toBeNull();
+        expect((rowBefore as any)?.emailClaimNonce).toBe(crashedNonce);
+        expect(rowBefore?.emailError).toBe(transportErrorMsg);
+
+        // ── Call retrySmtpErrorInquiries ──────────────────────────────────────
+
+        const resetCount = await retrySmtpErrorInquiries(tenantId);
+
+        // The lease guard excludes this row:
+        //   OR(emailClaimNonce IS NULL, emailLastAttemptAt < claimCutoff)
+        //   = OR(false, NULL < cutoff)
+        //   = OR(false, NULL)
+        //   = NULL  →  falsy  →  row is skipped
+        expect(resetCount).toBe(0);
+
+        // ── Row must be completely untouched ──────────────────────────────────
+
+        const rowAfter = await fetchRow(inqId);
+        expect(rowAfter?.emailAttempts).toBe(1);
+        expect(rowAfter?.emailLastAttemptAt).toBeNull();
+        expect((rowAfter as any)?.emailClaimNonce).toBe(crashedNonce);
+        expect(rowAfter?.emailError).toBe(transportErrorMsg);
+      },
+    );
   },
 );
