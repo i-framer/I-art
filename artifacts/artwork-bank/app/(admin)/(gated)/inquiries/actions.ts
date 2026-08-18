@@ -14,6 +14,31 @@ import { getSession } from "@/lib/auth";
 import { sendInquiryReply, EmailSendError } from "@/lib/email";
 import { requeueExhaustedInquiries, clearStuckNonces } from "@/lib/email-sweep";
 
+// ---------------------------------------------------------------------------
+// Inquiry detail query — scoped to the authenticated tenant
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetches a single inquiry record visible to the currently authenticated
+ * tenant.  The WHERE clause includes BOTH the inquiryId AND the session
+ * tenantId so that a cross-tenant caller receives undefined even when the
+ * ID is valid.
+ *
+ * Returns `undefined` when the inquiry is not found or belongs to another
+ * tenant.  Redirects to /login when the session is unauthenticated.
+ */
+export async function getInquiryDetail(inquiryId: string) {
+  const session = await getSession();
+  if (!session.userId) redirect("/login");
+
+  return db.query.inquiriesTable.findFirst({
+    where: and(
+      eq(inquiriesTable.id, inquiryId),
+      eq(inquiriesTable.tenantId, session.tenantId),
+    ),
+  });
+}
+
 export async function setInquiryStatus(formData: FormData): Promise<void> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
