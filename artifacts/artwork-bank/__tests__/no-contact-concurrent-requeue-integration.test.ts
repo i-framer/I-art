@@ -2165,5 +2165,129 @@ describeIntegration(
         expect(bAfter?.emailError).toBe(transportErrorMsg);
       },
     );
+
+    /**
+     * Task #990 — Confirm retrySmtpErrorInquiries can't reset rows with an
+     * active sweep claim from another tenant.
+     *
+     * The lease-guard (emailClaimNonce IS NULL OR emailLastAttemptAt <
+     * claimCutoff) must interact correctly with the tenantId filter when rows
+     * from two tenants each have a claim — one expired, one active.
+     *
+     * Setup:
+     *  • Tenant A: transport-error inquiry with an EXPIRED claim
+     *    (emailClaimNonce set, emailLastAttemptAt older than CLAIM_LEASE_MS).
+     *  • Tenant B: transport-error inquiry with an ACTIVE claim
+     *    (emailClaimNonce set, emailLastAttemptAt recent / within CLAIM_LEASE_MS).
+     *
+     * Call retrySmtpErrorInquiries(tenantA).
+     *
+     * Expected:
+     *  • Tenant A's expired-claim row IS reset (emailAttempts→0,
+     *    emailLastAttemptAt→null, emailClaimNonce→null).
+     *  • Tenant B's active-claim row is UNTOUCHED — excluded both by the wrong
+     *    tenantId AND by the active-claim lease guard.
+     */
+    it(
+      "retrySmtpErrorInquiries resets the expired-claim row for tenantA but leaves tenantB's active-claim row untouched (Task #990)",
+      async () => {
+        // ── Seed ─────────────────────────────────────────────────────────────
+
+        const tenantAId = makeId("tenant-990a");
+        const tenantBId = makeId("tenant-990b");
+
+        await insertTenant(tenantAId, {
+          contactEmail: "owner-990a@gallery.test",
+        });
+        await insertTenant(tenantBId, {
+          contactEmail: "owner-990b@gallery.test",
+        });
+
+        const artworkAId = makeId("artwork-990a");
+        const artworkBId = makeId("artwork-990b");
+        await insertArtwork(artworkAId, tenantAId);
+        await insertArtwork(artworkBId, tenantBId);
+
+        const inqAId = makeId("inq-990a");
+        const inqBId = makeId("inq-990b");
+
+        const transportErrorMsg =
+          "Transport failure: 550 mailbox not found (990)";
+
+        // Tenant A: expired claim — emailLastAttemptAt is older than CLAIM_LEASE_MS.
+        const expiredClaimAt = new Date(Date.now() - CLAIM_LEASE_MS - 60_000);
+        await insertTransportErrorInquiry(
+          inqAId,
+          tenantAId,
+          artworkAId,
+          transportErrorMsg,
+          2,
+          expiredClaimAt,
+        );
+        const expiredNonce = "expired-nonce-990a";
+        await db
+          .update(inquiriesTable)
+          .set({ emailClaimNonce: expiredNonce } as any)
+          .where(eq(inquiriesTable.id, inqAId));
+
+        // Tenant B: active claim — emailLastAttemptAt is recent (within CLAIM_LEASE_MS).
+        const activeClaimAt = new Date(Date.now() - 30_000); // 30 s ago — well within the 5-min lease
+        await insertTransportErrorInquiry(
+          inqBId,
+          tenantBId,
+          artworkBId,
+          transportErrorMsg,
+          2,
+          activeClaimAt,
+        );
+        const activeNonce = "active-nonce-990b";
+        await db
+          .update(inquiriesTable)
+          .set({ emailClaimNonce: activeNonce } as any)
+          .where(eq(inquiriesTable.id, inqBId));
+
+        // ── Pre-conditions ────────────────────────────────────────────────────
+
+        const aBefore = await fetchRow(inqAId);
+        expect(aBefore?.emailAttempts).toBe(2);
+        expect(aBefore?.emailLastAttemptAt).toEqual(expiredClaimAt);
+        expect((aBefore as any)?.emailClaimNonce).toBe(expiredNonce);
+        expect(aBefore?.emailError).toBe(transportErrorMsg);
+
+        const bBefore = await fetchRow(inqBId);
+        expect(bBefore?.emailAttempts).toBe(2);
+        expect(bBefore?.emailLastAttemptAt).toEqual(activeClaimAt);
+        expect((bBefore as any)?.emailClaimNonce).toBe(activeNonce);
+        expect(bBefore?.emailError).toBe(transportErrorMsg);
+
+        // ── Call retrySmtpErrorInquiries for tenant A only ────────────────────
+
+        const resetCount = await retrySmtpErrorInquiries(tenantAId);
+
+        // Only tenant A's expired-claim row qualifies — exactly one row reset.
+        expect(resetCount).toBe(1);
+
+        // ── Tenant A's expired-claim row must be reset ────────────────────────
+
+        const aAfter = await fetchRow(inqAId);
+        expect(aAfter?.emailAttempts).toBe(0);
+        expect(aAfter?.emailLastAttemptAt).toBeNull();
+        // emailError is preserved so the sweep can still select the row.
+        expect(aAfter?.emailError).toBe(transportErrorMsg);
+        // Stale nonce must be cleared.
+        expect((aAfter as any)?.emailClaimNonce).toBeNull();
+
+        // ── Tenant B's active-claim row must be completely untouched ──────────
+        //
+        // Two guards protect it: the tenantId filter (tenant B ≠ tenant A) AND
+        // the active-claim lease guard (emailLastAttemptAt within CLAIM_LEASE_MS).
+
+        const bAfter = await fetchRow(inqBId);
+        expect(bAfter?.emailAttempts).toBe(2);
+        expect(bAfter?.emailLastAttemptAt).toEqual(activeClaimAt);
+        expect((bAfter as any)?.emailClaimNonce).toBe(activeNonce);
+        expect(bAfter?.emailError).toBe(transportErrorMsg);
+      },
+    );
   },
 );
