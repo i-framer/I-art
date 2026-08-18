@@ -22,11 +22,11 @@ _Last updated: 2026-08-11 (agent probe — storage routes deployed; manual UI ve
 ## 1. Core buyer flow (real Stripe — use a cheap test artwork)
 
 - [ ] 1.1 Visit a gallery storefront (`{slug}.i-art.com.au`) — loads with correct branding
-- [ ] 1.2 Open an artwork page — images, price, and details render correctly
-- [ ] 1.3 Buy an artwork with a real card — Stripe Checkout completes and redirects to the success page
-- [ ] 1.4 Artwork shows as SOLD immediately after purchase (webhook processed)
-- [ ] 1.5 Buyer receives the order confirmation email
-- [ ] 1.6 Gallery receives the sale notification (email / dashboard order appears)
+- [x] 1.2 Open an artwork page — images, price, and details render correctly (info11925 2026-08-18, Stripe test mode)
+- [x] 1.3 Buy an artwork with a real card — Stripe Checkout completes and redirects to the success page (info11925 2026-08-18, Stripe TEST mode — re-verify with live card at go-live)
+- [x] 1.4 Artwork shows as SOLD immediately after purchase (webhook processed) (info11925 2026-08-18, Stripe test mode)
+- [!] 1.5 Buyer receives the order confirmation email — FAILED 2026-08-18: no email received
+- [!] 1.6 Gallery receives the sale notification (email / dashboard order appears) — PARTIAL 2026-08-18: order appears in dashboard, but no email received
 - [ ] 1.7 Refund the test purchase from Stripe dashboard — order status updates, partial-refund notification behaves
 
 ## 2. Gallery paywall & subscriptions
