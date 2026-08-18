@@ -22,6 +22,7 @@ import React from "react";
 // ── next/navigation ────────────────────────────────────────────────────────────
 vi.mock("next/navigation", () => ({
   redirect: vi.fn((url: string) => { throw new Error(`REDIRECT:${url}`); }),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
 }));
 
 // ── next/link — render as a plain <a> ─────────────────────────────────────────
@@ -154,6 +155,9 @@ vi.mock("lucide-react", () => {
     CreditCard: Icon,
     Globe: Icon,
     Copy: Icon,
+    ImageIcon: Icon,
+    Trash2: Icon,
+    UploadCloud: Icon,
   };
 });
 

@@ -28,6 +28,8 @@ import { getPlatformBaseUrl } from "@/lib/base-url";
 import { DomainForm } from "./_components/domain-form";
 import { StripeReadinessPanel } from "./_components/stripe-readiness-panel";
 import { ContactEmailField } from "./_components/contact-email-field";
+import { LogoUpload } from "./_components/logo-upload";
+import { resolveLogoSrc } from "@/lib/object-storage";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -253,6 +255,8 @@ export default async function SettingsPage({
             </div>
             <p className="mt-1 text-xs text-stone-400">Slug cannot be changed after creation.</p>
           </div>
+
+          <LogoUpload currentLogoSrc={await resolveLogoSrc(tenant.logoUrl)} />
 
           <div>
             <label htmlFor="themeColor" className="block text-sm font-medium text-stone-700 mb-1.5">

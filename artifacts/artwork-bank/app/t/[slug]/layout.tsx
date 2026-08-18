@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { getTenantBySlug } from "@/lib/tenant-cache";
+import { resolveLogoSrc } from "@/lib/object-storage";
 
 type Props = {
   children: React.ReactNode;
@@ -25,6 +26,7 @@ export default async function StorefrontLayout({ children, params }: Props) {
 
   const themeColor = tenant.themeColor ?? "#1c1917";
   const base = `/t/${slug}`;
+  const logoSrc = await resolveLogoSrc(tenant.logoUrl);
 
   return (
     <div className="min-h-screen bg-white flex flex-col">
@@ -35,9 +37,9 @@ export default async function StorefrontLayout({ children, params }: Props) {
         <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between">
           {/* Logo / name */}
           <Link href={base} className="flex items-center gap-3">
-            {tenant.logoUrl ? (
+            {logoSrc ? (
               <img
-                src={tenant.logoUrl}
+                src={logoSrc}
                 alt={tenant.businessName}
                 className="h-9 max-w-[160px] object-contain"
               />

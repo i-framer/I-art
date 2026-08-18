@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchObject, StorageNotConfiguredError } from "@/lib/object-storage";
 import { BlobError, BlobNotFoundError } from "@vercel/blob";
-import { db, artworkImagesTable, artworksTable } from "@workspace/db";
+import { db, artworkImagesTable, artworksTable, tenantsTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 
 /**
@@ -66,7 +66,21 @@ export async function GET(request: NextRequest) {
     )
     .limit(1);
   if (!row) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // Not an artwork image — a tenant logo is the only other public object.
+    // Serve it only while the owning storefront is enabled.
+    const [logoTenant] = await db
+      .select({ id: tenantsTable.id })
+      .from(tenantsTable)
+      .where(
+        and(
+          eq(tenantsTable.logoUrl, objectPath),
+          eq(tenantsTable.storefrontEnabled, true),
+        ),
+      )
+      .limit(1);
+    if (!logoTenant) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
   }
 
   try {

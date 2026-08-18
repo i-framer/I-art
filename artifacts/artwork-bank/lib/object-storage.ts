@@ -186,6 +186,27 @@ export async function getServeUrl(
 }
 
 /**
+ * Resolve a tenant logo to a browser-loadable URL.
+ *
+ * Logos uploaded through the app are stored as canonical object paths
+ * ("/objects/uploads/<uuid>") and must be served through the public storage
+ * route (the production blob store is private). Legacy/externally-set values
+ * may be absolute URLs — those are returned unchanged.
+ */
+export async function resolveLogoSrc(
+  logoUrl: string | null,
+): Promise<string | null> {
+  if (!logoUrl) return null;
+  if (!logoUrl.startsWith("/objects/")) return logoUrl;
+  try {
+    return await getServeUrl(logoUrl);
+  } catch (err) {
+    console.error("Failed to resolve logo URL", logoUrl, err);
+    return null;
+  }
+}
+
+/**
  * Upload an object body directly to the storage backend.
  *
  * For Vercel Blob this uses the server-side put() API (server-to-server, no

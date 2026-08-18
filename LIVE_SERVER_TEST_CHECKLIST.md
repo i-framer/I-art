@@ -70,6 +70,9 @@ _Last updated: 2026-08-11 (agent probe — storage routes deployed; manual UI ve
 - [ ] 5.3 Orphan sweep cron runs and posts its result; operator alert arrives on errors (Task #205)
 - [x] 5.4 `/api/storage/orphan-sweep` rejects calls without the Bearer secret (GG 2026-08-07)
 
+- [ ] 5.x Upload a gallery logo in Settings — it appears in Settings, the storefront header, About page, and the Sellers directory (shipped 2026-08-18)
+- [ ] 5.y Remove the logo in Settings — storefront falls back to the business name in the brand colour
+
 ## 6. Domains & routing
 
 - [x] 6.1 `{slug}.i-art.com.au` subdomain routing resolves to the right tenant (GG 2026-08-07)

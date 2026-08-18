@@ -4,6 +4,7 @@ import { db } from "@workspace/db";
 import { artworksTable, tenantsTable } from "@workspace/db";
 import { and, eq, count } from "drizzle-orm";
 import { Store, Palette, Frame, MapPin, ImageIcon } from "lucide-react";
+import { resolveLogoSrc } from "@/lib/object-storage";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +50,15 @@ export default async function SellersPage() {
     .where(eq(tenantsTable.storefrontEnabled, true))
     .groupBy(tenantsTable.id)
     .orderBy(tenantsTable.businessName);
+
+  // Resolve uploaded logo object paths to browser-loadable URLs.
+  const logoSrcs = await Promise.all(
+    sellers.map((s) => resolveLogoSrc(s.logoUrl)),
+  );
+  const sellersWithLogos = sellers.map((s, i) => ({
+    ...s,
+    logoSrc: logoSrcs[i] ?? null,
+  }));
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -105,7 +115,7 @@ export default async function SellersPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {sellers.map((seller) => {
+            {sellersWithLogos.map((seller) => {
               const meta = TYPE_META[seller.type] ?? TYPE_META.FRAMER;
               const TypeIcon = meta.icon;
               const themeColor = seller.themeColor ?? "#1c1917";
@@ -123,9 +133,9 @@ export default async function SellersPage() {
                     {/* Logo / initials */}
                     <div className="flex items-start justify-between gap-4 mb-4">
                       <div className="flex-1 min-w-0">
-                        {seller.logoUrl ? (
+                        {seller.logoSrc ? (
                           <img
-                            src={seller.logoUrl}
+                            src={seller.logoSrc}
                             alt={seller.businessName}
                             className="h-12 max-w-[160px] object-contain"
                           />

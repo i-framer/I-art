@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getTenantBySlug } from "@/lib/tenant-cache";
+import { resolveLogoSrc } from "@/lib/object-storage";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -26,14 +27,15 @@ export default async function AboutPage({ params }: Props) {
 
   const themeColor = tenant.themeColor ?? "#1c1917";
   const base = `/t/${slug}`;
+  const logoSrc = await resolveLogoSrc(tenant.logoUrl);
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-16">
       {/* Header */}
       <div className="flex flex-col items-center text-center mb-12">
-        {tenant.logoUrl ? (
+        {logoSrc ? (
           <img
-            src={tenant.logoUrl}
+            src={logoSrc}
             alt={tenant.businessName}
             className="h-20 max-w-xs object-contain mb-6"
           />

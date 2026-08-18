@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { db } from "@workspace/db";
 import {
   tenantsTable,
@@ -26,6 +27,68 @@ const settingsSchema = z.object({
     .optional()
     .or(z.literal("")),
 });
+
+/**
+ * Canonical object path produced by /api/storage/upload — nothing else is
+ * accepted, so a tenant cannot point their logo at arbitrary storage paths.
+ */
+const LOGO_OBJECT_PATH_RE =
+  /^\/objects\/uploads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Set (or clear, with null) the tenant's storefront logo.
+ * The file itself is uploaded via POST /api/storage/upload first; this action
+ * only records the resulting canonical object path.
+ */
+/** Raster image types accepted as a storefront logo (no SVG/active content). */
+const ALLOWED_LOGO_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+
+export async function updateTenantLogo(
+  objectPath: string | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const session = await getSession();
+  if (!session.userId) return { ok: false, error: "Not signed in" };
+
+  if (objectPath !== null) {
+    if (!LOGO_OBJECT_PATH_RE.test(objectPath)) {
+      return { ok: false, error: "Invalid logo path" };
+    }
+    // Verify the object exists and is a plain raster image before making it
+    // publicly servable as this tenant's logo.
+    try {
+      const { fetchObject } = await import("@/lib/object-storage");
+      const upstream = await fetchObject(objectPath);
+      const contentType =
+        upstream.headers.get("Content-Type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+      upstream.body?.cancel().catch(() => {});
+      if (!ALLOWED_LOGO_TYPES.has(contentType)) {
+        return {
+          ok: false,
+          error: "Logo must be a PNG, JPG, WebP, or GIF image",
+        };
+      }
+    } catch {
+      return { ok: false, error: "Uploaded file could not be found" };
+    }
+  }
+
+  const [tenant] = await db
+    .update(tenantsTable)
+    .set({ logoUrl: objectPath })
+    .where(eq(tenantsTable.id, session.tenantId))
+    .returning({ slug: tenantsTable.slug });
+
+  revalidatePath("/settings");
+  // Public pages render the logo — make sure they pick up the change.
+  if (tenant?.slug) revalidatePath(`/t/${tenant.slug}`, "layout");
+  revalidatePath("/sellers");
+  return { ok: true };
+}
 
 export async function updateTenantSettings(formData: FormData) {
   const session = await getSession();
