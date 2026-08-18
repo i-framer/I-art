@@ -1,16 +1,20 @@
 /**
- * Task #1009 — Confirm the retry-failed-notifications action can't be triggered
- * by a caller who shouldn't have access.
+ * Task #1009 / Task #1011 — Confirm the retry-failed-notifications action can't
+ * be triggered by a caller who shouldn't have access.
  *
  * Verifies the two access guards on the destructive admin actions in the
  * inquiries panel (app/(admin)/(gated)/inquiries/actions.ts):
  *
  *  1. retryFailedInquiryNotifications — unauthenticated caller → redirects to /login
  *  2. clearStuckInquiryNonces         — unauthenticated caller → redirects to /login
- *  3. retryFailedInquiryNotifications — tenant without active billing →
+ *  3. retryFailedInquiryNotifications — tenant without active billing (null) →
  *       throws "Subscription required" before any DB write
- *  4. clearStuckInquiryNonces         — tenant without active billing →
+ *  4. clearStuckInquiryNonces         — tenant without active billing (null) →
  *       throws "Subscription required" before any DB write
+ *  5. retryFailedInquiryNotifications — tenant with canceled subscription →
+ *       throws "Subscription required" before any DB write  (Task #1011)
+ *  6. clearStuckInquiryNonces         — tenant with canceled subscription →
+ *       throws "Subscription required" before any DB write  (Task #1011)
  *
  * Mirrors the pattern used in exhausted-inquiry-banner-live-update-integration.test.ts.
  * Billing-gate assertions run against a real PostgreSQL database so the
@@ -87,6 +91,24 @@ async function insertUnsubscribedTenant(id: string): Promise<void> {
     billingExempt: false,
     subscriptionStatus: null,
     contactEmail: "owner-1009@gallery.test",
+  } as any);
+}
+
+/**
+ * Insert a tenant whose subscription is explicitly 'canceled' — billingExempt
+ * is false and subscriptionStatus is 'canceled', which is NOT in ACTIVE_STATUSES
+ * — so requireActiveBillingAccess will reject it.
+ */
+async function insertCanceledTenant(id: string): Promise<void> {
+  CREATED_TENANT_IDS.push(id);
+  await db.insert(tenantsTable).values({
+    id,
+    slug: id,
+    businessName: "Canceled Subscription Access Guard Test Gallery",
+    type: "ARTIST",
+    billingExempt: false,
+    subscriptionStatus: "canceled",
+    contactEmail: "owner-1011@gallery.test",
   } as any);
 }
 
@@ -278,6 +300,90 @@ describeIntegration(
         mockSession.tenantId = tenantId;
 
         // Act — billing gate should throw, not redirect
+        await expect(clearStuckInquiryNonces()).rejects.toThrow(
+          "Subscription required",
+        );
+
+        // The inquiry row must be completely untouched — nonce must still be set.
+        const row = await db.query.inquiriesTable.findFirst({
+          where: eq(inquiriesTable.id, inqId),
+        });
+        expect(row?.emailClaimNonce).not.toBeNull();
+        expect(row?.emailLastAttemptAt).toBeNull();
+        expect(row?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      },
+    );
+
+    // ── Scenario 5 (Task #1011) ───────────────────────────────────────────────
+
+    it(
+      "retryFailedInquiryNotifications — tenant with canceled subscription throws before any DB write",
+      { timeout: 30_000 },
+      async () => {
+        const tenantId = makeId("tenant-1011a");
+        await insertCanceledTenant(tenantId);
+
+        const artworkId = makeId("artwork-1011a");
+        await insertArtwork(artworkId, tenantId);
+
+        const inqId = makeId("inq-1011a");
+        await insertExhaustedInquiry(inqId, tenantId, artworkId);
+
+        // Restore a valid userId so the auth guard passes; billing guard fires.
+        mockSession.userId = "u-1009-test";
+        mockSession.tenantId = tenantId;
+
+        // Act — 'canceled' is not in ACTIVE_STATUSES, so the billing gate throws.
+        await expect(retryFailedInquiryNotifications()).rejects.toThrow(
+          "Subscription required",
+        );
+
+        // The inquiry row must be completely untouched — no requeue happened.
+        const row = await db.query.inquiriesTable.findFirst({
+          where: eq(inquiriesTable.id, inqId),
+        });
+        expect(row?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+        expect(row?.emailLastAttemptAt).not.toBeNull();
+        expect(row?.emailError).toBe("smtp: connection refused (1009)");
+      },
+    );
+
+    // ── Scenario 6 (Task #1011) ───────────────────────────────────────────────
+
+    it(
+      "clearStuckInquiryNonces — tenant with canceled subscription throws before any DB write",
+      { timeout: 30_000 },
+      async () => {
+        const tenantId = makeId("tenant-1011b");
+        await insertCanceledTenant(tenantId);
+
+        const artworkId = makeId("artwork-1011b");
+        await insertArtwork(artworkId, tenantId);
+
+        // Insert a stuck-nonce inquiry (emailClaimNonce IS NOT NULL AND
+        // emailLastAttemptAt IS NULL) — the kind clearStuckInquiryNonces targets.
+        const inqId = makeId("inq-1011b");
+        CREATED_INQUIRY_IDS.push(inqId);
+        await db.insert(inquiriesTable).values({
+          id: inqId,
+          tenantId,
+          artworkId,
+          artworkTitle: "Test Artwork 1011",
+          buyerName: "Access Guard Test Buyer",
+          buyerEmail: "buyer-1011b@example.com",
+          message: "Is this available?",
+          emailError: "smtp: connection refused (1011b)",
+          emailAttempts: MAX_EMAIL_ATTEMPTS,
+          emailLastAttemptAt: null,
+          emailClaimNonce: randomUUID(),
+          status: "NEW",
+        } as any);
+
+        // Restore a valid userId so the auth guard passes; billing guard fires.
+        mockSession.userId = "u-1009-test";
+        mockSession.tenantId = tenantId;
+
+        // Act — 'canceled' is not in ACTIVE_STATUSES, so the billing gate throws.
         await expect(clearStuckInquiryNonces()).rejects.toThrow(
           "Subscription required",
         );
