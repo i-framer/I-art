@@ -136,17 +136,15 @@ describe("bulkSetInquiriesArchived tenant scoping", () => {
     expect(j(state.updates[0].where)).toEqual(j(expectedWhere));
   });
 
-  it("rejects an empty selection without touching the database", async () => {
-    await expect(bulkSetInquiriesArchived([], true)).rejects.toThrow(
-      "No inquiries selected.",
-    );
+  it("silently no-ops on an empty selection without touching the database", async () => {
+    await expect(bulkSetInquiriesArchived([], true)).resolves.not.toThrow();
     expect(state.updates).toEqual([]);
   });
 
-  it("rejects a selection that is only empty strings without touching the database", async () => {
-    await expect(bulkSetInquiriesArchived(["", ""], true)).rejects.toThrow(
-      "No inquiries selected.",
-    );
+  it("silently no-ops on a selection that is only empty strings without touching the database", async () => {
+    await expect(
+      bulkSetInquiriesArchived(["", ""], true),
+    ).resolves.not.toThrow();
     expect(state.updates).toEqual([]);
   });
 

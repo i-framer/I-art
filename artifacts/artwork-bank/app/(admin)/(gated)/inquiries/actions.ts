@@ -143,7 +143,7 @@ export async function bulkSetInquiriesArchived(
     new Set(inquiryIds.filter((id) => typeof id === "string" && id.length > 0)),
   );
   if (ids.length === 0) {
-    throw new Error("No inquiries selected.");
+    return;
   }
   if (ids.length > 200) {
     throw new Error("Too many inquiries selected at once.");
@@ -179,7 +179,7 @@ export async function bulkSetInquiriesStatus(
     new Set(inquiryIds.filter((id) => typeof id === "string" && id.length > 0)),
   );
   if (ids.length === 0) {
-    throw new Error("No inquiries selected.");
+    return;
   }
   if (ids.length > 200) {
     throw new Error("Too many inquiries selected at once.");

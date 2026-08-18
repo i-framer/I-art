@@ -178,9 +178,9 @@ describeIntegration("bulkSetInquiriesArchived — real-DB integration (Task #74)
     expect(foreignRow?.archivedAt).toBeNull();
   });
 
-  it("empty ID list throws", async () => {
+  it("empty ID list resolves as a silent no-op", async () => {
     await createTenant();
-    await expect(bulkSetInquiriesArchived([], true)).rejects.toThrow("No inquiries selected.");
+    await expect(bulkSetInquiriesArchived([], true)).resolves.not.toThrow();
   });
 
   it(">200 IDs throws", async () => {

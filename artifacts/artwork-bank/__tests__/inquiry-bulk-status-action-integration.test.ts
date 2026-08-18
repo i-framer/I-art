@@ -139,10 +139,10 @@ describeIntegration("bulkSetInquiriesStatus — server action — real-DB integr
     expect(foreignRow?.status).toBe("NEW");    // skipped
   });
 
-  it("empty ID list throws", async () => {
+  it("empty ID list resolves as a silent no-op", async () => {
     await createTenant();
 
-    await expect(bulkSetInquiriesStatus([], "HANDLED")).rejects.toThrow();
+    await expect(bulkSetInquiriesStatus([], "HANDLED")).resolves.not.toThrow();
   });
 
   it(">200 IDs throws", async () => {

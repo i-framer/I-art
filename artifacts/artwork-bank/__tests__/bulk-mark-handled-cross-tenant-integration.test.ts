@@ -155,10 +155,10 @@ describeIntegration("bulkSetInquiriesStatus — cross-tenant isolation — real-
     expect(foreign?.status).toBe("NEW");
   });
 
-  it("empty batch → throws 'No inquiries selected'", async () => {
+  it("empty batch → resolves as a silent no-op", async () => {
     const tenantId = await createTenant();
     mockSession.tenantId = tenantId;
 
-    await expect(bulkSetInquiriesStatus([], "HANDLED")).rejects.toThrow("No inquiries selected");
+    await expect(bulkSetInquiriesStatus([], "HANDLED")).resolves.not.toThrow();
   });
 });
