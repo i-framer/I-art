@@ -124,11 +124,13 @@ describe("BulkActionBar — error banner clears when a retry succeeds", () => {
     // First click — action fails.
     fireEvent.click(newBtn);
 
-    await waitFor(() =>
-      expect(
-        screen.getByText(/Failed to mark selected inquiries as new/i),
-      ).toBeTruthy(),
-    );
+    await waitFor(() => {
+      const alert = screen.getByRole("alert");
+      expect(alert).toBeTruthy();
+      expect(alert.textContent).toMatch(
+        /Failed to mark selected inquiries as new/i,
+      );
+    });
 
     // Retry succeeds.
     vi.mocked(bulkSetInquiriesStatus).mockResolvedValueOnce(undefined);
@@ -158,11 +160,13 @@ describe("BulkActionBar — error banner clears when a retry succeeds", () => {
     // First click — action fails.
     fireEvent.click(archiveBtn);
 
-    await waitFor(() =>
-      expect(
-        screen.getByText(/Failed to archive selected inquiries/i),
-      ).toBeTruthy(),
-    );
+    await waitFor(() => {
+      const alert = screen.getByRole("alert");
+      expect(alert).toBeTruthy();
+      expect(alert.textContent).toMatch(
+        /Failed to archive selected inquiries/i,
+      );
+    });
 
     // Retry succeeds.
     vi.mocked(bulkSetInquiriesArchived).mockResolvedValueOnce(undefined);
@@ -190,11 +194,13 @@ describe("BulkActionBar — error banner clears when a retry succeeds", () => {
     // First click — action fails.
     fireEvent.click(unarchiveBtn);
 
-    await waitFor(() =>
-      expect(
-        screen.getByText(/Failed to unarchive selected inquiries/i),
-      ).toBeTruthy(),
-    );
+    await waitFor(() => {
+      const alert = screen.getByRole("alert");
+      expect(alert).toBeTruthy();
+      expect(alert.textContent).toMatch(
+        /Failed to unarchive selected inquiries/i,
+      );
+    });
 
     // Retry succeeds.
     vi.mocked(bulkSetInquiriesArchived).mockResolvedValueOnce(undefined);
