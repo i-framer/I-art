@@ -90,15 +90,16 @@ export function BulkActionBar({
 
   const runAction = (
     action: "archive" | "handled" | "new",
-    fn: () => Promise<void>,
+    fn: (selection: string[]) => Promise<void>,
     failureMessage: string,
   ) => {
+    const selectionSnapshot = [...selectedOnPage];
     setError(null);
     setPendingAction(action);
     startTransition(async () => {
       try {
-        await fn();
-        setAll(selectedOnPage, false);
+        await fn(selectionSnapshot);
+        setAll(selectionSnapshot, false);
       } catch {
         setError(failureMessage);
       } finally {
@@ -114,7 +115,8 @@ export function BulkActionBar({
   const runArchive = () =>
     runAction(
       "archive",
-      () => bulkSetInquiriesArchived(selectedOnPage, mode === "archive"),
+      (selection) =>
+        bulkSetInquiriesArchived(selection, mode === "archive"),
       mode === "archive"
         ? "Failed to archive selected inquiries. Please try again."
         : "Failed to unarchive selected inquiries. Please try again.",
@@ -123,7 +125,7 @@ export function BulkActionBar({
   const runStatus = (status: "NEW" | "HANDLED") =>
     runAction(
       status === "HANDLED" ? "handled" : "new",
-      () => bulkSetInquiriesStatus(selectedOnPage, status),
+      (selection) => bulkSetInquiriesStatus(selection, status),
       status === "HANDLED"
         ? "Failed to mark selected inquiries as handled. Please try again."
         : "Failed to mark selected inquiries as new. Please try again.",

@@ -448,6 +448,14 @@ function getSelectAllCheckbox() {
   return screen.getByRole("checkbox", { name: /Select all on this page/i });
 }
 
+function expectOriginalSelectionClearedAndNewSelectionPreserved() {
+  const [original, added] = screen.getAllByRole("checkbox", {
+    name: /Select inquiry/i,
+  }) as HTMLInputElement[];
+  expect(original?.checked).toBe(false);
+  expect(added?.checked).toBe(true);
+}
+
 describe("BulkActionBar — error banner persists when 'Select all on this page' is unchecked, clears on successful retry", () => {
   it("keeps the error banner visible after a status action fails and 'Select all' is unchecked, then clears it on a successful retry", async () => {
     // First call rejects → error banner should appear.
@@ -1407,6 +1415,7 @@ describe("BulkActionBar — pending spinner clears after 'Select all' is checked
     const handledBtnAfter = screen.getByRole("button", {
       name: /Mark selected as handled/i,
     });
+    expectOriginalSelectionClearedAndNewSelectionPreserved();
     expect(handledBtnAfter).toBeTruthy();
     expect((handledBtnAfter as HTMLButtonElement).disabled).toBe(false);
   });
@@ -1443,6 +1452,7 @@ describe("BulkActionBar — pending spinner clears after 'Select all' is checked
     const newBtnAfter = screen.getByRole("button", {
       name: /Mark selected as new/i,
     });
+    expectOriginalSelectionClearedAndNewSelectionPreserved();
     expect(newBtnAfter).toBeTruthy();
     expect((newBtnAfter as HTMLButtonElement).disabled).toBe(false);
   });
@@ -1479,6 +1489,7 @@ describe("BulkActionBar — pending spinner clears after 'Select all' is checked
     const archiveBtnAfter = screen.getByRole("button", {
       name: /Archive selected/i,
     });
+    expectOriginalSelectionClearedAndNewSelectionPreserved();
     expect(archiveBtnAfter).toBeTruthy();
     expect((archiveBtnAfter as HTMLButtonElement).disabled).toBe(false);
   });
@@ -1515,6 +1526,7 @@ describe("BulkActionBar — pending spinner clears after 'Select all' is checked
     const unarchiveBtnAfter = screen.getByRole("button", {
       name: /Unarchive selected/i,
     });
+    expectOriginalSelectionClearedAndNewSelectionPreserved();
     expect(unarchiveBtnAfter).toBeTruthy();
     expect((unarchiveBtnAfter as HTMLButtonElement).disabled).toBe(false);
   });
