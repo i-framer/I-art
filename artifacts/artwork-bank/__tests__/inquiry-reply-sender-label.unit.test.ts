@@ -84,6 +84,15 @@ describe("senderDisplayName edge cases (Task #1075)", () => {
   });
 });
 
+// ─── Quoted local-part unit tests (Task #1080) ─────────────────────────────────
+// Quoted local-parts are valid email syntax and may appear on reply senders.
+
+describe("senderDisplayName quoted local-parts (Task #1080)", () => {
+  it("keeps a quoted dotted local-part readable", () => {
+    expect(senderDisplayName('"jane.doe"@example.com')).toBe('"Jane Doe"');
+  });
+});
+
 // ─── Mixed alphanumeric local-part tests (Task #1076) ────────────────────────
 // Covers cases where digits are embedded in the local-part.
 // A future change to the \b\w word-boundary regex could silently break these.
