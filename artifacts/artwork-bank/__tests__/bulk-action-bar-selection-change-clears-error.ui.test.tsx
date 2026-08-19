@@ -1371,3 +1371,151 @@ describe("BulkActionBar — pending spinner clears after an individual checkbox 
     expect((unarchiveBtnAfter as HTMLButtonElement).disabled).toBe(false);
   });
 });
+
+// ── Mid-flight success: spinner clears when "Select all" is checked mid-flight and the action resolves ──
+
+describe("BulkActionBar — pending spinner clears after 'Select all' is checked mid-flight and the action succeeds", () => {
+  it("clears the pending spinner after a 'handled' action succeeds when 'Select all' is checked mid-flight", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesStatus).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+    selectFirstItem();
+
+    const handledBtn = screen.getByRole("button", {
+      name: /Mark selected as handled/i,
+    });
+    fireEvent.click(handledBtn);
+
+    expect(vi.mocked(bulkSetInquiriesStatus)).toHaveBeenCalledWith(
+      ["inq-1"],
+      "HANDLED",
+    );
+    expect(screen.getByText(/Marking as handled…/i)).toBeTruthy();
+
+    // Add the remaining page item to the selection while the action is pending.
+    fireEvent.click(getSelectAllCheckbox());
+
+    await act(async () => {
+      deferred.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Marking as handled…/i)).toBeNull(),
+    );
+    const handledBtnAfter = screen.getByRole("button", {
+      name: /Mark selected as handled/i,
+    });
+    expect(handledBtnAfter).toBeTruthy();
+    expect((handledBtnAfter as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("clears the pending spinner after a 'mark as new' action succeeds when 'Select all' is checked mid-flight", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesStatus).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+    selectFirstItem();
+
+    const newBtn = screen.getByRole("button", {
+      name: /Mark selected as new/i,
+    });
+    fireEvent.click(newBtn);
+
+    expect(vi.mocked(bulkSetInquiriesStatus)).toHaveBeenCalledWith(
+      ["inq-1"],
+      "NEW",
+    );
+    expect(screen.getByText(/Marking as new…/i)).toBeTruthy();
+
+    // Add the remaining page item to the selection while the action is pending.
+    fireEvent.click(getSelectAllCheckbox());
+
+    await act(async () => {
+      deferred.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Marking as new…/i)).toBeNull(),
+    );
+    const newBtnAfter = screen.getByRole("button", {
+      name: /Mark selected as new/i,
+    });
+    expect(newBtnAfter).toBeTruthy();
+    expect((newBtnAfter as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("clears the pending spinner after an archive action succeeds when 'Select all' is checked mid-flight", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesArchived).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+    selectFirstItem();
+
+    const archiveBtn = screen.getByRole("button", {
+      name: /Archive selected/i,
+    });
+    fireEvent.click(archiveBtn);
+
+    expect(vi.mocked(bulkSetInquiriesArchived)).toHaveBeenCalledWith(
+      ["inq-1"],
+      true,
+    );
+    expect(screen.getByText(/Archiving…/i)).toBeTruthy();
+
+    // Add the remaining page item to the selection while the action is pending.
+    fireEvent.click(getSelectAllCheckbox());
+
+    await act(async () => {
+      deferred.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Archiving…/i)).toBeNull(),
+    );
+    const archiveBtnAfter = screen.getByRole("button", {
+      name: /Archive selected/i,
+    });
+    expect(archiveBtnAfter).toBeTruthy();
+    expect((archiveBtnAfter as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("clears the pending spinner after an unarchive action succeeds when 'Select all' is checked mid-flight", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesArchived).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "unarchive");
+    selectFirstItem();
+
+    const unarchiveBtn = screen.getByRole("button", {
+      name: /Unarchive selected/i,
+    });
+    fireEvent.click(unarchiveBtn);
+
+    expect(vi.mocked(bulkSetInquiriesArchived)).toHaveBeenCalledWith(
+      ["inq-1"],
+      false,
+    );
+    expect(screen.getByText(/Unarchiving…/i)).toBeTruthy();
+
+    // Add the remaining page item to the selection while the action is pending.
+    fireEvent.click(getSelectAllCheckbox());
+
+    await act(async () => {
+      deferred.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Unarchiving…/i)).toBeNull(),
+    );
+    const unarchiveBtnAfter = screen.getByRole("button", {
+      name: /Unarchive selected/i,
+    });
+    expect(unarchiveBtnAfter).toBeTruthy();
+    expect((unarchiveBtnAfter as HTMLButtonElement).disabled).toBe(false);
+  });
+});
