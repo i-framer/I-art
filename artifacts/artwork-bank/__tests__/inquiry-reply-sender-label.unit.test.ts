@@ -112,6 +112,10 @@ describe("senderDisplayName numeric separator local-parts (Task #1077)", () => {
   it("replaces underscores between numeric segments with spaces", () => {
     expect(senderDisplayName("12_34@example.com")).toBe("12 34");
   });
+
+  it("replaces hyphens between numeric segments with spaces", () => {
+    expect(senderDisplayName("12-34@example.com")).toBe("12 34");
+  });
 });
 
 // ─── Display-contract test: null senderEmail → fallback label ────────────────
