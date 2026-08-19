@@ -684,6 +684,19 @@ describe("BulkActionBar — error banner persists when 'Select all' is unchecked
         screen.getByText(/Failed to mark selected inquiries as handled/i),
       ).toBeTruthy(),
     );
+
+    // The pending spinner must be gone: button shows its normal label.
+    expect(screen.queryByText(/Marking as handled…/i)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Mark selected as handled/i }),
+    ).toBeTruthy();
+
+    // The button is disabled because no items are selected (Select all was
+    // unchecked mid-flight), not because isPending is still true.
+    const handledBtnAfter = screen.getByRole("button", {
+      name: /Mark selected as handled/i,
+    });
+    expect((handledBtnAfter as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows the error banner after a status 'new' action fails, even when 'Select all' was unchecked while it was pending", async () => {
@@ -717,6 +730,19 @@ describe("BulkActionBar — error banner persists when 'Select all' is unchecked
         screen.getByText(/Failed to mark selected inquiries as new/i),
       ).toBeTruthy(),
     );
+
+    // The pending spinner must be gone: button shows its normal label.
+    expect(screen.queryByText(/Marking as new…/i)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Mark selected as new/i }),
+    ).toBeTruthy();
+
+    // The button is disabled because no items are selected (Select all was
+    // unchecked mid-flight), not because isPending is still true.
+    const newBtnAfter = screen.getByRole("button", {
+      name: /Mark selected as new/i,
+    });
+    expect((newBtnAfter as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows the error banner after an archive action fails, even when 'Select all' was unchecked while it was pending", async () => {
@@ -750,6 +776,19 @@ describe("BulkActionBar — error banner persists when 'Select all' is unchecked
         screen.getByText(/Failed to archive selected inquiries/i),
       ).toBeTruthy(),
     );
+
+    // The pending spinner must be gone: button shows its normal label.
+    expect(screen.queryByText(/Archiving…/i)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Archive selected/i }),
+    ).toBeTruthy();
+
+    // The button is disabled because no items are selected (Select all was
+    // unchecked mid-flight), not because isPending is still true.
+    const archiveBtnAfter = screen.getByRole("button", {
+      name: /Archive selected/i,
+    });
+    expect((archiveBtnAfter as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows the error banner after an unarchive action fails, even when 'Select all' was unchecked while it was pending", async () => {
@@ -783,6 +822,19 @@ describe("BulkActionBar — error banner persists when 'Select all' is unchecked
         screen.getByText(/Failed to unarchive selected inquiries/i),
       ).toBeTruthy(),
     );
+
+    // The pending spinner must be gone: button shows its normal label.
+    expect(screen.queryByText(/Unarchiving…/i)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Unarchive selected/i }),
+    ).toBeTruthy();
+
+    // The button is disabled because no items are selected (Select all was
+    // unchecked mid-flight), not because isPending is still true.
+    const unarchiveBtnAfter = screen.getByRole("button", {
+      name: /Unarchive selected/i,
+    });
+    expect((unarchiveBtnAfter as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
