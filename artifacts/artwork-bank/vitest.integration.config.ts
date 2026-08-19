@@ -19,6 +19,12 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["__tests__/**/*-integration.test.ts"],
+    include: [
+      "__tests__/**/*-integration.test.ts",
+      // This legacy mixed test file contains the staff-versus-owner reply-label
+      // database coverage. Keep it integration-only until its pure assertions
+      // are extracted into a separate unit test file.
+      "__tests__/inquiry-reply-sender-label.test.ts",
+    ],
   },
 });

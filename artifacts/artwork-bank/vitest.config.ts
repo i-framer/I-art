@@ -15,6 +15,8 @@ export default defineConfig({
     // Long-running checks are deliberately separate from the default fast suite:
     // - database-backed checks run via `pnpm test:integration`
     // - real-server and long timeout checks run via `pnpm test:slow`
+    // - inquiry-reply-sender-label is a legacy mixed test file whose assertions
+    //   include real-database setup, so it runs only with the integration suite
     //
     // Keeping these selectors explicit lets `pnpm test` finish within the CI
     // command limit while retaining complete coverage in their dedicated runs.
@@ -24,6 +26,7 @@ export default defineConfig({
     // exclude pattern therefore targets only files at the slow/ root level.
     exclude: [
       "__tests__/**/*-integration.test.ts",
+      "__tests__/inquiry-reply-sender-label.test.ts",
       "__tests__/slow/*.test.ts",
     ],
   },
