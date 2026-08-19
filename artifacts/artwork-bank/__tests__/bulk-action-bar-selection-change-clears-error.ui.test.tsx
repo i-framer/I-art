@@ -1226,6 +1226,12 @@ describe("BulkActionBar — pending spinner clears after an individual checkbox 
       screen.getByRole("button", { name: /Mark selected as handled/i }),
     ).toBeTruthy();
 
+    const [originalCheckbox, addedCheckbox] = screen.getAllByRole("checkbox", {
+      name: /Select inquiry/i,
+    });
+    expect((originalCheckbox as HTMLInputElement).checked).toBe(false);
+    expect((addedCheckbox as HTMLInputElement).checked).toBe(true);
+
     // inq-1 was deselected by setAll(["inq-1"], false) on success, but inq-2
     // was toggled in mid-flight and remains selected. The button must be
     // enabled (not stuck in a pending-disabled state).
@@ -1276,6 +1282,12 @@ describe("BulkActionBar — pending spinner clears after an individual checkbox 
       screen.getByRole("button", { name: /Mark selected as new/i }),
     ).toBeTruthy();
 
+    const [originalCheckbox, addedCheckbox] = screen.getAllByRole("checkbox", {
+      name: /Select inquiry/i,
+    });
+    expect((originalCheckbox as HTMLInputElement).checked).toBe(false);
+    expect((addedCheckbox as HTMLInputElement).checked).toBe(true);
+
     // inq-2 remains selected after success, so the button must be enabled.
     const newBtnAfter = screen.getByRole("button", {
       name: /Mark selected as new/i,
@@ -1324,6 +1336,12 @@ describe("BulkActionBar — pending spinner clears after an individual checkbox 
       screen.getByRole("button", { name: /Archive selected/i }),
     ).toBeTruthy();
 
+    const [originalCheckbox, addedCheckbox] = screen.getAllByRole("checkbox", {
+      name: /Select inquiry/i,
+    });
+    expect((originalCheckbox as HTMLInputElement).checked).toBe(false);
+    expect((addedCheckbox as HTMLInputElement).checked).toBe(true);
+
     // inq-2 remains selected after success, so the button must be enabled.
     const archiveBtnAfter = screen.getByRole("button", {
       name: /Archive selected/i,
@@ -1371,6 +1389,12 @@ describe("BulkActionBar — pending spinner clears after an individual checkbox 
     expect(
       screen.getByRole("button", { name: /Unarchive selected/i }),
     ).toBeTruthy();
+
+    const [originalCheckbox, addedCheckbox] = screen.getAllByRole("checkbox", {
+      name: /Select inquiry/i,
+    });
+    expect((originalCheckbox as HTMLInputElement).checked).toBe(false);
+    expect((addedCheckbox as HTMLInputElement).checked).toBe(true);
 
     // inq-2 remains selected after success, so the button must be enabled.
     const unarchiveBtnAfter = screen.getByRole("button", {
