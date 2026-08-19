@@ -20,11 +20,48 @@
  *     a sentByUserId and asserts the query returns null for senderEmail, matching
  *     what the page renders.
  */
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 import { db, tenantsTable, artworksTable, inquiriesTable, inquiryRepliesTable, usersTable } from "@workspace/db";
 import { eq, and, inArray, asc } from "drizzle-orm";
+
+// Keep the real database query while making the authenticated viewer explicit.
+// This lets the integration test prove that the reply sender is resolved from
+// sentByUserId rather than from whoever is currently viewing the page.
+const mockSession = {
+  value: {
+    userId: "",
+    tenantId: "",
+    role: "owner" as const,
+  },
+};
+
+vi.mock("@/lib/auth", () => ({
+  getSession: vi.fn(async () => mockSession.value),
+}));
+
+vi.mock("next/navigation", () => ({
+  redirect: vi.fn((url: string) => {
+    throw new Error(`REDIRECT:${url}`);
+  }),
+}));
+
+vi.mock("@/lib/billing", () => ({
+  requireActiveBillingAccess: vi.fn(async () => {}),
+}));
+
+vi.mock("@/lib/email", () => ({
+  sendInquiryReply: vi.fn(async () => true),
+  EmailSendError: class extends Error {},
+}));
+
+vi.mock("@/lib/email-sweep", () => ({
+  requeueExhaustedInquiries: vi.fn(async () => {}),
+  clearStuckNonces: vi.fn(async () => {}),
+}));
+
+import { getInquiryReplies } from "@/app/(admin)/(gated)/inquiries/actions";
 
 // ─── senderDisplayName ────────────────────────────────────────────────────────
 // Copied verbatim from app/(admin)/(gated)/inquiries/page.tsx so it can be unit
@@ -251,6 +288,31 @@ describeIntegration("inquiry reply — null senderEmail for pre-tracking rows (T
     // senderEmail is the user's registered email — display name is derived.
     expect(replies[0]?.senderEmail).toContain("@gallery.com");
     expect(senderDisplayName(replies[0]?.senderEmail)).toBeTruthy();
+  });
+
+  it("labels a staff reply with the stored sender when an owner views the inquiry", async () => {
+    const tenantId = await createTenant();
+    const ownerEmail = `gallery.owner@${uid()}.gallery.com`;
+    const staffEmail = `staff.member@${uid()}.gallery.com`;
+    const ownerId = await createUser(ownerEmail);
+    const staffId = await createUser(staffEmail);
+    const inquiryId = await createInquiry(tenantId);
+    await createReply({
+      tenantId,
+      inquiryId,
+      sentByUserId: staffId,
+      message: "Reply sent by the staff member.",
+    });
+
+    // The page/query is called as the owner, but the reply was sent by staff.
+    mockSession.value = { userId: ownerId, tenantId, role: "owner" };
+    const replies = await getInquiryReplies([inquiryId]);
+
+    expect(replies).toHaveLength(1);
+    const reply = replies[0];
+    expect(reply?.senderEmail).toBe(staffEmail);
+    expect(senderDisplayName(reply?.senderEmail)).toBe("Staff Member");
+    expect(senderDisplayName(reply?.senderEmail)).not.toBe("Gallery Owner");
   });
 
   it("mixed replies: old (null) and new (tracked) in the same inquiry", async () => {
