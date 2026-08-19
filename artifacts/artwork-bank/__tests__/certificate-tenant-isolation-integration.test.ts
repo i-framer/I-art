@@ -23,6 +23,10 @@ describeIntegration("certificate tenant isolation (Task #83)", () => {
   const createdTenantIds: string[] = [];
   const createdArtworkIds: string[] = [];
   const createdCertIds: string[] = [];
+  // Keep fixture certificate values unique for the entire test-file run.
+  // Random values in a small range can collide when this suite runs with the
+  // rest of the integration tests.
+  let nextFixtureCertificateSeq = 1;
 
   function uid() {
     return randomUUID();
@@ -57,13 +61,14 @@ describeIntegration("certificate tenant isolation (Task #83)", () => {
 
   async function issueCert(tenantId: string, artworkId: string): Promise<string> {
     const year = new Date().getFullYear();
+    const certificateSeq = nextFixtureCertificateSeq++;
     const [row] = await db
       .insert(certificatesTable)
       .values({
         tenantId,
         artworkId,
-        certificateNumber: formatCertificateNumber(uid().slice(0, 4).charCodeAt(0) % 100 + 1, year),
-        certificateSeq: Math.floor(Math.random() * 1_000_000) + 1,
+        certificateNumber: formatCertificateNumber(certificateSeq, year),
+        certificateSeq,
       })
       .returning({ id: certificatesTable.id });
     createdCertIds.push(row!.id);
