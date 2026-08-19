@@ -47,6 +47,11 @@ describe("senderDisplayName (Task #66)", () => {
 // These cover inputs that a future regex change could silently mishandle.
 
 describe("senderDisplayName edge cases (Task #1075)", () => {
+  it("keeps a plus-tagged local-part readable", () => {
+    // The word boundary after "+" also capitalises the tag: "jane+gallery" → "Jane+Gallery".
+    expect(senderDisplayName("jane+gallery@example.com")).toBe("Jane+Gallery");
+  });
+
   it("preserves casing of an all-uppercase local-part (only boundary char is touched)", () => {
     // "JANE.SMITH" → replace dot → "JANE SMITH"
     // \b\w uppercases 'J' (already upper) and 'S' (already upper) — rest stays as-is
