@@ -79,6 +79,28 @@ describe("senderDisplayName edge cases (Task #1075)", () => {
   });
 });
 
+// ─── Mixed alphanumeric local-part tests (Task #1076) ────────────────────────
+// Covers cases where digits are embedded in the local-part.
+// A future change to the \b\w word-boundary regex could silently break these.
+
+describe("senderDisplayName mixed alphanumeric local-parts (Task #1076)", () => {
+  it("capitalises only the first letter when digits follow it with no separator", () => {
+    // "jane2smith" → no separator to split on → \b\w only matches 'j' at start
+    // digits inside a word do not create a new word boundary, so '2' is not a boundary char
+    expect(senderDisplayName("jane2smith@example.com")).toBe("Jane2smith");
+  });
+
+  it("capitalises each word when a digit is embedded before a separator", () => {
+    // "j4ne.smith" → dot→space → "j4ne smith" → \b\w hits 'j' and 's'
+    expect(senderDisplayName("j4ne.smith@example.com")).toBe("J4ne Smith");
+  });
+
+  it("treats a leading digit as the first word boundary with no visual change", () => {
+    // "2anna.kim" → dot→space → "2anna kim" → \b\w hits '2' (digit, no case change) and 'k'
+    expect(senderDisplayName("2anna.kim@example.com")).toBe("2anna Kim");
+  });
+});
+
 // ─── Display-contract test: null senderEmail → fallback label ────────────────
 // Verifies the page-rendering contract without importing the React component:
 // when senderDisplayName returns "" (null email), the page shows the italic
