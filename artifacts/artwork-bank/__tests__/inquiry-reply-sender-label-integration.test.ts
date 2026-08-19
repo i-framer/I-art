@@ -1,26 +1,14 @@
 /**
  * Task #66 — Label older replies sent before sender tracking existed.
  *
- * inquiry_reply.sent_by_user_id is nullable: rows written before sender
- * tracking was introduced have sentByUserId = null, while newer rows carry
- * the user's ID (joined to app_user.email for display).
+ * Integration tests against the real database: inserts inquiry replies with and
+ * without sentByUserId and asserts the page query returns the expected
+ * senderEmail values.
  *
- * The inquiries page renders:
- *  - sentByUserId present  → left-joins app_user, shows the derived display
- *                            name (e.g. "Jane Smith" from "jane.smith@…")
- *  - sentByUserId absent   → shows italic "staff (sender not recorded)"
- *
- * This file tests:
- *  1. The senderDisplayName() helper (extracted for testability) — verifies the
- *     email-to-name derivation used when a sender email IS available.
- *  2. The null-sender fallback label — confirmed via the DB query shape
- *     (the LEFT JOIN means senderEmail comes back null for old rows) and the
- *     display logic contract.
- *  3. An integration test against the real DB: inserts an inquiry reply WITHOUT
- *     a sentByUserId and asserts the query returns null for senderEmail, matching
- *     what the page renders.
+ * Pure unit tests for senderDisplayName() live in
+ * inquiry-reply-sender-label.unit.test.ts and run in the fast suite.
  */
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { it, expect, afterEach, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { randomUUID } from "node:crypto";
 import { db, tenantsTable, artworksTable, inquiriesTable, inquiryRepliesTable, usersTable } from "@workspace/db";
@@ -64,8 +52,8 @@ vi.mock("@/lib/email-sweep", () => ({
 import { getInquiryReplies } from "@/app/(admin)/(gated)/inquiries/actions";
 
 // ─── senderDisplayName ────────────────────────────────────────────────────────
-// Copied verbatim from app/(admin)/(gated)/inquiries/page.tsx so it can be unit
-// tested without importing the Next.js page component.
+// Copied verbatim from app/(admin)/(gated)/inquiries/page.tsx so it can be
+// used inside the integration assertions without importing the Next.js page.
 
 function senderDisplayName(email: string | null | undefined): string {
   if (!email) return "";
@@ -75,60 +63,6 @@ function senderDisplayName(email: string | null | undefined): string {
     .replace(/\b\w/g, (c) => c.toUpperCase())
     .trim();
 }
-
-// ─── Unit tests: senderDisplayName ───────────────────────────────────────────
-
-describe("senderDisplayName (Task #66)", () => {
-  it("converts a dotted email local-part to a display name", () => {
-    expect(senderDisplayName("jane.smith@example.com")).toBe("Jane Smith");
-  });
-
-  it("converts an underscored local-part", () => {
-    expect(senderDisplayName("john_doe@gallery.com.au")).toBe("John Doe");
-  });
-
-  it("converts a hyphenated local-part", () => {
-    expect(senderDisplayName("anna-kim@studio.com")).toBe("Anna Kim");
-  });
-
-  it("handles a single-word local-part", () => {
-    expect(senderDisplayName("mark@anokah.com.au")).toBe("Mark");
-  });
-
-  it("returns empty string for null (triggers the fallback label)", () => {
-    expect(senderDisplayName(null)).toBe("");
-  });
-
-  it("returns empty string for undefined (triggers the fallback label)", () => {
-    expect(senderDisplayName(undefined)).toBe("");
-  });
-
-  it("returns empty string for an empty string (triggers the fallback label)", () => {
-    expect(senderDisplayName("")).toBe("");
-  });
-});
-
-// ─── Display-contract test: null senderEmail → fallback label ────────────────
-// Verifies the page-rendering contract without importing the React component:
-// when senderDisplayName returns "" (null email), the page shows the italic
-// fallback. This mirrors the exact branch at page.tsx lines 334-340.
-
-describe("reply display contract — null sender (Task #66)", () => {
-  it("senderDisplayName returns falsy for null, triggering the fallback branch", () => {
-    // The page renders: senderEmail ? displayName : "staff (sender not recorded)"
-    const senderEmail: string | null = null;
-    const displayName = senderDisplayName(senderEmail);
-    // Falsy value → the page renders the italic fallback label.
-    expect(displayName).toBeFalsy();
-  });
-
-  it("senderDisplayName returns truthy for a real email, suppressing the fallback", () => {
-    const senderEmail = "jane@janesmith.studio";
-    const displayName = senderDisplayName(senderEmail);
-    expect(displayName).toBeTruthy();
-    expect(displayName).toBe("Jane");
-  });
-});
 
 // ─── Integration test: DB query returns null senderEmail for old replies ──────
 // Replicates the exact query the inquiries page runs and confirms that a reply

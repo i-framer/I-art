@@ -26,7 +26,6 @@ export default defineConfig({
     // exclude pattern therefore targets only files at the slow/ root level.
     exclude: [
       "__tests__/**/*-integration.test.ts",
-      "__tests__/inquiry-reply-sender-label.test.ts",
       "__tests__/slow/*.test.ts",
     ],
   },
