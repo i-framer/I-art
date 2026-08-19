@@ -989,6 +989,142 @@ describe("BulkActionBar — error banner persists when an individual checkbox is
   });
 });
 
+// ── Mid-flight: error banner persists when an individual checkbox is toggled
+// after "Select all" while action is pending ──────────────────────────────────
+
+describe("BulkActionBar — error banner persists when an individual checkbox is toggled mid-flight after 'Select all'", () => {
+  it("shows the error banner after a status 'handled' action fails when an individual checkbox is toggled after selecting all", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesStatus).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    // Select all items via the "Select all on this page" checkbox.
+    fireEvent.click(getSelectAllCheckbox());
+
+    const handledBtn = screen.getByRole("button", {
+      name: /Mark selected as handled/i,
+    });
+
+    // Start the action — it hangs because the mock promise hasn't settled yet.
+    fireEvent.click(handledBtn);
+    expect(vi.mocked(bulkSetInquiriesStatus)).toHaveBeenCalledWith(
+      ["inq-1", "inq-2"],
+      "HANDLED",
+    );
+
+    // Toggle one item off while the action is still pending.
+    toggleSecondItem();
+
+    await act(async () => {
+      deferred.reject(new Error("simulated mid-flight failure"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to mark selected inquiries as handled/i),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("shows the error banner after a status 'new' action fails when an individual checkbox is toggled after selecting all", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesStatus).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+    fireEvent.click(getSelectAllCheckbox());
+
+    const newBtn = screen.getByRole("button", {
+      name: /Mark selected as new/i,
+    });
+
+    fireEvent.click(newBtn);
+    expect(vi.mocked(bulkSetInquiriesStatus)).toHaveBeenCalledWith(
+      ["inq-1", "inq-2"],
+      "NEW",
+    );
+
+    // Toggle one item off while the action is still pending.
+    toggleSecondItem();
+
+    await act(async () => {
+      deferred.reject(new Error("simulated mid-flight failure"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to mark selected inquiries as new/i),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("shows the error banner after an archive action fails when an individual checkbox is toggled after selecting all", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesArchived).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+    fireEvent.click(getSelectAllCheckbox());
+
+    const archiveBtn = screen.getByRole("button", {
+      name: /Archive selected/i,
+    });
+
+    fireEvent.click(archiveBtn);
+    expect(vi.mocked(bulkSetInquiriesArchived)).toHaveBeenCalledWith(
+      ["inq-1", "inq-2"],
+      true,
+    );
+
+    // Toggle one item off while the action is still pending.
+    toggleSecondItem();
+
+    await act(async () => {
+      deferred.reject(new Error("simulated mid-flight failure"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to archive selected inquiries/i),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("shows the error banner after an unarchive action fails when an individual checkbox is toggled after selecting all", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesArchived).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "unarchive");
+    fireEvent.click(getSelectAllCheckbox());
+
+    const unarchiveBtn = screen.getByRole("button", {
+      name: /Unarchive selected/i,
+    });
+
+    fireEvent.click(unarchiveBtn);
+    expect(vi.mocked(bulkSetInquiriesArchived)).toHaveBeenCalledWith(
+      ["inq-1", "inq-2"],
+      false,
+    );
+
+    // Toggle one item off while the action is still pending.
+    toggleSecondItem();
+
+    await act(async () => {
+      deferred.reject(new Error("simulated mid-flight failure"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to unarchive selected inquiries/i),
+      ).toBeTruthy(),
+    );
+  });
+});
+
 // ── Mid-flight success: spinner clears after 'Select all' is unchecked and the action resolves ──
 
 describe("BulkActionBar — pending spinner clears after 'Select all' is unchecked mid-flight and the action succeeds", () => {
