@@ -435,3 +435,196 @@ describe("BulkActionBar — error banner persists when all items are deselected,
     );
   });
 });
+
+// ── Select-all checkbox: error banner persists when "Select all" is unchecked ──
+
+/**
+ * Returns the "Select all on this page" checkbox rendered inside BulkActionBar.
+ * Unlike the individual inquiry checkboxes (aria-label="Select inquiry"), this
+ * one is labelled via its wrapping <label> element.
+ */
+function getSelectAllCheckbox() {
+  return screen.getByRole("checkbox", { name: /Select all on this page/i });
+}
+
+describe("BulkActionBar — error banner persists when 'Select all on this page' is unchecked, clears on successful retry", () => {
+  it("keeps the error banner visible after a status action fails and 'Select all' is unchecked, then clears it on a successful retry", async () => {
+    // First call rejects → error banner should appear.
+    vi.mocked(bulkSetInquiriesStatus).mockRejectedValueOnce(
+      new Error("simulated failure"),
+    );
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    // Use "Select all on this page" to select every item.
+    const selectAllChk = getSelectAllCheckbox();
+    fireEvent.click(selectAllChk);
+
+    const handledBtn = screen.getByRole("button", {
+      name: /Mark selected as handled/i,
+    });
+
+    // Trigger the failing action.
+    fireEvent.click(handledBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to mark selected inquiries as handled/i),
+      ).toBeTruthy(),
+    );
+
+    // Uncheck "Select all on this page" — calls setAll(pageIds, false), deselecting all.
+    fireEvent.click(selectAllChk);
+
+    // Action buttons are now disabled because no items are selected.
+    expect((handledBtn as HTMLButtonElement).disabled).toBe(true);
+
+    // Error banner must still be visible; unchecking "Select all" does not clear it.
+    expect(
+      screen.getByText(/Failed to mark selected inquiries as handled/i),
+    ).toBeTruthy();
+
+    // Re-check "Select all on this page" to re-enable the buttons.
+    fireEvent.click(selectAllChk);
+    expect((handledBtn as HTMLButtonElement).disabled).toBe(false);
+
+    // Retry with a succeeding mock → the banner should disappear.
+    vi.mocked(bulkSetInquiriesStatus).mockResolvedValueOnce(undefined);
+    fireEvent.click(handledBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Failed to mark selected inquiries as handled/i),
+      ).toBeNull(),
+    );
+  });
+
+  it("keeps the error banner visible after a 'mark as new' action fails and 'Select all' is unchecked, then clears it on a successful retry", async () => {
+    vi.mocked(bulkSetInquiriesStatus).mockRejectedValueOnce(
+      new Error("simulated failure"),
+    );
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    const selectAllChk = getSelectAllCheckbox();
+    fireEvent.click(selectAllChk);
+
+    const newBtn = screen.getByRole("button", {
+      name: /Mark selected as new/i,
+    });
+
+    fireEvent.click(newBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to mark selected inquiries as new/i),
+      ).toBeTruthy(),
+    );
+
+    // Uncheck "Select all on this page".
+    fireEvent.click(selectAllChk);
+    expect((newBtn as HTMLButtonElement).disabled).toBe(true);
+
+    // Error banner must persist.
+    expect(
+      screen.getByText(/Failed to mark selected inquiries as new/i),
+    ).toBeTruthy();
+
+    // Re-check and retry successfully.
+    fireEvent.click(selectAllChk);
+    vi.mocked(bulkSetInquiriesStatus).mockResolvedValueOnce(undefined);
+    fireEvent.click(newBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Failed to mark selected inquiries as new/i),
+      ).toBeNull(),
+    );
+  });
+
+  it("keeps the error banner visible after an archive action fails and 'Select all' is unchecked, then clears it on a successful retry", async () => {
+    vi.mocked(bulkSetInquiriesArchived).mockRejectedValueOnce(
+      new Error("simulated failure"),
+    );
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    const selectAllChk = getSelectAllCheckbox();
+    fireEvent.click(selectAllChk);
+
+    const archiveBtn = screen.getByRole("button", {
+      name: /Archive selected/i,
+    });
+
+    fireEvent.click(archiveBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to archive selected inquiries/i),
+      ).toBeTruthy(),
+    );
+
+    // Uncheck "Select all on this page".
+    fireEvent.click(selectAllChk);
+    expect((archiveBtn as HTMLButtonElement).disabled).toBe(true);
+
+    // Error banner must persist.
+    expect(
+      screen.getByText(/Failed to archive selected inquiries/i),
+    ).toBeTruthy();
+
+    // Re-check and retry successfully.
+    fireEvent.click(selectAllChk);
+    vi.mocked(bulkSetInquiriesArchived).mockResolvedValueOnce(undefined);
+    fireEvent.click(archiveBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Failed to archive selected inquiries/i),
+      ).toBeNull(),
+    );
+  });
+
+  it("keeps the error banner visible after an unarchive action fails and 'Select all' is unchecked, then clears it on a successful retry", async () => {
+    vi.mocked(bulkSetInquiriesArchived).mockRejectedValueOnce(
+      new Error("simulated failure"),
+    );
+
+    renderBar(["inq-1", "inq-2"], "unarchive");
+
+    const selectAllChk = getSelectAllCheckbox();
+    fireEvent.click(selectAllChk);
+
+    const unarchiveBtn = screen.getByRole("button", {
+      name: /Unarchive selected/i,
+    });
+
+    fireEvent.click(unarchiveBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to unarchive selected inquiries/i),
+      ).toBeTruthy(),
+    );
+
+    // Uncheck "Select all on this page".
+    fireEvent.click(selectAllChk);
+    expect((unarchiveBtn as HTMLButtonElement).disabled).toBe(true);
+
+    // Error banner must persist.
+    expect(
+      screen.getByText(/Failed to unarchive selected inquiries/i),
+    ).toBeTruthy();
+
+    // Re-check and retry successfully.
+    fireEvent.click(selectAllChk);
+    vi.mocked(bulkSetInquiriesArchived).mockResolvedValueOnce(undefined);
+    fireEvent.click(unarchiveBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Failed to unarchive selected inquiries/i),
+      ).toBeNull(),
+    );
+  });
+});
