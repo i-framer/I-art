@@ -101,6 +101,19 @@ describe("senderDisplayName mixed alphanumeric local-parts (Task #1076)", () => 
   });
 });
 
+// ─── Numeric separator local-part tests (Task #1077) ──────────────────────────
+// Covers all-digit local-parts split by separators.
+
+describe("senderDisplayName numeric separator local-parts (Task #1077)", () => {
+  it("replaces dots between numeric segments with spaces", () => {
+    expect(senderDisplayName("123.456@example.com")).toBe("123 456");
+  });
+
+  it("replaces underscores between numeric segments with spaces", () => {
+    expect(senderDisplayName("12_34@example.com")).toBe("12 34");
+  });
+});
+
 // ─── Display-contract test: null senderEmail → fallback label ────────────────
 // Verifies the page-rendering contract without importing the React component:
 // when senderDisplayName returns "" (null email), the page shows the italic
