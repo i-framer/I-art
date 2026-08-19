@@ -177,7 +177,9 @@ export function BulkActionBar({
             : `Unarchive selected${countSuffix}`}
       </button>
       {error && (
-        <span className="text-xs font-medium text-red-700">{error}</span>
+        <span role="alert" className="text-xs font-medium text-red-700">
+          {error}
+        </span>
       )}
     </div>
   );

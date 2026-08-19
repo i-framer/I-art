@@ -86,12 +86,14 @@ describe("BulkActionBar — error banner clears when a retry succeeds", () => {
     // First click — action fails.
     fireEvent.click(handledBtn);
 
-    // Wait for the error message to appear.
-    await waitFor(() =>
-      expect(
-        screen.getByText(/Failed to mark selected inquiries as handled/i),
-      ).toBeTruthy(),
-    );
+    // The failure is exposed as an alert so screen readers announce it.
+    await waitFor(() => {
+      const alert = screen.getByRole("alert");
+      expect(alert).toBeTruthy();
+      expect(alert.textContent).toMatch(
+        /Failed to mark selected inquiries as handled/i,
+      );
+    });
 
     // Second call resolves → successful retry.
     vi.mocked(bulkSetInquiriesStatus).mockResolvedValueOnce(undefined);
