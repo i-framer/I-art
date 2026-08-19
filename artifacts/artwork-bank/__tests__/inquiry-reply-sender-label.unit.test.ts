@@ -43,6 +43,42 @@ describe("senderDisplayName (Task #66)", () => {
   });
 });
 
+// ─── Edge-case unit tests (Task #1075) ───────────────────────────────────────
+// These cover inputs that a future regex change could silently mishandle.
+
+describe("senderDisplayName edge cases (Task #1075)", () => {
+  it("preserves casing of an all-uppercase local-part (only boundary char is touched)", () => {
+    // "JANE.SMITH" → replace dot → "JANE SMITH"
+    // \b\w uppercases 'J' (already upper) and 'S' (already upper) — rest stays as-is
+    expect(senderDisplayName("JANE.SMITH@example.com")).toBe("JANE SMITH");
+  });
+
+  it("returns the raw digits for a numeric-only local-part", () => {
+    // digits have no case — no transformation is visible
+    expect(senderDisplayName("12345@example.com")).toBe("12345");
+  });
+
+  it("collapses consecutive dots into a single space", () => {
+    // "anna..kim" → /[._-]+/ with + collapses both dots → "anna kim" → "Anna Kim"
+    expect(senderDisplayName("anna..kim@example.com")).toBe("Anna Kim");
+  });
+
+  it("collapses a mixed run of separators into a single space", () => {
+    // "anna.-kim" → the run .- is collapsed to one space → "Anna Kim"
+    expect(senderDisplayName("anna.-kim@example.com")).toBe("Anna Kim");
+  });
+
+  it("trims a leading separator so the result starts with a capital letter", () => {
+    // ".jane@example.com" → local = ".jane" → " jane" after replace → trim → "jane" → "Jane"
+    expect(senderDisplayName(".jane@example.com")).toBe("Jane");
+  });
+
+  it("trims a trailing separator so the result ends cleanly", () => {
+    // "jane.@example.com" → local = "jane." → "jane " after replace → trim → "jane" → "Jane"
+    expect(senderDisplayName("jane.@example.com")).toBe("Jane");
+  });
+});
+
 // ─── Display-contract test: null senderEmail → fallback label ────────────────
 // Verifies the page-rendering contract without importing the React component:
 // when senderDisplayName returns "" (null email), the page shows the italic
