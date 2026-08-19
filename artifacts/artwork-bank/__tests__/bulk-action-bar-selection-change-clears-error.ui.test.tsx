@@ -973,3 +973,202 @@ describe("BulkActionBar — error banner persists when an individual checkbox is
     );
   });
 });
+
+// ── Mid-flight success: spinner clears after 'Select all' is unchecked and the action resolves ──
+
+describe("BulkActionBar — pending spinner clears after 'Select all' is unchecked mid-flight and the action succeeds", () => {
+  it("clears the pending spinner after a 'handled' action succeeds mid-flight (Select all unchecked)", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesStatus).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    // Select all items via the "Select all on this page" checkbox.
+    const selectAllChk = getSelectAllCheckbox();
+    fireEvent.click(selectAllChk);
+
+    const handledBtn = screen.getByRole("button", {
+      name: /Mark selected as handled/i,
+    });
+
+    // Start the action — it hangs because the mock promise hasn't settled yet.
+    fireEvent.click(handledBtn);
+
+    // Confirm the mock was invoked with the right IDs and that the spinner is
+    // visible before the selection changes — this proves we are genuinely in
+    // the mid-flight pending state.
+    expect(vi.mocked(bulkSetInquiriesStatus)).toHaveBeenCalledWith(
+      ["inq-1", "inq-2"],
+      "HANDLED",
+    );
+    expect(screen.getByText(/Marking as handled…/i)).toBeTruthy();
+
+    // While the action is still in-flight, uncheck "Select all on this page".
+    fireEvent.click(selectAllChk);
+
+    // Now let the pending action resolve successfully.
+    await act(async () => {
+      deferred.resolve();
+      await Promise.resolve();
+    });
+
+    // The pending spinner must be gone: button shows its normal label, not "Marking as handled…".
+    await waitFor(() =>
+      expect(screen.queryByText(/Marking as handled…/i)).toBeNull(),
+    );
+    expect(
+      screen.getByRole("button", { name: /Mark selected as handled/i }),
+    ).toBeTruthy();
+
+    // The button is disabled because no items remain selected (Select all was
+    // unchecked mid-flight), not because isPending is still true.
+    const handledBtnAfter = screen.getByRole("button", {
+      name: /Mark selected as handled/i,
+    });
+    expect((handledBtnAfter as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("clears the pending spinner after a 'mark as new' action succeeds mid-flight (Select all unchecked)", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesStatus).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    const selectAllChk = getSelectAllCheckbox();
+    fireEvent.click(selectAllChk);
+
+    const newBtn = screen.getByRole("button", {
+      name: /Mark selected as new/i,
+    });
+
+    // Start the action — it hangs.
+    fireEvent.click(newBtn);
+
+    // Confirm the mock was invoked and the spinner is visible before the
+    // selection change — proves we are genuinely in the mid-flight state.
+    expect(vi.mocked(bulkSetInquiriesStatus)).toHaveBeenCalledWith(
+      ["inq-1", "inq-2"],
+      "NEW",
+    );
+    expect(screen.getByText(/Marking as new…/i)).toBeTruthy();
+
+    // Uncheck "Select all on this page" mid-flight.
+    fireEvent.click(selectAllChk);
+
+    // Resolve the pending action successfully.
+    await act(async () => {
+      deferred.resolve();
+      await Promise.resolve();
+    });
+
+    // The pending spinner must be gone: button shows its normal label.
+    await waitFor(() =>
+      expect(screen.queryByText(/Marking as new…/i)).toBeNull(),
+    );
+    expect(
+      screen.getByRole("button", { name: /Mark selected as new/i }),
+    ).toBeTruthy();
+
+    // The button is disabled because no items remain selected.
+    const newBtnAfter = screen.getByRole("button", {
+      name: /Mark selected as new/i,
+    });
+    expect((newBtnAfter as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("clears the pending spinner after an archive action succeeds mid-flight (Select all unchecked)", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesArchived).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    const selectAllChk = getSelectAllCheckbox();
+    fireEvent.click(selectAllChk);
+
+    const archiveBtn = screen.getByRole("button", {
+      name: /Archive selected/i,
+    });
+
+    // Start the action — it hangs.
+    fireEvent.click(archiveBtn);
+
+    // Confirm the mock was invoked with the right IDs and that the spinner is
+    // visible before the selection change — proves mid-flight state.
+    expect(vi.mocked(bulkSetInquiriesArchived)).toHaveBeenCalledWith(
+      ["inq-1", "inq-2"],
+      true,
+    );
+    expect(screen.getByText(/Archiving…/i)).toBeTruthy();
+
+    // Uncheck "Select all on this page" mid-flight.
+    fireEvent.click(selectAllChk);
+
+    // Resolve the pending action successfully.
+    await act(async () => {
+      deferred.resolve();
+      await Promise.resolve();
+    });
+
+    // The pending spinner must be gone: button shows its normal label, not "Archiving…".
+    await waitFor(() =>
+      expect(screen.queryByText(/Archiving…/i)).toBeNull(),
+    );
+    expect(
+      screen.getByRole("button", { name: /Archive selected/i }),
+    ).toBeTruthy();
+
+    // The button is disabled because no items remain selected.
+    const archiveBtnAfter = screen.getByRole("button", {
+      name: /Archive selected/i,
+    });
+    expect((archiveBtnAfter as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("clears the pending spinner after an unarchive action succeeds mid-flight (Select all unchecked)", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesArchived).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "unarchive");
+
+    const selectAllChk = getSelectAllCheckbox();
+    fireEvent.click(selectAllChk);
+
+    const unarchiveBtn = screen.getByRole("button", {
+      name: /Unarchive selected/i,
+    });
+
+    // Start the action — it hangs.
+    fireEvent.click(unarchiveBtn);
+
+    // Confirm the mock was invoked with the right IDs and that the spinner is
+    // visible before the selection change — proves mid-flight state.
+    expect(vi.mocked(bulkSetInquiriesArchived)).toHaveBeenCalledWith(
+      ["inq-1", "inq-2"],
+      false,
+    );
+    expect(screen.getByText(/Unarchiving…/i)).toBeTruthy();
+
+    // Uncheck "Select all on this page" mid-flight.
+    fireEvent.click(selectAllChk);
+
+    // Resolve the pending action successfully.
+    await act(async () => {
+      deferred.resolve();
+      await Promise.resolve();
+    });
+
+    // The pending spinner must be gone: button shows its normal label, not "Unarchiving…".
+    await waitFor(() =>
+      expect(screen.queryByText(/Unarchiving…/i)).toBeNull(),
+    );
+    expect(
+      screen.getByRole("button", { name: /Unarchive selected/i }),
+    ).toBeTruthy();
+
+    // The button is disabled because no items remain selected.
+    const unarchiveBtnAfter = screen.getByRole("button", {
+      name: /Unarchive selected/i,
+    });
+    expect((unarchiveBtnAfter as HTMLButtonElement).disabled).toBe(true);
+  });
+});
