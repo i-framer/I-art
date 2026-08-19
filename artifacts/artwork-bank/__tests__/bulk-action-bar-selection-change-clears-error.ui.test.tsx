@@ -79,6 +79,17 @@ function toggleSecondItem() {
   fireEvent.click(checkboxes[1]!);
 }
 
+/**
+ * Deselect the first individual inquiry checkbox (assumes it is currently
+ * checked, i.e. selectFirstItem() was called before this).
+ */
+function deselectFirstItem() {
+  const [checkbox] = screen.getAllByRole("checkbox", {
+    name: /Select inquiry/i,
+  });
+  fireEvent.click(checkbox!);
+}
+
 // ── Status action: change selection then retry clears error ───────────────────
 
 describe("BulkActionBar — error banner clears when selection changes then retry succeeds", () => {
@@ -240,6 +251,180 @@ describe("BulkActionBar — error banner clears when selection changes then retr
     ).toBeTruthy();
 
     // Retry succeeds.
+    vi.mocked(bulkSetInquiriesArchived).mockResolvedValueOnce(undefined);
+    fireEvent.click(unarchiveBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Failed to unarchive selected inquiries/i),
+      ).toBeNull(),
+    );
+  });
+});
+
+// ── Deselect-all: error banner persists when all items are deselected ─────────
+
+describe("BulkActionBar — error banner persists when all items are deselected, clears on successful retry", () => {
+  it("keeps the error banner visible after a status action fails and all items are deselected, then clears it on a successful retry", async () => {
+    // First call rejects → error banner appears.
+    vi.mocked(bulkSetInquiriesStatus).mockRejectedValueOnce(
+      new Error("simulated failure"),
+    );
+
+    renderBar(["inq-1"], "archive");
+    selectFirstItem();
+
+    const handledBtn = screen.getByRole("button", {
+      name: /Mark selected as handled/i,
+    });
+
+    // Trigger the failing action.
+    fireEvent.click(handledBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to mark selected inquiries as handled/i),
+      ).toBeTruthy(),
+    );
+
+    // Deselect the only item — action buttons become disabled.
+    deselectFirstItem();
+
+    // The button is now disabled because selectedOnPage.length === 0.
+    expect((handledBtn as HTMLButtonElement).disabled).toBe(true);
+
+    // The error banner must still be visible; deselecting does not clear it.
+    expect(
+      screen.getByText(/Failed to mark selected inquiries as handled/i),
+    ).toBeTruthy();
+
+    // Re-select the item so the button is enabled again.
+    selectFirstItem();
+
+    // Retry with a succeeding mock → the banner should disappear.
+    vi.mocked(bulkSetInquiriesStatus).mockResolvedValueOnce(undefined);
+    fireEvent.click(handledBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Failed to mark selected inquiries as handled/i),
+      ).toBeNull(),
+    );
+  });
+
+  it("keeps the error banner visible after a 'mark as new' action fails and all items are deselected, then clears it on a successful retry", async () => {
+    vi.mocked(bulkSetInquiriesStatus).mockRejectedValueOnce(
+      new Error("simulated failure"),
+    );
+
+    renderBar(["inq-1"], "archive");
+    selectFirstItem();
+
+    const newBtn = screen.getByRole("button", {
+      name: /Mark selected as new/i,
+    });
+
+    fireEvent.click(newBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to mark selected inquiries as new/i),
+      ).toBeTruthy(),
+    );
+
+    // Deselect all — button becomes disabled.
+    deselectFirstItem();
+    expect((newBtn as HTMLButtonElement).disabled).toBe(true);
+
+    // Error banner must still be visible.
+    expect(
+      screen.getByText(/Failed to mark selected inquiries as new/i),
+    ).toBeTruthy();
+
+    // Re-select and retry successfully.
+    selectFirstItem();
+    vi.mocked(bulkSetInquiriesStatus).mockResolvedValueOnce(undefined);
+    fireEvent.click(newBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Failed to mark selected inquiries as new/i),
+      ).toBeNull(),
+    );
+  });
+
+  it("keeps the error banner visible after an archive action fails and all items are deselected, then clears it on a successful retry", async () => {
+    vi.mocked(bulkSetInquiriesArchived).mockRejectedValueOnce(
+      new Error("simulated failure"),
+    );
+
+    renderBar(["inq-1"], "archive");
+    selectFirstItem();
+
+    const archiveBtn = screen.getByRole("button", {
+      name: /Archive selected/i,
+    });
+
+    fireEvent.click(archiveBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to archive selected inquiries/i),
+      ).toBeTruthy(),
+    );
+
+    // Deselect all — button becomes disabled.
+    deselectFirstItem();
+    expect((archiveBtn as HTMLButtonElement).disabled).toBe(true);
+
+    // Error banner must still be visible.
+    expect(
+      screen.getByText(/Failed to archive selected inquiries/i),
+    ).toBeTruthy();
+
+    // Re-select and retry successfully.
+    selectFirstItem();
+    vi.mocked(bulkSetInquiriesArchived).mockResolvedValueOnce(undefined);
+    fireEvent.click(archiveBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Failed to archive selected inquiries/i),
+      ).toBeNull(),
+    );
+  });
+
+  it("keeps the error banner visible after an unarchive action fails and all items are deselected, then clears it on a successful retry", async () => {
+    vi.mocked(bulkSetInquiriesArchived).mockRejectedValueOnce(
+      new Error("simulated failure"),
+    );
+
+    renderBar(["inq-1"], "unarchive");
+    selectFirstItem();
+
+    const unarchiveBtn = screen.getByRole("button", {
+      name: /Unarchive selected/i,
+    });
+
+    fireEvent.click(unarchiveBtn);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to unarchive selected inquiries/i),
+      ).toBeTruthy(),
+    );
+
+    // Deselect all — button becomes disabled.
+    deselectFirstItem();
+    expect((unarchiveBtn as HTMLButtonElement).disabled).toBe(true);
+
+    // Error banner must still be visible.
+    expect(
+      screen.getByText(/Failed to unarchive selected inquiries/i),
+    ).toBeTruthy();
+
+    // Re-select and retry successfully.
+    selectFirstItem();
     vi.mocked(bulkSetInquiriesArchived).mockResolvedValueOnce(undefined);
     fireEvent.click(unarchiveBtn);
 
