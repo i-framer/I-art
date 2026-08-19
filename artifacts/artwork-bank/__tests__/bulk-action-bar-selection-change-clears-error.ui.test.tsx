@@ -785,3 +785,139 @@ describe("BulkActionBar — error banner persists when 'Select all' is unchecked
     );
   });
 });
+
+// ── Mid-flight: error banner persists when an individual checkbox is toggled while action is pending ──
+
+describe("BulkActionBar — error banner persists when an individual checkbox is toggled mid-flight (action still pending)", () => {
+  it("shows the error banner after a status 'handled' action fails, even when an individual checkbox was toggled while it was pending", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesStatus).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    // Select the first item so the action buttons are enabled.
+    selectFirstItem();
+
+    const handledBtn = screen.getByRole("button", {
+      name: /Mark selected as handled/i,
+    });
+
+    // Start the action — it hangs because the mock promise hasn't settled yet.
+    fireEvent.click(handledBtn);
+
+    // While the action is still in-flight, toggle an individual inquiry checkbox.
+    toggleSecondItem();
+
+    // Now let the pending action fail.
+    await act(async () => {
+      deferred.reject(new Error("simulated mid-flight failure"));
+      await Promise.resolve();
+    });
+
+    // The error banner must appear even though an individual checkbox was toggled mid-flight.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to mark selected inquiries as handled/i),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("shows the error banner after a status 'new' action fails, even when an individual checkbox was toggled while it was pending", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesStatus).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    // Select the first item so the action buttons are enabled.
+    selectFirstItem();
+
+    const newBtn = screen.getByRole("button", {
+      name: /Mark selected as new/i,
+    });
+
+    // Start the action — it hangs.
+    fireEvent.click(newBtn);
+
+    // Toggle an individual checkbox mid-flight.
+    toggleSecondItem();
+
+    // Fail the pending action.
+    await act(async () => {
+      deferred.reject(new Error("simulated mid-flight failure"));
+      await Promise.resolve();
+    });
+
+    // Error banner must appear.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to mark selected inquiries as new/i),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("shows the error banner after an archive action fails, even when an individual checkbox was toggled while it was pending", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesArchived).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    // Select the first item so the action buttons are enabled.
+    selectFirstItem();
+
+    const archiveBtn = screen.getByRole("button", {
+      name: /Archive selected/i,
+    });
+
+    // Start the action — it hangs.
+    fireEvent.click(archiveBtn);
+
+    // Toggle an individual checkbox mid-flight.
+    toggleSecondItem();
+
+    // Fail the pending action.
+    await act(async () => {
+      deferred.reject(new Error("simulated mid-flight failure"));
+      await Promise.resolve();
+    });
+
+    // Error banner must appear.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to archive selected inquiries/i),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("shows the error banner after an unarchive action fails, even when an individual checkbox was toggled while it was pending", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesArchived).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "unarchive");
+
+    // Select the first item so the action buttons are enabled.
+    selectFirstItem();
+
+    const unarchiveBtn = screen.getByRole("button", {
+      name: /Unarchive selected/i,
+    });
+
+    // Start the action — it hangs.
+    fireEvent.click(unarchiveBtn);
+
+    // Toggle an individual checkbox mid-flight.
+    toggleSecondItem();
+
+    // Fail the pending action.
+    await act(async () => {
+      deferred.reject(new Error("simulated mid-flight failure"));
+      await Promise.resolve();
+    });
+
+    // Error banner must appear.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to unarchive selected inquiries/i),
+      ).toBeTruthy(),
+    );
+  });
+});
