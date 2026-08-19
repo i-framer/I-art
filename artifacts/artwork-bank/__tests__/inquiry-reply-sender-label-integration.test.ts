@@ -51,18 +51,7 @@ vi.mock("@/lib/email-sweep", () => ({
 
 import { getInquiryReplies } from "@/app/(admin)/(gated)/inquiries/actions";
 
-// ─── senderDisplayName ────────────────────────────────────────────────────────
-// Copied verbatim from app/(admin)/(gated)/inquiries/page.tsx so it can be
-// used inside the integration assertions without importing the Next.js page.
-
-function senderDisplayName(email: string | null | undefined): string {
-  if (!email) return "";
-  const local = email.split("@")[0] ?? "";
-  return local
-    .replace(/[._-]+/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase())
-    .trim();
-}
+import { senderDisplayName } from "@/lib/sender-display-name";
 
 // ─── Integration test: DB query returns null senderEmail for old replies ──────
 // Replicates the exact query the inquiries page runs and confirms that a reply

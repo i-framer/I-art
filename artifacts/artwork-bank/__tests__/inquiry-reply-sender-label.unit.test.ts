@@ -9,18 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 
-// ─── senderDisplayName ────────────────────────────────────────────────────────
-// Copied verbatim from app/(admin)/(gated)/inquiries/page.tsx so it can be unit
-// tested without importing the Next.js page component.
-
-function senderDisplayName(email: string | null | undefined): string {
-  if (!email) return "";
-  const local = email.split("@")[0] ?? "";
-  return local
-    .replace(/[._-]+/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase())
-    .trim();
-}
+import { senderDisplayName } from "@/lib/sender-display-name";
 
 // ─── Unit tests: senderDisplayName ───────────────────────────────────────────
 
