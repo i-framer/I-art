@@ -23,6 +23,7 @@ import {
   cleanup,
   fireEvent,
   waitFor,
+  act,
 } from "@testing-library/react";
 import React from "react";
 
@@ -625,6 +626,162 @@ describe("BulkActionBar — error banner persists when 'Select all on this page'
       expect(
         screen.queryByText(/Failed to unarchive selected inquiries/i),
       ).toBeNull(),
+    );
+  });
+});
+
+// ── Mid-flight: error banner persists when 'Select all' is unchecked while action is pending ──
+
+/**
+ * A deferred promise helper: returns a promise along with a reject callback so
+ * the test can trigger the failure at an arbitrary point after the action starts.
+ */
+function makeDeferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (err: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (err: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("BulkActionBar — error banner persists when 'Select all' is unchecked mid-flight (action still pending)", () => {
+  it("shows the error banner after a status 'handled' action fails, even when 'Select all' was unchecked while it was pending", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesStatus).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    // Select all items via the "Select all on this page" checkbox.
+    const selectAllChk = getSelectAllCheckbox();
+    fireEvent.click(selectAllChk);
+
+    const handledBtn = screen.getByRole("button", {
+      name: /Mark selected as handled/i,
+    });
+
+    // Start the action — it hangs because the mock promise hasn't settled yet.
+    fireEvent.click(handledBtn);
+
+    // While the action is still in-flight, uncheck "Select all on this page".
+    fireEvent.click(selectAllChk);
+
+    // Now let the pending action fail.
+    await act(async () => {
+      deferred.reject(new Error("simulated mid-flight failure"));
+      // Flush microtasks so React can process the settled promise.
+      await Promise.resolve();
+    });
+
+    // The error banner must appear even though "Select all" was unchecked mid-flight.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to mark selected inquiries as handled/i),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("shows the error banner after a status 'new' action fails, even when 'Select all' was unchecked while it was pending", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesStatus).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    const selectAllChk = getSelectAllCheckbox();
+    fireEvent.click(selectAllChk);
+
+    const newBtn = screen.getByRole("button", {
+      name: /Mark selected as new/i,
+    });
+
+    // Start the action — it hangs.
+    fireEvent.click(newBtn);
+
+    // Uncheck "Select all on this page" mid-flight.
+    fireEvent.click(selectAllChk);
+
+    // Fail the pending action.
+    await act(async () => {
+      deferred.reject(new Error("simulated mid-flight failure"));
+      await Promise.resolve();
+    });
+
+    // Error banner must appear.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to mark selected inquiries as new/i),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("shows the error banner after an archive action fails, even when 'Select all' was unchecked while it was pending", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesArchived).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "archive");
+
+    const selectAllChk = getSelectAllCheckbox();
+    fireEvent.click(selectAllChk);
+
+    const archiveBtn = screen.getByRole("button", {
+      name: /Archive selected/i,
+    });
+
+    // Start the action — it hangs.
+    fireEvent.click(archiveBtn);
+
+    // Uncheck "Select all on this page" mid-flight.
+    fireEvent.click(selectAllChk);
+
+    // Fail the pending action.
+    await act(async () => {
+      deferred.reject(new Error("simulated mid-flight failure"));
+      await Promise.resolve();
+    });
+
+    // Error banner must appear.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to archive selected inquiries/i),
+      ).toBeTruthy(),
+    );
+  });
+
+  it("shows the error banner after an unarchive action fails, even when 'Select all' was unchecked while it was pending", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesArchived).mockReturnValueOnce(deferred.promise);
+
+    renderBar(["inq-1", "inq-2"], "unarchive");
+
+    const selectAllChk = getSelectAllCheckbox();
+    fireEvent.click(selectAllChk);
+
+    const unarchiveBtn = screen.getByRole("button", {
+      name: /Unarchive selected/i,
+    });
+
+    // Start the action — it hangs.
+    fireEvent.click(unarchiveBtn);
+
+    // Uncheck "Select all on this page" mid-flight.
+    fireEvent.click(selectAllChk);
+
+    // Fail the pending action.
+    await act(async () => {
+      deferred.reject(new Error("simulated mid-flight failure"));
+      await Promise.resolve();
+    });
+
+    // Error banner must appear.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Failed to unarchive selected inquiries/i),
+      ).toBeTruthy(),
     );
   });
 });
