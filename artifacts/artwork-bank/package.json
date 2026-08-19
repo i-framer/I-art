@@ -10,7 +10,7 @@
     "typecheck": "rm -rf .next/types && tsc --noEmit",
     "test": "vitest run --no-file-parallelism",
     "test:slow": "vitest run --config vitest.slow.config.ts --no-file-parallelism --reporter=verbose",
-    "test:integration": "node scripts/require-db.js && vitest run --no-file-parallelism --reporter=verbose integration",
+    "test:integration": "node scripts/require-db.js && vitest run --config vitest.integration.config.ts --no-file-parallelism --reporter=verbose",
     "db:seed": "tsx scripts/seed.ts",
     "smoke:billing-alert": "tsx scripts/smoke-billing-alert.ts",
     "smoke:schema-push-alert": "tsx scripts/smoke-schema-push-alert.ts",

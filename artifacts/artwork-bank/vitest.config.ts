@@ -12,13 +12,19 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["__tests__/**/*.test.ts", "__tests__/**/*.ui.test.tsx"],
-    // The __tests__/slow/ directory contains tests that each take ~50 s of
-    // real wall-clock time.  They are excluded here and run via `pnpm test:slow`
-    // in a dedicated CI slot so the default `pnpm test` stays fast.
+    // Long-running checks are deliberately separate from the default fast suite:
+    // - database-backed checks run via `pnpm test:integration`
+    // - real-server and long timeout checks run via `pnpm test:slow`
+    //
+    // Keeping these selectors explicit lets `pnpm test` finish within the CI
+    // command limit while retaining complete coverage in their dedicated runs.
     //
     // Exception: helper unit tests directly inside __tests__/slow/helpers/
     // exercise pure logic (no servers) and DO run in the default suite.  The
     // exclude pattern therefore targets only files at the slow/ root level.
-    exclude: ["__tests__/slow/*.test.ts"],
+    exclude: [
+      "__tests__/**/*-integration.test.ts",
+      "__tests__/slow/*.test.ts",
+    ],
   },
 });
