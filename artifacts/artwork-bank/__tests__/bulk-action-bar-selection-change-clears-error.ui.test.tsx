@@ -53,15 +53,22 @@ afterEach(() => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function renderBar(pageIds: string[], mode: "archive" | "unarchive" = "archive") {
-  return render(
+function barContent(
+  pageIds: string[],
+  mode: "archive" | "unarchive" = "archive",
+) {
+  return (
     <BulkSelectionProvider>
       {pageIds.map((id) => (
         <SelectInquiryCheckbox key={id} id={id} />
       ))}
       <BulkActionBar pageIds={pageIds} mode={mode} />
-    </BulkSelectionProvider>,
+    </BulkSelectionProvider>
   );
+}
+
+function renderBar(pageIds: string[], mode: "archive" | "unarchive" = "archive") {
+  return render(barContent(pageIds, mode));
 }
 
 /** Click the first individual inquiry checkbox to select it. */
@@ -1553,5 +1560,64 @@ describe("BulkActionBar — pending spinner clears after 'Select all' is checked
     expectOriginalSelectionClearedAndNewSelectionPreserved();
     expect(unarchiveBtnAfter).toBeTruthy();
     expect((unarchiveBtnAfter as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+// ── Page change mid-flight: only the original request target is cleared ───────
+
+describe("BulkActionBar — page changes while an action is pending", () => {
+  it("clears the original request target while preserving a selection from the new page", async () => {
+    const deferred = makeDeferred<void>();
+    vi.mocked(bulkSetInquiriesStatus).mockReturnValueOnce(deferred.promise);
+
+    const view = renderBar(["inq-old-1", "inq-old-2"], "archive");
+    selectFirstItem();
+
+    const handledBtn = screen.getByRole("button", {
+      name: /Mark selected as handled/i,
+    });
+    fireEvent.click(handledBtn);
+
+    expect(vi.mocked(bulkSetInquiriesStatus)).toHaveBeenCalledWith(
+      ["inq-old-1"],
+      "HANDLED",
+    );
+    expect(screen.getByText(/Marking as handled…/i)).toBeTruthy();
+
+    // Simulate a page refresh/navigation while the request is pending. Keeping
+    // the provider mounted preserves selection state as page IDs are replaced.
+    // The request target remains visible on the refreshed page alongside a new,
+    // unrelated inquiry, so the final UI can prove each selection's outcome.
+    view.rerender(barContent(["inq-old-1", "inq-new-1"], "archive"));
+
+    // The user selects the unrelated inquiry from the refreshed page before
+    // the old request resolves.
+    toggleSecondItem();
+
+    await act(async () => {
+      deferred.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Marking as handled…/i)).toBeNull(),
+    );
+
+    const [originalRequestTarget, newPageSelection] =
+      screen.getAllByRole("checkbox", {
+        name: /Select inquiry/i,
+      });
+    expect((originalRequestTarget as HTMLInputElement).checked).toBe(false);
+    expect((newPageSelection as HTMLInputElement).checked).toBe(true);
+
+    // The completed action removes only its original request target. Since a
+    // new-page selection remains, controls re-enable from the live page state.
+    expect(
+      (
+        screen.getByRole("button", {
+          name: /Mark selected as handled/i,
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
   });
 });
