@@ -8,7 +8,11 @@ import {
   useTransition,
   type ReactNode,
 } from "react";
-import { bulkSetInquiriesArchived, bulkSetInquiriesStatus } from "./actions";
+import {
+  bulkSetInquiriesArchived,
+  bulkSetInquiriesStatus,
+  type BulkStatusUpdateResult,
+} from "./actions";
 
 type SelectionContextValue = {
   selected: Set<string>;
@@ -83,6 +87,7 @@ export function BulkActionBar({
   >(null);
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [partialSuccess, setPartialSuccess] = useState<string | null>(null);
 
   const selectedOnPage = pageIds.filter((id) => selected.has(id));
   const allSelected =
@@ -90,15 +95,29 @@ export function BulkActionBar({
 
   const runAction = (
     action: "archive" | "handled" | "new",
-    fn: (selection: string[]) => Promise<void>,
+    fn: (
+      selection: string[],
+    ) => Promise<BulkStatusUpdateResult | void>,
     failureMessage: string,
   ) => {
     const selectionSnapshot = [...selectedOnPage];
     setError(null);
+    setPartialSuccess(null);
     setPendingAction(action);
     startTransition(async () => {
       try {
-        await fn(selectionSnapshot);
+        const result = await fn(selectionSnapshot);
+        if (result && result.skipped > 0) {
+          setPartialSuccess(
+            `${result.updated} selected ${
+              result.updated === 1 ? "inquiry was" : "inquiries were"
+            } updated. ${result.skipped} selected ${
+              result.skipped === 1 ? "inquiry was" : "inquiries were"
+            } unavailable or outside this gallery and ${
+              result.skipped === 1 ? "was" : "were"
+            } skipped. Refresh the list to see the latest inquiries.`,
+          );
+        }
         setAll(selectionSnapshot, false);
       } catch {
         setError(failureMessage);
@@ -179,6 +198,11 @@ export function BulkActionBar({
       {error && (
         <span role="alert" className="text-xs font-medium text-red-700">
           {error}
+        </span>
+      )}
+      {partialSuccess && (
+        <span role="status" className="text-xs font-medium text-amber-700">
+          {partialSuccess}
         </span>
       )}
     </div>

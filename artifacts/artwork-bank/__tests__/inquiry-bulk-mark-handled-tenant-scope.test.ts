@@ -16,6 +16,7 @@ vi.mock("@/lib/billing", () => ({
 
 const state = vi.hoisted(() => ({
   updates: [] as { vals: any; where: any }[],
+  returnedRows: [] as { id: string }[],
 }));
 
 const tables = vi.hoisted(() => ({
@@ -35,7 +36,9 @@ vi.mock("@workspace/db", () => ({
       set: (vals: any) => ({
         where: (where: any) => {
           state.updates.push({ vals, where });
-          return Promise.resolve();
+          return {
+            returning: () => Promise.resolve(state.returnedRows),
+          };
         },
       }),
     })),
@@ -70,6 +73,7 @@ const j = (v: any) => JSON.stringify(v);
 beforeEach(() => {
   vi.clearAllMocks();
   state.updates.length = 0;
+  state.returnedRows.length = 0;
   getSession.mockResolvedValue({
     userId: "user-1",
     tenantId: "tenant-A",
@@ -91,6 +95,17 @@ describe("bulkSetInquiriesStatus tenant scoping", () => {
       eq(inq.tenantId as any, "tenant-A"),
     );
     expect(j(state.updates[0].where)).toEqual(j(expectedWhere));
+  });
+
+  it("reports updated and skipped IDs from the tenant-scoped update", async () => {
+    state.returnedRows.push({ id: "own-1" }, { id: "own-2" });
+
+    const result = await bulkSetInquiriesStatus(
+      ["own-1", "foreign-1", "own-2"],
+      "HANDLED",
+    );
+
+    expect(result).toEqual({ updated: 2, skipped: 1 });
   });
 
   it("scopes marking back to NEW by tenant", async () => {

@@ -107,12 +107,13 @@ describeIntegration("bulkSetInquiriesStatus — server action — real-DB integr
     const inq1 = await createInquiry(tenantId, artworkId);
     const inq2 = await createInquiry(tenantId, artworkId);
 
-    await bulkSetInquiriesStatus([inq1, inq2], "HANDLED");
+    const result = await bulkSetInquiriesStatus([inq1, inq2], "HANDLED");
 
     const [row1, row2] = await Promise.all([
       db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inq1) }),
       db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, inq2) }),
     ]);
+    expect(result).toEqual({ updated: 2, skipped: 0 });
     expect(row1?.status).toBe("HANDLED");
     expect(row2?.status).toBe("HANDLED");
   });
@@ -129,12 +130,16 @@ describeIntegration("bulkSetInquiriesStatus — server action — real-DB integr
     // Authenticated as ownTenant.
     mockSession.tenantId = ownTenantId;
 
-    await bulkSetInquiriesStatus([ownInqId, foreignInqId], "HANDLED");
+    const result = await bulkSetInquiriesStatus(
+      [ownInqId, foreignInqId, "stale-inquiry-id"],
+      "HANDLED",
+    );
 
     const [ownRow, foreignRow] = await Promise.all([
       db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, ownInqId) }),
       db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, foreignInqId) }),
     ]);
+    expect(result).toEqual({ updated: 1, skipped: 2 });
     expect(ownRow?.status).toBe("HANDLED");    // updated
     expect(foreignRow?.status).toBe("NEW");    // skipped
   });

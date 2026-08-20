@@ -163,10 +163,15 @@ export async function bulkSetInquiriesArchived(
   revalidatePath("/", "layout");
 }
 
+export type BulkStatusUpdateResult = {
+  updated: number;
+  skipped: number;
+};
+
 export async function bulkSetInquiriesStatus(
   inquiryIds: string[],
   status: "NEW" | "HANDLED",
-): Promise<void> {
+): Promise<BulkStatusUpdateResult | void> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
   await requireActiveBillingAccess(session.tenantId);
@@ -179,13 +184,13 @@ export async function bulkSetInquiriesStatus(
     new Set(inquiryIds.filter((id) => typeof id === "string" && id.length > 0)),
   );
   if (ids.length === 0) {
-    return;
+    return { updated: 0, skipped: 0 };
   }
   if (ids.length > 200) {
     throw new Error("Too many inquiries selected at once.");
   }
 
-  await db
+  const updatedRows = await db
     .update(inquiriesTable)
     .set({ status })
     .where(
@@ -193,10 +198,16 @@ export async function bulkSetInquiriesStatus(
         inArray(inquiriesTable.id, ids),
         eq(inquiriesTable.tenantId, session.tenantId),
       ),
-    );
+    )
+    .returning({ id: inquiriesTable.id });
 
   revalidatePath("/inquiries");
   revalidatePath("/", "layout");
+
+  return {
+    updated: updatedRows.length,
+    skipped: ids.length - updatedRows.length,
+  };
 }
 
 export type ReplyState = {
