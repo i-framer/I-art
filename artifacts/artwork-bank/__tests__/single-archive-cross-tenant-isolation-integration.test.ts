@@ -24,6 +24,8 @@
  *     cross-tenant unarchive attempt.
  *  6. getEmailFailCount for tenant B is unchanged after tenant A's
  *     single-unarchive call — the email-fail banner for tenant B stays accurate.
+ *  7. A tenant restoring its own archived, exhausted inquiry changes its
+ *     getEmailFailCount from 0 to 1 — the email-fail banner returns.
  *
  * All assertions run against a real PostgreSQL database.
  * revalidatePath and requireActiveBillingAccess are mocked so we can import
@@ -440,6 +442,35 @@ describeIntegration(
         mockSession.tenantId = tenantIdB;
         const countBAfter = await getEmailFailCount();
         expect(countBAfter).toBe(countBBefore);
+      },
+    );
+
+    // ── Scenario 7 (Task #1094) ──────────────────────────────────────────────
+
+    it(
+      "getEmailFailCount includes a tenant's own exhausted inquiry after it is restored",
+      { timeout: 30_000 },
+      async () => {
+        // Seed one tenant with an archived inquiry whose notification email
+        // permanently failed.
+        const tenantId = makeId("tenant");
+        await insertTenant(tenantId);
+        const artworkId = makeId("artwork");
+        await insertArtwork(artworkId, tenantId);
+        const inquiryId = makeId("inq");
+        await insertArchivedExhaustedInquiry(inquiryId, tenantId, artworkId);
+
+        // The archived inquiry is excluded from the email-fail banner count.
+        mockSession.tenantId = tenantId;
+        const countBeforeRestore = await getEmailFailCount();
+        expect(countBeforeRestore).toBe(0);
+
+        // Restore through the same tenant's server action.
+        await setInquiryArchived(makeArchiveFormData(inquiryId, "false"));
+
+        // Restoring the inquiry makes the permanent email failure visible again.
+        const countAfterRestore = await getEmailFailCount();
+        expect(countAfterRestore).toBe(1);
       },
     );
   },
