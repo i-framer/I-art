@@ -12,7 +12,8 @@
  *  4. Purely foreign batch resetting HANDLED → no-op, no error.
  *  5. Mixed batch (own + foreign) → only own inquiries updated.
  *  6. Mixed reset batch (own HANDLED + foreign HANDLED) → only own inquiry changes.
- *  7. Empty batch → no-op, no error.
+ *  7. Stale/nonexistent IDs in a mixed batch → own inquiry updates, no error.
+ *  8. Empty batch → no-op, no error.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -230,6 +231,29 @@ describeIntegration("bulkSetInquiriesStatus — cross-tenant isolation — real-
 
     expect(own?.status).toBe("NEW");
     expect(foreign?.status).toBe("HANDLED");
+  });
+
+  it("stale nonexistent inquiry ID does not block an own inquiry update", async () => {
+    const tenantId = await createTenant();
+    mockSession.tenantId = tenantId;
+
+    const artworkId = await createArtwork(tenantId);
+    const ownInq = await createInquiry(tenantId, artworkId);
+    const staleInq = uid();
+
+    await expect(
+      bulkSetInquiriesStatus([ownInq, staleInq], "HANDLED"),
+    ).resolves.not.toThrow();
+
+    const own = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, ownInq),
+    });
+    const stale = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, staleInq),
+    });
+
+    expect(own?.status).toBe("HANDLED");
+    expect(stale).toBeUndefined();
   });
 
   it("empty batch → resolves as a silent no-op", async () => {
