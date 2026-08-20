@@ -36,7 +36,9 @@ vi.mock("@workspace/db", () => ({
       set: (vals: any) => ({
         where: (where: any) => {
           state.updates.push({ vals, where });
-          return Promise.resolve();
+          return {
+            returning: () => Promise.resolve([]),
+          };
         },
       }),
     })),

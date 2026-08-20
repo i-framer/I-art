@@ -16,7 +16,10 @@ import {
   BulkSelectionProvider,
   SelectInquiryCheckbox,
 } from "@/app/(admin)/(gated)/inquiries/bulk-select";
-import { bulkSetInquiriesStatus } from "@/app/(admin)/(gated)/inquiries/actions";
+import {
+  bulkSetInquiriesArchived,
+  bulkSetInquiriesStatus,
+} from "@/app/(admin)/(gated)/inquiries/actions";
 
 afterEach(() => {
   cleanup();
@@ -61,5 +64,81 @@ describe("BulkActionBar — skipped inquiry notice", () => {
         .getAllByRole("checkbox", { name: /Select inquiry/i })
         .every((checkbox) => !(checkbox as HTMLInputElement).checked),
     ).toBe(true);
+  });
+
+  it("shows the same notice when some selected inquiries are skipped while archiving", async () => {
+    vi.mocked(bulkSetInquiriesArchived).mockResolvedValueOnce({
+      updated: 1,
+      skipped: 1,
+    });
+
+    render(
+      <BulkSelectionProvider>
+        <SelectInquiryCheckbox id="still-available" />
+        <SelectInquiryCheckbox id="no-longer-available" />
+        <BulkActionBar
+          pageIds={["still-available", "no-longer-available"]}
+          mode="archive"
+        />
+      </BulkSelectionProvider>,
+    );
+
+    const inquiries = screen.getAllByRole("checkbox", {
+      name: /Select inquiry/i,
+    });
+    fireEvent.click(inquiries[0]!);
+    fireEvent.click(inquiries[1]!);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Archive selected/i }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toMatch(
+        /1 selected inquiry was updated\. 1 selected inquiry was unavailable or outside this gallery and was skipped\./i,
+      );
+    });
+
+    expect(vi.mocked(bulkSetInquiriesArchived)).toHaveBeenCalledWith(
+      ["still-available", "no-longer-available"],
+      true,
+    );
+  });
+
+  it("shows the same notice when some selected inquiries are skipped while unarchiving", async () => {
+    vi.mocked(bulkSetInquiriesArchived).mockResolvedValueOnce({
+      updated: 1,
+      skipped: 1,
+    });
+
+    render(
+      <BulkSelectionProvider>
+        <SelectInquiryCheckbox id="still-available" />
+        <SelectInquiryCheckbox id="no-longer-available" />
+        <BulkActionBar
+          pageIds={["still-available", "no-longer-available"]}
+          mode="unarchive"
+        />
+      </BulkSelectionProvider>,
+    );
+
+    const inquiries = screen.getAllByRole("checkbox", {
+      name: /Select inquiry/i,
+    });
+    fireEvent.click(inquiries[0]!);
+    fireEvent.click(inquiries[1]!);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Unarchive selected/i }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("status").textContent).toMatch(
+        /1 selected inquiry was updated\. 1 selected inquiry was unavailable or outside this gallery and was skipped\./i,
+      );
+    });
+
+    expect(vi.mocked(bulkSetInquiriesArchived)).toHaveBeenCalledWith(
+      ["still-available", "no-longer-available"],
+      false,
+    );
   });
 });

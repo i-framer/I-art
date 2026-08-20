@@ -134,7 +134,7 @@ export async function setInquiryArchived(formData: FormData): Promise<void> {
 export async function bulkSetInquiriesArchived(
   inquiryIds: string[],
   archived: boolean,
-): Promise<void> {
+): Promise<BulkInquiryUpdateResult | void> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
   await requireActiveBillingAccess(session.tenantId);
@@ -143,13 +143,13 @@ export async function bulkSetInquiriesArchived(
     new Set(inquiryIds.filter((id) => typeof id === "string" && id.length > 0)),
   );
   if (ids.length === 0) {
-    return;
+    return { updated: 0, skipped: 0 };
   }
   if (ids.length > 200) {
     throw new Error("Too many inquiries selected at once.");
   }
 
-  await db
+  const updatedRows = await db
     .update(inquiriesTable)
     .set({ archivedAt: archived ? new Date() : null })
     .where(
@@ -157,21 +157,30 @@ export async function bulkSetInquiriesArchived(
         inArray(inquiriesTable.id, ids),
         eq(inquiriesTable.tenantId, session.tenantId),
       ),
-    );
+    )
+    .returning({ id: inquiriesTable.id });
 
   revalidatePath("/inquiries");
   revalidatePath("/", "layout");
+
+  return {
+    updated: updatedRows.length,
+    skipped: ids.length - updatedRows.length,
+  };
 }
 
-export type BulkStatusUpdateResult = {
+export type BulkInquiryUpdateResult = {
   updated: number;
   skipped: number;
 };
 
+/** @deprecated Use BulkInquiryUpdateResult for both bulk mutation types. */
+export type BulkStatusUpdateResult = BulkInquiryUpdateResult;
+
 export async function bulkSetInquiriesStatus(
   inquiryIds: string[],
   status: "NEW" | "HANDLED",
-): Promise<BulkStatusUpdateResult | void> {
+): Promise<BulkInquiryUpdateResult | void> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
   await requireActiveBillingAccess(session.tenantId);

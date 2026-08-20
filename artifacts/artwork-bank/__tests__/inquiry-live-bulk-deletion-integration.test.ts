@@ -92,6 +92,49 @@ function LiveInquiryList({
   );
 }
 
+type VisibleArchiveInquiry = {
+  id: string;
+  buyerName: string;
+  archived: boolean;
+};
+
+function LiveArchiveInquiryList({
+  initialRows,
+  onRefreshReady,
+}: {
+  initialRows: VisibleArchiveInquiry[];
+  onRefreshReady: (refresh: (rows: VisibleArchiveInquiry[]) => void) => void;
+}) {
+  const [rows, setRows] = React.useState(initialRows);
+
+  React.useEffect(() => {
+    onRefreshReady(setRows);
+  }, [onRefreshReady]);
+
+  const visibleRows = rows.filter((row) => !row.archived);
+
+  return React.createElement(
+    BulkSelectionProvider,
+    null,
+    React.createElement(
+      "div",
+      { "data-testid": "visible-inquiries" },
+      visibleRows.map((row) =>
+        React.createElement(
+          "div",
+          { key: row.id, "data-testid": `inquiry-${row.id}` },
+          React.createElement(SelectInquiryCheckbox, { id: row.id }),
+          React.createElement("span", null, row.buyerName),
+        ),
+      ),
+    ),
+    React.createElement(BulkActionBar, {
+      pageIds: visibleRows.map((row) => row.id),
+      mode: "archive",
+    }),
+  );
+}
+
 const RUN = Date.now();
 let sequence = 0;
 const createdTenantIds: string[] = [];
@@ -165,6 +208,26 @@ async function readVisibleInquiries(tenantId: string): Promise<VisibleInquiry[]>
     .from(inquiriesTable)
     .where(eq(inquiriesTable.tenantId, tenantId))
     .then((rows) => rows as VisibleInquiry[]);
+}
+
+async function readVisibleArchiveInquiries(
+  tenantId: string,
+): Promise<VisibleArchiveInquiry[]> {
+  return db
+    .select({
+      id: inquiriesTable.id,
+      buyerName: inquiriesTable.buyerName,
+      archivedAt: inquiriesTable.archivedAt,
+    })
+    .from(inquiriesTable)
+    .where(eq(inquiriesTable.tenantId, tenantId))
+    .then((rows) =>
+      rows.map((row) => ({
+        id: row.id,
+        buyerName: row.buyerName,
+        archived: row.archivedAt !== null,
+      })),
+    );
 }
 
 async function cleanupDatabase() {
@@ -269,6 +332,84 @@ describeIntegration(
               name: /Select inquiry/i,
             }) as HTMLInputElement).checked,
           ).toBe(false);
+        });
+      },
+    );
+
+    it(
+      "archives the surviving inquiry and reports a deleted selection after the list refreshes",
+      async () => {
+        const { tenantId, survivingInquiryId, deletedInquiryId } =
+          await createFixture();
+        const initialRows = await readVisibleArchiveInquiries(tenantId);
+        let refreshVisibleRows:
+          | ((rows: VisibleArchiveInquiry[]) => void)
+          | undefined;
+
+        render(
+          React.createElement(LiveArchiveInquiryList, {
+            initialRows,
+            onRefreshReady: (refresh) => {
+              refreshVisibleRows = refresh;
+            },
+          }),
+        );
+
+        const checkboxes = screen.getAllByRole("checkbox", {
+          name: /Select inquiry/i,
+        });
+        fireEvent.click(checkboxes[0]!);
+        fireEvent.click(checkboxes[1]!);
+        expect(
+          screen.getByRole("button", { name: /Archive selected \(2\)/i }),
+        ).toBeTruthy();
+
+        await db
+          .delete(inquiriesTable)
+          .where(
+            and(
+              eq(inquiriesTable.id, deletedInquiryId),
+              eq(inquiriesTable.tenantId, tenantId),
+            ),
+          );
+
+        fireEvent.click(
+          screen.getByRole("button", { name: /Archive selected \(2\)/i }),
+        );
+
+        await waitFor(() => {
+          expect(screen.getByRole("status").textContent).toMatch(
+            /1 selected inquiry was updated\. 1 selected inquiry was unavailable or outside this gallery and was skipped\. Refresh the list to see the latest inquiries\./i,
+          );
+        });
+
+        const [survivingInquiry, deletedInquiry] = await Promise.all([
+          db.query.inquiriesTable.findFirst({
+            where: eq(inquiriesTable.id, survivingInquiryId),
+          }),
+          db.query.inquiriesTable.findFirst({
+            where: eq(inquiriesTable.id, deletedInquiryId),
+          }),
+        ]);
+        expect(survivingInquiry?.archivedAt).toBeInstanceOf(Date);
+        expect(deletedInquiry).toBeUndefined();
+
+        const refreshedRows = await readVisibleArchiveInquiries(tenantId);
+        expect(refreshVisibleRows).toBeDefined();
+        await act(async () => {
+          refreshVisibleRows!(refreshedRows);
+        });
+
+        await waitFor(() => {
+          expect(
+            screen.queryByTestId(`inquiry-${survivingInquiryId}`),
+          ).toBeNull();
+          expect(screen.queryByTestId(`inquiry-${deletedInquiryId}`)).toBeNull();
+          expect(
+            screen.queryAllByRole("checkbox", {
+              name: /Select inquiry/i,
+            }),
+          ).toHaveLength(0);
         });
       },
     );

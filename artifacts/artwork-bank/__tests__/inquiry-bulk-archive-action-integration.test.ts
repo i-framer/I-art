@@ -113,12 +113,13 @@ describeIntegration("bulkSetInquiriesArchived — real-DB integration (Task #74)
     const id1 = await createInquiry(tenantId, artworkId);
     const id2 = await createInquiry(tenantId, artworkId);
 
-    await bulkSetInquiriesArchived([id1, id2], true);
+    const result = await bulkSetInquiriesArchived([id1, id2], true);
 
     const row1 = await db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, id1) });
     const row2 = await db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, id2) });
     expect(row1?.archivedAt).toBeInstanceOf(Date);
     expect(row2?.archivedAt).toBeInstanceOf(Date);
+    expect(result).toEqual({ updated: 2, skipped: 0 });
   });
 
   it("archive=false clears archivedAt (round-trip unarchive)", async () => {
@@ -132,9 +133,10 @@ describeIntegration("bulkSetInquiriesArchived — real-DB integration (Task #74)
     expect(archivedRow?.archivedAt).toBeInstanceOf(Date);
 
     // Then unarchive.
-    await bulkSetInquiriesArchived([id], false);
+    const result = await bulkSetInquiriesArchived([id], false);
     const unarchivedRow = await db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, id) });
     expect(unarchivedRow?.archivedAt).toBeNull();
+    expect(result).toEqual({ updated: 1, skipped: 0 });
   });
 
   it("foreign-tenant IDs are silently skipped; own inquiry still updated", async () => {
@@ -167,7 +169,7 @@ describeIntegration("bulkSetInquiriesArchived — real-DB integration (Task #74)
     // Restore session to own tenant.
     mockSession.tenantId = tenantId;
 
-    await bulkSetInquiriesArchived([ownId, foreignId], true);
+    const result = await bulkSetInquiriesArchived([ownId, foreignId], true);
 
     // Own inquiry must be archived.
     const ownRow = await db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, ownId) });
@@ -176,11 +178,15 @@ describeIntegration("bulkSetInquiriesArchived — real-DB integration (Task #74)
     // Foreign inquiry must be untouched.
     const foreignRow = await db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, foreignId) });
     expect(foreignRow?.archivedAt).toBeNull();
+    expect(result).toEqual({ updated: 1, skipped: 1 });
   });
 
   it("empty ID list resolves as a silent no-op", async () => {
     await createTenant();
-    await expect(bulkSetInquiriesArchived([], true)).resolves.not.toThrow();
+    await expect(bulkSetInquiriesArchived([], true)).resolves.toEqual({
+      updated: 0,
+      skipped: 0,
+    });
   });
 
   it(">200 IDs throws", async () => {
@@ -195,9 +201,10 @@ describeIntegration("bulkSetInquiriesArchived — real-DB integration (Task #74)
     const id = await createInquiry(tenantId, artworkId);
 
     // Pass same ID three times.
-    await bulkSetInquiriesArchived([id, id, id], true);
+    const result = await bulkSetInquiriesArchived([id, id, id], true);
 
     const row = await db.query.inquiriesTable.findFirst({ where: eq(inquiriesTable.id, id) });
     expect(row?.archivedAt).toBeInstanceOf(Date);
+    expect(result).toEqual({ updated: 1, skipped: 0 });
   });
 });

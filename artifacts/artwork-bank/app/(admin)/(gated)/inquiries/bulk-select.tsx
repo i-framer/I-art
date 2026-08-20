@@ -11,7 +11,7 @@ import {
 import {
   bulkSetInquiriesArchived,
   bulkSetInquiriesStatus,
-  type BulkStatusUpdateResult,
+  type BulkInquiryUpdateResult,
 } from "./actions";
 
 type SelectionContextValue = {
@@ -97,7 +97,7 @@ export function BulkActionBar({
     action: "archive" | "handled" | "new",
     fn: (
       selection: string[],
-    ) => Promise<BulkStatusUpdateResult | void>,
+    ) => Promise<BulkInquiryUpdateResult | void>,
     failureMessage: string,
   ) => {
     const selectionSnapshot = [...selectedOnPage];
