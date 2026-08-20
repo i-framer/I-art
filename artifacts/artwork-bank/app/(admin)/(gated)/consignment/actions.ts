@@ -256,6 +256,16 @@ export async function recordArtistPayment(formData: FormData) {
   });
   if (!parsed.success) redirect("/consignment/payments?error=invalid");
 
+  // FormData is client-controlled: do not allow a tenant to attribute a
+  // payment to another tenant's represented artist.
+  const artist = await db.query.representedArtistsTable.findFirst({
+    where: and(
+      eq(representedArtistsTable.id, parsed.data.artistId),
+      eq(representedArtistsTable.tenantId, session.tenantId),
+    ),
+  });
+  if (!artist) redirect("/consignment/payments?error=notfound");
+
   await db.insert(artistPaymentsTable).values({
     tenantId: session.tenantId,
     artistId: parsed.data.artistId,
