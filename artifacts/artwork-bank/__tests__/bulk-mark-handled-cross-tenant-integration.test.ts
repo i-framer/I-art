@@ -9,8 +9,9 @@
  *  1. Own inquiries → status set to HANDLED.
  *  2. Foreign inquiry IDs in the batch → remain NEW (not touched).
  *  3. Purely foreign batch (no own inquiries) → no-op, no error.
- *  4. Mixed batch (own + foreign) → only own inquiries updated.
- *  5. Empty batch → no-op, no error.
+ *  4. Purely foreign batch resetting HANDLED → no-op, no error.
+ *  5. Mixed batch (own + foreign) → only own inquiries updated.
+ *  6. Empty batch → no-op, no error.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -65,14 +66,18 @@ async function createArtwork(tenantId: string) {
   return id;
 }
 
-async function createInquiry(tenantId: string, artworkId: string) {
+async function createInquiry(
+  tenantId: string,
+  artworkId: string,
+  status = "NEW",
+) {
   const id = uid();
   await db.insert(inquiriesTable).values({
     id, tenantId, artworkId,
     artworkTitle: "Test Artwork",
     buyerName: "Buyer", buyerEmail: "buyer@example.com",
     message: "Is this available?",
-    status: "NEW",
+    status,
   } as any);
   createdInquiryIds.push(id);
   return id;
@@ -149,6 +154,29 @@ describeIntegration("bulkSetInquiriesStatus — cross-tenant isolation — real-
     });
     expect(foreign).toBeDefined();
     expect(foreign?.status).toBe("NEW");
+  });
+
+  it("purely foreign HANDLED inquiry IDs reset by another tenant → resolves without changing the foreign inquiry", async () => {
+    const ownTenantId = await createTenant();
+    const foreignTenantId = await createTenant();
+    mockSession.tenantId = ownTenantId;
+
+    const foreignArtworkId = await createArtwork(foreignTenantId);
+    const foreignInq = await createInquiry(
+      foreignTenantId,
+      foreignArtworkId,
+      "HANDLED",
+    );
+
+    await expect(
+      bulkSetInquiriesStatus([foreignInq], "NEW"),
+    ).resolves.not.toThrow();
+
+    const foreign = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, foreignInq),
+    });
+    expect(foreign).toBeDefined();
+    expect(foreign?.status).toBe("HANDLED");
   });
 
   it("mixed batch (own + foreign) → only own inquiry updated", async () => {
