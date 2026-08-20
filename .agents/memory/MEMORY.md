@@ -9,3 +9,4 @@
 - [Vercel deploy gotchas](vercel-deploy-gotchas.md) — Hobby plan rejects sub-daily crons with instant generic failure; private blob store rejects access:"public" writes while reads pass
 - [Orphan sweep FK bypass](orphan-sweep-fk-bypass.md) — use SET LOCAL session_replication_role='replica' in db.transaction(); DISABLE TRIGGER ALL needs superuser; Neon prod DB forbids session_replication_role entirely
 - [PostgreSQL descending index order](postgres-desc-null-order.md) — match Drizzle query null ordering or PostgreSQL keeps a sort node despite an otherwise matching index
+- [Drizzle mocked set operations](drizzle-mocked-set-operations.md) — use SQL fragments for composable set predicates in helpers tested with lightweight Drizzle mocks

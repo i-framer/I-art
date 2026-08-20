@@ -40,15 +40,41 @@ export function buildBrowseWhere(sp: BrowseSearchParams) {
     inArray(artworksTable.status, [...BROWSE_VISIBLE_STATUSES]),
   ];
 
-  // Keyword: title, represented artist name, or seller business name
+  // Keyword: title, represented artist name, or seller business name.
+  // Keeping each match in its own branch lets PostgreSQL use the relevant
+  // trigram index before the outer query joins presentation data. IN has the
+  // same membership semantics as the previous OR expression, including when
+  // one artwork matches more than one branch.
   if (sp.q?.trim()) {
     const pattern = `%${sp.q.trim()}%`;
+    const titleMatches = sql`
+      SELECT ${artworksTable.id}
+      FROM ${artworksTable}
+      WHERE ${ilike(artworksTable.title, pattern)}
+    `;
+    const artistMatches = sql`
+      SELECT ${artworksTable.id}
+      FROM ${artworksTable}
+      INNER JOIN ${representedArtistsTable}
+        ON ${eq(representedArtistsTable.id, artworksTable.representedArtistId)}
+      WHERE ${ilike(representedArtistsTable.name, pattern)}
+    `;
+    const sellerMatches = sql`
+      SELECT ${artworksTable.id}
+      FROM ${artworksTable}
+      INNER JOIN ${tenantsTable}
+        ON ${eq(tenantsTable.id, artworksTable.tenantId)}
+      WHERE ${ilike(tenantsTable.businessName, pattern)}
+    `;
+
     conditions.push(
-      or(
-        ilike(artworksTable.title, pattern),
-        ilike(representedArtistsTable.name, pattern),
-        ilike(tenantsTable.businessName, pattern),
-      )! as any,
+      sql`${artworksTable.id} IN (
+        ${titleMatches}
+        UNION ALL
+        ${artistMatches}
+        UNION ALL
+        ${sellerMatches}
+      )` as any,
     );
   }
 

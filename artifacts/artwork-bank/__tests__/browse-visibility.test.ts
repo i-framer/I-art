@@ -102,7 +102,7 @@ import {
   categoryFilterWhere,
   ENABLED_STOREFRONT,
 } from "@/lib/browse-filter-options";
-import { and, eq, inArray, or, ilike, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, or, isNotNull } from "drizzle-orm";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -149,14 +149,16 @@ describe("buildBrowseWhere — base visibility conditions", () => {
 });
 
 describe("buildBrowseWhere — keyword filter (q)", () => {
-  it("adds an OR across title, represented-artist name, and seller name", () => {
+  it("uses indexable title, represented-artist, and seller match branches", () => {
     const w = buildBrowseWhere({ q: "ocean" });
-    const expectedOr = or(
-      ilike(t.artworksTable.title as any, "%ocean%"),
-      ilike(t.representedArtistsTable.name as any, "%ocean%"),
-      ilike(t.tenantsTable.businessName as any, "%ocean%"),
-    );
-    expect(j(w)).toContain(j(expectedOr));
+    const serialized = j(w);
+
+    expect(serialized).toContain("IN (");
+    expect(serialized).toContain("UNION ALL");
+    expect(serialized).toContain(t.artworksTable.title);
+    expect(serialized).toContain(t.representedArtistsTable.name);
+    expect(serialized).toContain(t.tenantsTable.businessName);
+    expect(serialized).toContain("%ocean%");
   });
 
   it("trims the keyword before building ilike patterns", () => {

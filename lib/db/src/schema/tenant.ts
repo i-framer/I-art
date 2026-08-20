@@ -5,6 +5,7 @@ import {
   timestamp,
   pgEnum,
   integer,
+  index,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -98,7 +99,9 @@ export const tenantsTable = pgTable("tenant", {
     .notNull()
     .defaultNow()
     .$onUpdate(() => new Date()),
-});
+}, (t) => [
+  index("tenant_business_name_trgm_idx").using("gin", t.businessName.op("gin_trgm_ops")),
+]);
 
 export const insertTenantSchema = createInsertSchema(tenantsTable).omit({
   createdAt: true,

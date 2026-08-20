@@ -80,6 +80,11 @@ export const artworksTable = pgTable(
       t.createdAt.desc().nullsFirst(),
       t.id.desc().nullsFirst(),
     ),
+    // Contains-style searches on the public browse and tenant catalog pages.
+    index("artwork_title_trgm_idx").using("gin", t.title.op("gin_trgm_ops")),
+    index("artwork_sku_trgm_idx").using("gin", t.sku.op("gin_trgm_ops")),
+    // Lets public artist-name matches retrieve the linked artwork efficiently.
+    index("artwork_represented_artist_idx").on(t.representedArtistId),
   ],
 );
 
