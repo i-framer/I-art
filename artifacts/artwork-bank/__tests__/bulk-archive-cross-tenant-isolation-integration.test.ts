@@ -15,6 +15,9 @@
  *     call — the email-fail banner for tenant B stays accurate.
  *  3. Tenant A's own exhausted inquiry is unaffected by the cross-tenant
  *     call (tenant A's count is also unchanged when none of its IDs are passed).
+ *  4. (Task #1026) A pure-foreign archive batch completes without throwing;
+ *     tenant A's active inquiries and tenant B's own active inquiry remain
+ *     unarchived.
  *
  * All assertions run against a real PostgreSQL database.
  * revalidatePath is mocked so we can import the server action without a live
@@ -23,7 +26,7 @@
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
 import { db, tenantsTable, artworksTable, inquiriesTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
@@ -275,6 +278,60 @@ describeIntegration(
         // And tenant A's fail count is also unchanged.
         const countAAfter = await getEmailFailCount();
         expect(countAAfter).toBe(countABefore);
+      },
+    );
+
+    // ── Scenario 4 (Task #1026) ─────────────────────────────────────────────
+
+    it(
+      "tenant B's pure-foreign archive batch leaves tenant A and tenant B inquiries unchanged",
+      { timeout: 30_000 },
+      async () => {
+        // Seed tenant A with two active inquiries.
+        const tenantIdA = makeId("tenant-a");
+        await insertTenant(tenantIdA);
+        const artworkIdA = makeId("artwork-a");
+        await insertArtwork(artworkIdA, tenantIdA);
+        const inqIdA1 = makeId("inq-a1");
+        const inqIdA2 = makeId("inq-a2");
+        await insertExhaustedInquiry(inqIdA1, tenantIdA, artworkIdA);
+        await insertExhaustedInquiry(inqIdA2, tenantIdA, artworkIdA);
+
+        // Seed tenant B with its own active inquiry so its state can be
+        // checked independently of the foreign IDs submitted below.
+        const tenantIdB = makeId("tenant-b");
+        await insertTenant(tenantIdB);
+        const artworkIdB = makeId("artwork-b");
+        await insertArtwork(artworkIdB, tenantIdB);
+        const inqIdB = makeId("inq-b");
+        await insertExhaustedInquiry(inqIdB, tenantIdB, artworkIdB);
+
+        // Tenant B submits a batch containing only tenant A's IDs. The action
+        // must resolve cleanly even though no rows match both predicates.
+        mockSession.tenantId = tenantIdB;
+        const result = await bulkSetInquiriesArchived([inqIdA1, inqIdA2], true);
+        expect(result).toEqual({ updated: 0, skipped: 2 });
+
+        // Tenant A's inquiries must remain active.
+        const rowsA = await db
+          .select({
+            id: inquiriesTable.id,
+            archivedAt: inquiriesTable.archivedAt,
+          })
+          .from(inquiriesTable)
+          .where(inArray(inquiriesTable.id, [inqIdA1, inqIdA2]));
+
+        expect(rowsA).toHaveLength(2);
+        expect(rowsA.every((row) => row.archivedAt === null)).toBe(true);
+
+        // Tenant B's own inquiry must also remain active.
+        const [rowB] = await db
+          .select({ archivedAt: inquiriesTable.archivedAt })
+          .from(inquiriesTable)
+          .where(eq(inquiriesTable.id, inqIdB));
+
+        expect(rowB).toBeDefined();
+        expect(rowB!.archivedAt).toBeNull();
       },
     );
   },
