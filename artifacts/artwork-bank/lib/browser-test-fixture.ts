@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, like, lt } from "drizzle-orm";
 import {
   artworksTable,
   db,
@@ -12,6 +12,10 @@ import { hashPassword } from "@/lib/auth";
 
 const TEST_MODE_VALUE = "enabled";
 const FIXTURE_PREFIX = "browser-test-";
+const FIXTURE_TENANT_PREFIX = `${FIXTURE_PREFIX}tenant-`;
+const FIXTURE_SLUG_PREFIX = FIXTURE_PREFIX;
+const FIXTURE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const UUID_RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function hasExplicitBrowserTestDatabase(): boolean {
   const runtimeDatabaseUrl = process.env.DATABASE_URL;
@@ -34,7 +38,7 @@ export function isBrowserTestFixtureIdentity(
   fixture: Pick<BrowserTestFixture, "runId" | "tenantId" | "userId">,
 ): boolean {
   return Boolean(fixture.runId) &&
-    fixture.tenantId === `${FIXTURE_PREFIX}tenant-${fixture.runId}` &&
+    fixture.tenantId === `${FIXTURE_TENANT_PREFIX}${fixture.runId}` &&
     fixture.userId === `${FIXTURE_PREFIX}user-${fixture.runId}`;
 }
 
@@ -65,9 +69,10 @@ function requireBrowserTestMode() {
  */
 export async function createBrowserTestFixture(): Promise<BrowserTestFixture> {
   requireBrowserTestMode();
+  await cleanupAbandonedBrowserTestFixtures();
 
   const runId = randomUUID();
-  const tenantId = `${FIXTURE_PREFIX}tenant-${runId}`;
+  const tenantId = `${FIXTURE_TENANT_PREFIX}${runId}`;
   const userId = `${FIXTURE_PREFIX}user-${runId}`;
   const artworkId = `${FIXTURE_PREFIX}artwork-${runId}`;
   const survivingInquiryId = `${FIXTURE_PREFIX}survives-${runId}`;
@@ -81,7 +86,7 @@ export async function createBrowserTestFixture(): Promise<BrowserTestFixture> {
   await db.transaction(async (tx) => {
     await tx.insert(tenantsTable).values({
       id: tenantId,
-      slug: `${FIXTURE_PREFIX}${runId}`,
+      slug: `${FIXTURE_SLUG_PREFIX}${runId}`,
       businessName: `Browser Test Gallery ${suffix}`,
       type: "ARTIST",
       billingExempt: true,
@@ -150,22 +155,96 @@ export async function cleanupBrowserTestFixture(
     throw new Error("Refusing to clean up a non-browser-test fixture.");
   }
 
-  await db.transaction(async (tx) => {
-    await tx
-      .delete(inquiriesTable)
-      .where(eq(inquiriesTable.tenantId, fixture.tenantId));
-    await tx
-      .delete(artworksTable)
-      .where(eq(artworksTable.tenantId, fixture.tenantId));
-    await tx
-      .delete(tenantUsersTable)
-      .where(
-        and(
-          eq(tenantUsersTable.tenantId, fixture.tenantId),
-          eq(tenantUsersTable.userId, fixture.userId),
-        ),
-      );
-    await tx.delete(usersTable).where(eq(usersTable.id, fixture.userId));
-    await tx.delete(tenantsTable).where(eq(tenantsTable.id, fixture.tenantId));
+  await db.transaction((tx) => deleteBrowserTestFixtureRows(tx, fixture));
+}
+
+type BrowserTestFixtureTransaction = Parameters<
+  Parameters<typeof db.transaction>[0]
+>[0];
+
+async function deleteBrowserTestFixtureRows(
+  tx: BrowserTestFixtureTransaction,
+  fixture: Pick<BrowserTestFixture, "runId" | "tenantId" | "userId">,
+): Promise<void> {
+  await tx
+    .delete(inquiriesTable)
+    .where(eq(inquiriesTable.tenantId, fixture.tenantId));
+  await tx
+    .delete(artworksTable)
+    .where(eq(artworksTable.tenantId, fixture.tenantId));
+  await tx
+    .delete(tenantUsersTable)
+    .where(
+      and(
+        eq(tenantUsersTable.tenantId, fixture.tenantId),
+        eq(tenantUsersTable.userId, fixture.userId),
+      ),
+    );
+  await tx.delete(usersTable).where(eq(usersTable.id, fixture.userId));
+  await tx.delete(tenantsTable).where(eq(tenantsTable.id, fixture.tenantId));
+}
+
+function runIdFromAbandonedTenant(
+  tenant: Pick<typeof tenantsTable.$inferSelect, "id" | "slug" | "createdAt">,
+  cutoff: Date,
+): string | undefined {
+  if (tenant.createdAt >= cutoff || !tenant.id.startsWith(FIXTURE_TENANT_PREFIX)) {
+    return undefined;
+  }
+
+  const runId = tenant.id.slice(FIXTURE_TENANT_PREFIX.length);
+  if (
+    !UUID_RUN_ID.test(runId) ||
+    tenant.slug !== `${FIXTURE_SLUG_PREFIX}${runId}`
+  ) {
+    return undefined;
+  }
+
+  return runId;
+}
+
+/**
+ * Removes interrupted browser-test fixtures once they are safely old. The
+ * database guard narrows the scan to the marker prefix and the second marker
+ * check verifies the exact generated tenant ID/slug pair before any delete.
+ * This is intentionally callable only in the explicitly designated test DB.
+ */
+export async function cleanupAbandonedBrowserTestFixtures(): Promise<number> {
+  requireBrowserTestMode();
+
+  const cutoff = new Date(Date.now() - FIXTURE_MAX_AGE_MS);
+  const tenants = await db.query.tenantsTable.findMany({
+    where: and(
+      like(tenantsTable.id, `${FIXTURE_TENANT_PREFIX}%`),
+      lt(tenantsTable.createdAt, cutoff),
+    ),
+    columns: {
+      id: true,
+      slug: true,
+      createdAt: true,
+    },
   });
+
+  const abandonedFixtures = tenants.flatMap((tenant) => {
+    const runId = runIdFromAbandonedTenant(tenant, cutoff);
+    if (!runId) return [];
+
+    return [
+      {
+        runId,
+        tenantId: tenant.id,
+        userId: `${FIXTURE_PREFIX}user-${runId}`,
+      },
+    ];
+  });
+
+  if (abandonedFixtures.length === 0) return 0;
+
+  await db.transaction(async (tx) => {
+    for (const fixture of abandonedFixtures) {
+      await deleteBrowserTestFixtureRows(tx, fixture);
+    }
+  });
+
+  return abandonedFixtures.length;
 }
