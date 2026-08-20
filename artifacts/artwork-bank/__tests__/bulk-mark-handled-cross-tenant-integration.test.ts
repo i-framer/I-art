@@ -8,8 +8,9 @@
  *
  *  1. Own inquiries → status set to HANDLED.
  *  2. Foreign inquiry IDs in the batch → remain NEW (not touched).
- *  3. Mixed batch (own + foreign) → only own inquiries updated.
- *  4. Empty batch → no-op, no error.
+ *  3. Purely foreign batch (no own inquiries) → no-op, no error.
+ *  4. Mixed batch (own + foreign) → only own inquiries updated.
+ *  5. Empty batch → no-op, no error.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -128,6 +129,25 @@ describeIntegration("bulkSetInquiriesStatus — cross-tenant isolation — real-
     const foreign = await db.query.inquiriesTable.findFirst({
       where: eq(inquiriesTable.id, foreignInq),
     });
+    expect(foreign?.status).toBe("NEW");
+  });
+
+  it("purely foreign inquiry IDs with no own inquiries → resolves without touching the foreign inquiry", async () => {
+    const ownTenantId = await createTenant();
+    const foreignTenantId = await createTenant();
+    mockSession.tenantId = ownTenantId;
+
+    const foreignArtworkId = await createArtwork(foreignTenantId);
+    const foreignInq = await createInquiry(foreignTenantId, foreignArtworkId);
+
+    await expect(
+      bulkSetInquiriesStatus([foreignInq], "HANDLED"),
+    ).resolves.not.toThrow();
+
+    const foreign = await db.query.inquiriesTable.findFirst({
+      where: eq(inquiriesTable.id, foreignInq),
+    });
+    expect(foreign).toBeDefined();
     expect(foreign?.status).toBe("NEW");
   });
 
