@@ -1,5 +1,5 @@
 /**
- * Task #1009 / Task #1011 — Confirm the retry-failed-notifications action can't
+ * Task #1009 / Task #1011 / Task #1014 — Confirm the retry-failed-notifications action can't
  * be triggered by a caller who shouldn't have access.
  *
  * Verifies the two access guards on the destructive admin actions in the
@@ -15,6 +15,9 @@
  *       throws "Subscription required" before any DB write  (Task #1011)
  *  6. clearStuckInquiryNonces         — tenant with canceled subscription →
  *       throws "Subscription required" before any DB write  (Task #1011)
+ *  7. A tenant with past_due billing and no exemption can call both actions
+ *       while Stripe retries its card, and each action performs its mutation
+ *       (Task #1014)
  *
  * Mirrors the pattern used in exhausted-inquiry-banner-live-update-integration.test.ts.
  * Billing-gate assertions run against a real PostgreSQL database so the
@@ -112,6 +115,24 @@ async function insertCanceledTenant(id: string): Promise<void> {
   } as any);
 }
 
+/**
+ * Insert a tenant whose subscription is past_due. This status is intentionally
+ * granted access during Stripe's card-retry grace period, even without a
+ * billing exemption.
+ */
+async function insertPastDueTenant(id: string): Promise<void> {
+  CREATED_TENANT_IDS.push(id);
+  await db.insert(tenantsTable).values({
+    id,
+    slug: id,
+    businessName: "Past Due Access Guard Test Gallery",
+    type: "ARTIST",
+    billingExempt: false,
+    subscriptionStatus: "past_due",
+    contactEmail: "owner-1014@gallery.test",
+  } as any);
+}
+
 async function insertArtwork(id: string, tenantId: string): Promise<void> {
   CREATED_ARTWORK_IDS.push(id);
   await db.insert(artworksTable).values({
@@ -192,7 +213,7 @@ afterAll(cleanup);
 // ─────────────────────────────────────────────────────────────────────────────
 
 describeIntegration(
-  "retry-failed-notifications access guards — real DB (Task #1009)",
+  "retry-failed-notifications access guards — real DB (Tasks #1009, #1011, #1014)",
   () => {
     // ── Scenario 1 ───────────────────────────────────────────────────────────
 
@@ -395,6 +416,72 @@ describeIntegration(
         expect(row?.emailClaimNonce).not.toBeNull();
         expect(row?.emailLastAttemptAt).toBeNull();
         expect(row?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+      },
+    );
+
+    // ── Scenario 7 (Task #1014) ──────────────────────────────────────────────
+
+    it(
+      "past_due tenant without billing exemption can retry failures and clear stuck nonces",
+      { timeout: 30_000 },
+      async () => {
+        const tenantId = makeId("tenant-1014");
+        await insertPastDueTenant(tenantId);
+
+        const artworkId = makeId("artwork-1014");
+        await insertArtwork(artworkId, tenantId);
+
+        // Use separate rows because each action targets a different recovery
+        // state: retry handles exhausted SMTP errors, while clear handles a
+        // claim that was recorded before the worker could stamp an attempt.
+        const retryInquiryId = makeId("inq-1014-retry");
+        await insertExhaustedInquiry(retryInquiryId, tenantId, artworkId);
+
+        const stuckInquiryId = makeId("inq-1014-stuck");
+        CREATED_INQUIRY_IDS.push(stuckInquiryId);
+        await db.insert(inquiriesTable).values({
+          id: stuckInquiryId,
+          tenantId,
+          artworkId,
+          artworkTitle: "Test Artwork 1014",
+          buyerName: "Past Due Access Guard Test Buyer",
+          buyerEmail: "buyer-1014@example.com",
+          message: "Is this available?",
+          emailError: "smtp: connection refused (1014)",
+          emailAttempts: MAX_EMAIL_ATTEMPTS,
+          emailLastAttemptAt: null,
+          emailClaimNonce: randomUUID(),
+          status: "NEW",
+        } as any);
+
+        mockSession.userId = "u-1009-test";
+        mockSession.tenantId = tenantId;
+
+        // The past_due grace period must pass the billing guard, so the
+        // actions reach their normal redirect paths instead of throwing
+        // "Subscription required".
+        await expect(
+          runAction(retryFailedInquiryNotifications),
+        ).resolves.toBe(`/inquiries?retry_result=1`);
+        await expect(runAction(clearStuckInquiryNonces)).resolves.toBe(
+          `/inquiries?stuck_result=1`,
+        );
+
+        const retriedRow = await db.query.inquiriesTable.findFirst({
+          where: eq(inquiriesTable.id, retryInquiryId),
+        });
+        expect(retriedRow?.emailAttempts).toBe(0);
+        expect(retriedRow?.emailLastAttemptAt).toBeNull();
+        expect(retriedRow?.emailClaimNonce).toBeNull();
+        expect(retriedRow?.emailError).toBe("smtp: connection refused (1009)");
+
+        const clearedRow = await db.query.inquiriesTable.findFirst({
+          where: eq(inquiriesTable.id, stuckInquiryId),
+        });
+        expect(clearedRow?.emailClaimNonce).toBeNull();
+        expect(clearedRow?.emailLastAttemptAt).toBeNull();
+        expect(clearedRow?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+        expect(clearedRow?.emailError).toBe("smtp: connection refused (1014)");
       },
     );
   },
