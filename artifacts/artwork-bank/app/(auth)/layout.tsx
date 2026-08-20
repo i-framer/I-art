@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
+import { isBrowserTestModeEnabled } from "@/lib/browser-test-fixture";
 
 /**
  * Auth route group layout.
@@ -17,7 +18,13 @@ export default async function AuthLayout({
 
   // Only redirect if the session is genuinely valid (userId is populated
   // after iron-session decrypts and verifies the cookie).
-  if (session.userId) {
+  // A browser-test fixture can deliberately revisit /login to replace and
+  // clean the prior isolated fixture. This is unavailable in production and
+  // remains opt-in through BROWSER_TEST_MODE.
+  if (
+    session.userId &&
+    !(session.browserTestRunId && isBrowserTestModeEnabled())
+  ) {
     redirect("/dashboard");
   }
 

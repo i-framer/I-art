@@ -40,10 +40,11 @@
     "**/*.ts",
     "**/*.tsx",
     ".next-ci/types/**/*.ts",
+    ".next-probe/types/**/*.ts",
     ".next-slow-test/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts",
-    ".next-probe/types/**/*.ts"
+    ".next-browser-test/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

@@ -1,4 +1,5 @@
 import LoginForm from "./LoginForm";
+import { isBrowserTestModeEnabled } from "@/lib/browser-test-fixture";
 
 /**
  * Server component wrapper — reads the `?from=` search param set by middleware
@@ -14,5 +15,10 @@ export default async function LoginPage({
   const { from } = await searchParams;
   // Guard against open redirects before handing to the client component.
   const safeFrom = from && /^\/[^/]/.test(from) ? from : undefined;
-  return <LoginForm from={safeFrom} />;
+  return (
+    <LoginForm
+      from={safeFrom}
+      browserTestModeEnabled={isBrowserTestModeEnabled()}
+    />
+  );
 }

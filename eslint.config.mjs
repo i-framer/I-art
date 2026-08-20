@@ -7,12 +7,14 @@ export default tseslint.config(
   {
     ignores: [
       "**/node_modules/**",
+      ".cache/**",
       ".local/**",
       ".agents/**",
       "**/dist/**",
       "**/build/**",
       "**/.next/**",
       "**/.next-ci/**",
+      "**/.next-browser-test/**",
       "**/.next-slow-test/**",
       "**/coverage/**",
       "**/*.tsbuildinfo",

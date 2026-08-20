@@ -13,6 +13,11 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { hashPassword, verifyPassword, slugify, getSession } from "@/lib/auth";
 import { getSessionOptions, type SessionData } from "@/lib/session";
+import {
+  cleanupBrowserTestFixture,
+  createBrowserTestFixture,
+  isBrowserTestModeEnabled,
+} from "@/lib/browser-test-fixture";
 
 // ---------------------------------------------------------------------------
 // Shared state type used by useActionState on the client
@@ -30,6 +35,24 @@ const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
 });
+
+async function cleanUpPreviousBrowserTestSession(session: SessionData) {
+  if (!session.browserTestRunId) return;
+
+  if (isBrowserTestModeEnabled()) {
+    // Deletion is idempotent when a fixture was removed separately. Any actual
+    // database error must stop the replacement/logout flow so it is visible
+    // instead of silently leaving browser-test rows behind.
+    await cleanupBrowserTestFixture({
+      runId: session.browserTestRunId,
+      tenantId: session.tenantId,
+      userId: session.userId,
+    });
+  }
+
+  // A regular account must never inherit a browser-test fixture marker.
+  session.browserTestRunId = undefined;
+}
 
 /**
  * Returns `from` if it is a safe same-origin relative path (starts with "/"
@@ -79,10 +102,12 @@ export async function login(
 
   const cookieStore = await cookies();
   const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
+  await cleanUpPreviousBrowserTestSession(session);
   session.userId = user.id;
   session.tenantId = tenantUser.tenantId;
   session.role = tenantUser.role as "owner" | "staff";
   session.email = user.email;
+  session.browserTestRunId = undefined;
   await session.save();
 
   // Honour the ?from= param set by middleware (e.g. /dashboard?from=/orders).
@@ -162,17 +187,51 @@ export async function register(
 
   const cookieStore = await cookies();
   const session = await getIronSession<SessionData>(cookieStore, getSessionOptions());
+  await cleanUpPreviousBrowserTestSession(session);
   session.userId = user.id;
   session.tenantId = tenant.id;
   session.role = "owner";
   session.email = user.email;
+  session.browserTestRunId = undefined;
   await session.save();
 
   redirect("/dashboard");
 }
 
+/**
+ * Creates a unique, non-production fixture and signs into it with the same
+ * iron-session mechanism as normal users. The action is unavailable unless a
+ * local browser test explicitly enables BROWSER_TEST_MODE=enabled.
+ */
+export async function loginBrowserTestAdmin(): Promise<void> {
+  if (!isBrowserTestModeEnabled()) {
+    return;
+  }
+
+  const cookieStore = await cookies();
+  const session = await getIronSession<SessionData>(
+    cookieStore,
+    getSessionOptions(),
+  );
+  // A test runner can retry the CTA without signing out first. Remove the
+  // previous signed fixture before replacing its session so retries cannot
+  // leave development rows behind.
+  await cleanUpPreviousBrowserTestSession(session);
+
+  const fixture = await createBrowserTestFixture();
+  session.userId = fixture.userId;
+  session.tenantId = fixture.tenantId;
+  session.role = "owner";
+  session.email = fixture.email;
+  session.browserTestRunId = fixture.runId;
+  await session.save();
+
+  redirect("/inquiries");
+}
+
 export async function logout() {
   const session = await getSession();
+  await cleanUpPreviousBrowserTestSession(session);
   await session.destroy(); // must be awaited — otherwise the cookie deletion
   redirect("/login"); //   may not be flushed before the redirect response
 }

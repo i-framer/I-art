@@ -11,6 +11,8 @@
     "test": "vitest run --no-file-parallelism",
     "test:slow": "vitest run --config vitest.slow.config.ts --no-file-parallelism --reporter=verbose",
     "test:integration": "node scripts/require-db.js && vitest run --config vitest.integration.config.ts --no-file-parallelism --reporter=verbose",
+    "pretest:browser": "node scripts/require-browser-test-db.js",
+    "test:browser": "BROWSER_TEST_MODE=enabled playwright test",
     "db:seed": "tsx scripts/seed.ts",
     "smoke:billing-alert": "tsx scripts/smoke-billing-alert.ts",
     "smoke:schema-push-alert": "tsx scripts/smoke-schema-push-alert.ts",
@@ -34,6 +36,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4.1.14",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",

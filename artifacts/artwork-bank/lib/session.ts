@@ -5,6 +5,8 @@ export interface SessionData {
   tenantId: string;
   role: "owner" | "staff";
   email: string;
+  /** Present only for a temporary, explicitly enabled browser-test fixture. */
+  browserTestRunId?: string;
 }
 
 /**
