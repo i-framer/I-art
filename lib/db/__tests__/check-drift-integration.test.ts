@@ -197,4 +197,22 @@ describe("checkDrift — real database", () => {
     expect(missing[0]).toContain("new_col");
     expect(missing[0]).toContain("missing from the database");
   });
+
+  it("reports a schema-declared index that is missing from the database", async () => {
+    const tbl = `_drift_test_missing_idx_${uid()}`;
+    const indexName = `${tbl}_created_idx`;
+
+    await exec(client, `CREATE TABLE "${tbl}" (id TEXT PRIMARY KEY, created_at TIMESTAMPTZ)`);
+    cleanupSql.push(`DROP TABLE IF EXISTS "${tbl}"`);
+
+    const schemaTables: TableSpec[] = [
+      { tableName: tbl, columns: ["id", "created_at"], indexes: [indexName] },
+    ];
+    const { missingFromDb, orphanedInDb } = await checkDrift(client, schemaTables);
+
+    expect(forTable(orphanedInDb, tbl)).toHaveLength(0);
+    expect(forTable(missingFromDb, tbl)).toEqual([
+      `Index "${indexName}" on table "${tbl}" is missing from the database`,
+    ]);
+  });
 });

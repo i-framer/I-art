@@ -4,6 +4,7 @@ import {
   boolean,
   integer,
   timestamp,
+  index,
   pgEnum,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
@@ -66,6 +67,19 @@ export const artworksTable = pgTable(
   (t) => [
     // SKU must be unique within a tenant
     uniqueIndex("artwork_sku_tenant_idx").on(t.tenantId, t.sku),
+    // Public browse only ever returns visible statuses. Keeping this partial
+    // index ordered by the page's stable sort avoids scanning hidden artwork.
+    index("artwork_public_browse_created_idx")
+      .on(t.createdAt.desc().nullsFirst(), t.id.desc().nullsFirst())
+      .where(
+        sql`${t.showInGallery} = true AND ${t.status} IN ('AVAILABLE', 'SOLD', 'RESERVED')`,
+      ),
+    // Tenant catalog pages include every artwork, so this must not be partial.
+    index("artwork_tenant_created_idx").on(
+      t.tenantId,
+      t.createdAt.desc().nullsFirst(),
+      t.id.desc().nullsFirst(),
+    ),
   ],
 );
 

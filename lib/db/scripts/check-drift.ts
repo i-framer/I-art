@@ -74,6 +74,7 @@ for (const exported of Object.values(schema)) {
       tables.push({
         tableName: config.name,
         columns: config.columns.map((c) => c.name),
+        indexes: config.indexes.map((index) => index.config.name),
       });
     }
   } catch {

@@ -10,6 +10,8 @@ import type { Client } from "pg";
 export interface TableSpec {
   tableName: string;
   columns: string[];
+  /** Explicitly named schema indexes to confirm in the live database. */
+  indexes?: string[];
 }
 
 export interface DriftResult {
@@ -70,14 +72,39 @@ export async function checkDrift(
     dbTables.get(table_name)?.add(column_name);
   }
 
-  // ── 3. Schema table names (for reverse lookup) ────────────────────────────
+  // ── 3. Enumerate explicit indexes ─────────────────────────────────────────
+  // Primary-key indexes are database-managed and cannot be named consistently
+  // from every Drizzle table declaration, so only schema-declared index names
+  // are checked. We intentionally do not report extra DB indexes as orphaned:
+  // PostgreSQL may create them for constraints outside Drizzle's index metadata.
+  const { rows: indexRows } = await client.query<{
+    table_name: string;
+    index_name: string;
+  }>(
+    `SELECT t.relname AS table_name, i.relname AS index_name
+     FROM pg_index x
+     JOIN pg_class t ON t.oid = x.indrelid
+     JOIN pg_class i ON i.oid = x.indexrelid
+     JOIN pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'public'
+       AND NOT x.indisprimary
+     ORDER BY t.relname, i.relname`,
+  );
+  const dbIndexes = new Map<string, Set<string>>();
+  for (const { table_name, index_name } of indexRows) {
+    const indexes = dbIndexes.get(table_name) ?? new Set<string>();
+    indexes.add(index_name);
+    dbIndexes.set(table_name, indexes);
+  }
+
+  // ── 4. Schema table names (for reverse lookup) ────────────────────────────
   const schemaTableNames = new Set(schemaTables.map((t) => t.tableName));
 
   const missingFromDb: string[] = [];
   const orphanedInDb: string[] = [];
 
-  // ── 4. Schema → DB: find items the DB is missing ──────────────────────────
-  for (const { tableName, columns } of schemaTables) {
+  // ── 5. Schema → DB: find items the DB is missing ──────────────────────────
+  for (const { tableName, columns, indexes = [] } of schemaTables) {
     if (!dbTables.has(tableName)) {
       missingFromDb.push(`Table "${tableName}" does not exist in the database`);
       continue;
@@ -93,7 +120,16 @@ export async function checkDrift(
       }
     }
 
-    // ── 5. DB → Schema: find columns the schema no longer defines ─────────
+    const dbTableIndexes = dbIndexes.get(tableName) ?? new Set<string>();
+    for (const indexName of indexes) {
+      if (!dbTableIndexes.has(indexName)) {
+        missingFromDb.push(
+          `Index "${indexName}" on table "${tableName}" is missing from the database`,
+        );
+      }
+    }
+
+    // ── 6. DB → Schema: find columns the schema no longer defines ─────────
     for (const col of dbCols) {
       if (!schemaCols.has(col)) {
         orphanedInDb.push(
@@ -103,7 +139,7 @@ export async function checkDrift(
     }
   }
 
-  // ── 6. DB → Schema: find base tables the schema no longer defines ─────────
+  // ── 7. DB → Schema: find base tables the schema no longer defines ─────────
   for (const dbTableName of dbBaseTableNames) {
     if (!schemaTableNames.has(dbTableName)) {
       orphanedInDb.push(

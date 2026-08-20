@@ -111,7 +111,7 @@ export default async function BrowsePage({
     await Promise.all([
       baseQuery()
         .where(whereClause)
-        .orderBy(desc(artworksTable.createdAt))
+        .orderBy(desc(artworksTable.createdAt), desc(artworksTable.id))
         .limit(PAGE_SIZE)
         .offset(offset),
       countQuery,

@@ -22,7 +22,7 @@ import {
   artworksTable,
   representedArtistsTable,
 } from "@workspace/db";
-import { count, eq } from "drizzle-orm";
+import { count, desc, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { buildBrowseWhere } from "@/lib/browse-where";
 
@@ -49,6 +49,7 @@ async function createTenant(opts: { storefrontEnabled?: boolean; type?: "ARTIST"
 async function insertArtwork(tenantId: string, opts: {
   status?: "AVAILABLE" | "SOLD" | "RESERVED" | "HIDDEN";
   showInGallery?: boolean;
+  createdAt?: Date;
 } = {}) {
   const id = uid();
   await db.insert(artworksTable).values({
@@ -57,6 +58,7 @@ async function insertArtwork(tenantId: string, opts: {
     sku: `sku-${id}`,
     status: opts.status ?? "AVAILABLE",
     showInGallery: opts.showInGallery ?? true,
+    createdAt: opts.createdAt,
   } as any);
   createdArtworkIds.push(id);
   return id;
@@ -87,6 +89,7 @@ async function browsePage(page: number, sp: Record<string, string> = {}) {
         eq(artworksTable.representedArtistId, representedArtistsTable.id),
       )
       .where(where as any)
+      .orderBy(desc(artworksTable.createdAt), desc(artworksTable.id))
       .limit(PAGE_SIZE)
       .offset(offset),
     db
@@ -153,6 +156,21 @@ describeIntegration("Public browse pagination — real-DB integration", () => {
     for (const row of page2) {
       expect(page1Ids.has(row.id)).toBe(false);
     }
+  });
+
+  it("uses id as a stable tiebreaker when artworks share a created timestamp", async () => {
+    const { tenantId, slug } = await createTenant();
+    const createdAt = new Date("2025-01-01T00:00:00.000Z");
+    const ids = await Promise.all(
+      Array.from({ length: 4 }, () => insertArtwork(tenantId, { createdAt })),
+    );
+
+    const { rows: firstRead } = await browsePage(1, { seller: slug });
+    const { rows: secondRead } = await browsePage(1, { seller: slug });
+    const expected = [...ids].sort().reverse();
+
+    expect(firstRead.map((row) => row.id)).toEqual(expected);
+    expect(secondRead.map((row) => row.id)).toEqual(expected);
   });
 
   it("out-of-range page returns empty rows (seller-scoped)", async () => {
