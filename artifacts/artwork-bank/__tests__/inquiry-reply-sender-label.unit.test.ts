@@ -93,6 +93,23 @@ describe("senderDisplayName quoted local-parts (Task #1080)", () => {
   });
 });
 
+// ─── Escaped quoted local-part unit tests (Task #1081) ────────────────────────
+// Quoted local-parts use a backslash to represent literal characters.
+
+describe("senderDisplayName escaped quoted local-parts (Task #1081)", () => {
+  it("keeps an escaped at-sign in the local-part readable", () => {
+    expect(senderDisplayName('"jane\\@doe"@example.com')).toBe('"Jane@Doe"');
+  });
+
+  it("removes the escape marker from a quoted double quote", () => {
+    expect(senderDisplayName('"jane\\"doe"@example.com')).toBe('"Jane"Doe"');
+  });
+
+  it("removes one escape marker from a quoted backslash", () => {
+    expect(senderDisplayName('"jane\\\\doe"@example.com')).toBe('"Jane\\Doe"');
+  });
+});
+
 // ─── Mixed alphanumeric local-part tests (Task #1076) ────────────────────────
 // Covers cases where digits are embedded in the local-part.
 // A future change to the \b\w word-boundary regex could silently break these.
