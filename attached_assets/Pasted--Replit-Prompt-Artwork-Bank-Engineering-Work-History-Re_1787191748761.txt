@@ -1,0 +1,70 @@
+# Replit Prompt — Artwork Bank Engineering Work History
+
+Review the complete Artwork Bank / i-Art project history for August 2026 and generate a detailed engineering work-history report.
+
+Create/update:
+
+`WEEKLY_ENGINEERING_REPORT.md`
+
+Use all available project evidence, including:
+
+* Git commit history
+* Replit task and merge history
+* WORK_LOG.md
+* Existing weekly engineering reports
+* Task backlog/history
+* Test results
+* Production fixes
+* Deployment/configuration work that is documented in the project/session history
+
+For each date, identify:
+
+* Tasks completed
+* Features implemented
+* Bugs fixed
+* Security fixes
+* Tests added or verified
+* Production issues investigated
+* Deployment/build work
+* Stripe/payment work
+* Vercel/Blob/storage work
+* Database work
+* Operational/reliability work
+* Relevant task numbers
+* Relevant commit hashes
+
+Group related commits into logical engineering activities rather than treating every commit as a separate task.
+
+Also identify documented work performed outside Replit/Git, including:
+
+* Vercel Dashboard work
+* Stripe Dashboard work
+* Neon/database configuration
+* GitHub/CI verification
+* Browser DevTools investigation
+* Live production testing
+* Deployment/redeployment and verification
+
+Clearly distinguish:
+
+* Confirmed external work
+* Uncertain external work
+* Pending/unverified work
+
+Do not invent activities that cannot be supported by available project evidence.
+
+Do not convert Git timestamps or commit counts directly into hours.
+
+The purpose of this report is to create a reliable engineering work-history source that can later be used to reconstruct conservative estimated working hours and prepare weekly/monthly invoice reports.
+
+At the end include:
+
+* Daily work summaries
+* Major accomplishments
+* Task/commit evidence
+* External work
+* Testing/build verification
+* Outstanding or pending verification
+* Overall engineering activity summary
+
+Keep the report detailed, chronological, evidence-based, and professional.
