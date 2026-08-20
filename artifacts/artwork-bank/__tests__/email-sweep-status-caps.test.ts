@@ -156,10 +156,11 @@ describe("sweepUnsentStatusEmails — backoff boundaries", () => {
   it("skips an order whose elapsed time is 1ms inside the backoff window", async () => {
     const attempts = 2; // backoff = 10 min
     const backoff = backoffMs(attempts);
-    const lastAttempt = new Date(Date.now() - (backoff - 1)); // 1ms too early
+    const now = new Date("2026-08-20T12:00:00.000Z");
+    const lastAttempt = new Date(now.getTime() - (backoff - 1)); // 1ms too early
     state.candidates = [order({ statusEmailAttempts: attempts, statusEmailLastAttemptAt: lastAttempt })];
 
-    const result = await sweepUnsentStatusEmails();
+    const result = await sweepUnsentStatusEmails(now);
 
     // result.skipped=1 is sufficient: if the sweep skipped it, it was not sent.
     expect(result.skipped).toBe(1);
@@ -168,10 +169,11 @@ describe("sweepUnsentStatusEmails — backoff boundaries", () => {
   it("attempts an order whose elapsed time exactly equals the backoff window", async () => {
     const attempts = 2;
     const backoff = backoffMs(attempts);
-    const lastAttempt = new Date(Date.now() - backoff); // exactly at boundary
+    const now = new Date("2026-08-20T12:00:00.000Z");
+    const lastAttempt = new Date(now.getTime() - backoff); // exactly at boundary
     state.candidates = [order({ statusEmailAttempts: attempts, statusEmailLastAttemptAt: lastAttempt })];
 
-    const result = await sweepUnsentStatusEmails();
+    const result = await sweepUnsentStatusEmails(now);
 
     expect(result.sent + result.failed).toBeGreaterThan(0);
     expect(result.skipped).toBe(0);
