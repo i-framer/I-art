@@ -22,6 +22,8 @@
  *     tenant B's already-archived inquiry ID throws "Inquiry not found.".
  *  5. Tenant B's inquiry remains archived (archivedAt IS NOT NULL) after the
  *     cross-tenant unarchive attempt.
+ *  6. getEmailFailCount for tenant B is unchanged after tenant A's
+ *     single-unarchive call — the email-fail banner for tenant B stays accurate.
  *
  * All assertions run against a real PostgreSQL database.
  * revalidatePath and requireActiveBillingAccess are mocked so we can import
@@ -125,6 +127,32 @@ async function insertArchivedInquiry(
     buyerName: "Cross-Tenant Test Buyer",
     buyerEmail: "buyer-1024@example.com",
     message: "Is this available?",
+    status: "NEW",
+    archivedAt: new Date(Date.now() - 60_000),
+  } as any);
+}
+
+/**
+ * Insert an already-archived inquiry whose notification email has permanently
+ * failed.  The archived row should be excluded from getEmailFailCount.
+ */
+async function insertArchivedExhaustedInquiry(
+  id: string,
+  tenantId: string,
+  artworkId: string,
+): Promise<void> {
+  CREATED_INQUIRY_IDS.push(id);
+  await db.insert(inquiriesTable).values({
+    id,
+    tenantId,
+    artworkId,
+    artworkTitle: "Test Artwork 1027",
+    buyerName: "Cross-Tenant Test Buyer",
+    buyerEmail: "buyer-1027@example.com",
+    message: "Is this available?",
+    emailError: "smtp: connection refused (1027)",
+    emailAttempts: MAX_EMAIL_ATTEMPTS,
+    emailLastAttemptAt: new Date(Date.now() - 60_000),
     status: "NEW",
     archivedAt: new Date(Date.now() - 60_000),
   } as any);
@@ -366,6 +394,46 @@ describeIntegration(
         mockSession.tenantId = tenantIdA;
         await expect(
           setInquiryArchived(makeArchiveFormData(inqIdB)),
+        ).rejects.toThrow("Inquiry not found.");
+
+        // Tenant B's fail count must be unchanged.
+        mockSession.tenantId = tenantIdB;
+        const countBAfter = await getEmailFailCount();
+        expect(countBAfter).toBe(countBBefore);
+      },
+    );
+
+    // ── Scenario 6 (Task #1027) ──────────────────────────────────────────────
+
+    it(
+      "getEmailFailCount for tenant B is unchanged after tenant A attempts to unarchive tenant B's archived exhausted inquiry",
+      { timeout: 30_000 },
+      async () => {
+        // Seed tenant A.
+        const tenantIdA = makeId("tenant-a");
+        await insertTenant(tenantIdA);
+        const artworkIdA = makeId("artwork-a");
+        await insertArtwork(artworkIdA, tenantIdA);
+        const inqIdA = makeId("inq-a");
+        await insertExhaustedInquiry(inqIdA, tenantIdA, artworkIdA);
+
+        // Seed tenant B with an archived, exhausted inquiry.
+        const tenantIdB = makeId("tenant-b");
+        await insertTenant(tenantIdB);
+        const artworkIdB = makeId("artwork-b");
+        await insertArtwork(artworkIdB, tenantIdB);
+        const inqIdB = makeId("inq-b");
+        await insertArchivedExhaustedInquiry(inqIdB, tenantIdB, artworkIdB);
+
+        // The archived inquiry is excluded from the banner count.
+        mockSession.tenantId = tenantIdB;
+        const countBBefore = await getEmailFailCount();
+        expect(countBBefore).toBe(0);
+
+        // Switch to tenant A and attempt to unarchive tenant B's inquiry.
+        mockSession.tenantId = tenantIdA;
+        await expect(
+          setInquiryArchived(makeArchiveFormData(inqIdB, "false")),
         ).rejects.toThrow("Inquiry not found.");
 
         // Tenant B's fail count must be unchanged.
