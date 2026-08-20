@@ -13,6 +13,7 @@
     "test:integration": "node scripts/require-db.js && vitest run --config vitest.integration.config.ts --no-file-parallelism --reporter=verbose",
     "pretest:browser": "node scripts/require-browser-test-db.js",
     "test:browser": "BROWSER_TEST_MODE=enabled playwright test",
+    "cleanup:browser-test-fixtures": "BROWSER_TEST_MODE=enabled tsx scripts/cleanup-browser-test-fixtures.ts",
     "db:seed": "tsx scripts/seed.ts",
     "smoke:billing-alert": "tsx scripts/smoke-billing-alert.ts",
     "smoke:schema-push-alert": "tsx scripts/smoke-schema-push-alert.ts",

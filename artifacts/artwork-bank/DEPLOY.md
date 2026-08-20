@@ -6,6 +6,21 @@ Replit-specific infrastructure. It continues to work unchanged in the Replit dev
 environment (Replit sidecar object storage + Stripe connector are used there
 automatically when their env vars are present).
 
+## Development browser-test fixture cleanup
+
+Browser-test fixtures are isolated by an explicit database opt-in and are
+automatically cleaned up once they are older than the bounded stale-fixture age.
+To remove those stale fixtures on demand during development, run:
+
+```bash
+BROWSER_TEST_DATABASE_URL="$DATABASE_URL" \
+  pnpm --filter @workspace/artwork-bank cleanup:browser-test-fixtures
+```
+
+The command is development-only. It refuses to run when `NODE_ENV=production` or
+when `BROWSER_TEST_DATABASE_URL` is absent or does not exactly match
+`DATABASE_URL`. It reports the number of stale fixtures removed.
+
 ## 1. Vercel project setup
 
 1. Import the Git repository into Vercel.
