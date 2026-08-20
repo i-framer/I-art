@@ -1,6 +1,7 @@
 # Next.js
 .next/
 .next-ci/
+.next-browser-test/
 out/
 
 # Node modules
@@ -31,3 +32,8 @@ next-env.d.ts
 .next-slow-test/
 .next-probe/
 .next-probe-cache-ready
+
+# Browser test traces, screenshots, and temporary authenticated state.
+test-results/
+playwright-report/
+playwright/.cache/
