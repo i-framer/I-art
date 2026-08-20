@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Artwork Bank — August 2026 Estimated Time Report</title>
+    <style>
+      :root {
+        --ink: #1f2933;
+        --muted: #637381;
+        --line: #dce3e8;
+        --paper: #ffffff;
+        --canvas: #f4f6f8;
+        --accent: #916b1d;
+        --accent-soft: #fff7e6;
+        --green: #1f6f4a;
+        --green-soft: #eaf7ef;
+        --blue: #175d8e;
+        --blue-soft: #eaf4fb;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--canvas);
+        color: var(--ink);
+        font: 14px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        width: min(1180px, calc(100% - 40px));
+        margin: 32px auto 56px;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        box-shadow: 0 12px 32px rgba(31, 41, 51, .08);
+      }
+      header {
+        padding: 46px 52px 36px;
+        border-bottom: 5px solid var(--accent);
+        background: linear-gradient(135deg, #fffdf7 0%, #fff8e8 100%);
+      }
+      .eyebrow {
+        margin: 0 0 10px;
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+      }
+      h1 { margin: 0; font-size: clamp(28px, 4vw, 42px); line-height: 1.1; letter-spacing: -.035em; }
+      .subtitle { margin: 14px 0 0; color: var(--muted); font-size: 16px; }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 20px;
+        margin-top: 22px;
+        color: #4e5b64;
+        font-size: 13px;
+      }
+      .meta strong { color: var(--ink); }
+      section { padding: 28px 52px 0; }
+      section:last-child { padding-bottom: 48px; }
+      h2 {
+        margin: 0 0 14px;
+        font-size: 21px;
+        letter-spacing: -.02em;
+      }
+      h3 { margin: 22px 0 8px; font-size: 16px; }
+      p { margin: 0 0 12px; }
+      .callout {
+        padding: 16px 18px;
+        border: 1px solid #f1d89e;
+        border-left: 4px solid var(--accent);
+        background: var(--accent-soft);
+      }
+      .callout strong { color: #6f4c00; }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin: 18px 0 6px;
+      }
+      .metric {
+        min-height: 105px;
+        padding: 17px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+      }
+      .metric .number { font-size: 28px; font-weight: 800; letter-spacing: -.04em; }
+      .metric .label { margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 700; }
+      .metric.accent { border-color: #e9ca85; background: var(--accent-soft); }
+      .metric.accent .number { color: #725000; }
+      .metric.green { border-color: #bde0cb; background: var(--green-soft); }
+      .metric.green .number { color: var(--green); }
+      .metric.blue { border-color: #bfdae9; background: var(--blue-soft); }
+      .metric.blue .number { color: var(--blue); }
+      .table-wrap { overflow-x: auto; margin: 14px 0 4px; border: 1px solid var(--line); border-radius: 8px; }
+      table { width: 100%; border-collapse: collapse; min-width: 840px; }
+      th, td { padding: 11px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+      tr:last-child td { border-bottom: 0; }
+      th { background: #f6f8fa; color: #43515c; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
+      td { font-size: 12.5px; }
+      td.hours, th.hours { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .category { color: #4c5d69; font-weight: 700; }
+      .evidence { color: var(--muted); }
+      .total-row td { background: #fffaf0; font-weight: 800; }
+      ul { margin: 9px 0 0; padding-left: 20px; }
+      li { margin: 5px 0; }
+      .sources {
+        padding: 18px;
+        border: 1px solid #bfdae9;
+        border-radius: 8px;
+        background: var(--blue-soft);
+      }
+      .sources h3 { margin-top: 0; color: var(--blue); }
+      .fineprint { color: var(--muted); font-size: 12px; }
+      footer {
+        padding: 24px 52px 30px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 12px;
+      }
+      @media (max-width: 760px) {
+        main { width: 100%; margin: 0; border: 0; box-shadow: none; }
+        header, section, footer { padding-left: 22px; padding-right: 22px; }
+        .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media print {
+        body { background: #fff; }
+        main { width: 100%; margin: 0; border: 0; box-shadow: none; }
+        .table-wrap { overflow: visible; }
+        tr { break-inside: avoid; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">Estimated time report</p>
+        <h1>Artwork Bank / i-Art</h1>
+        <p class="subtitle">August 2026 engineering activity — evidence-based estimate for invoice review</p>
+        <div class="meta">
+          <span><strong>Reporting period:</strong> 1–20 August 2026 (PHT)</span>
+          <span><strong>Project:</strong> i-art.com.au / Artwork Bank</span>
+          <span><strong>Prepared:</strong> 20 August 2026</span>
+          <span><strong>Scope:</strong> work evidenced to date; no future-August time included</span>
+        </div>
+      </header>
+
+      <section>
+        <h2>Executive summary</h2>
+        <div class="grid">
+          <div class="metric accent"><div class="number">105.0 h</div><div class="label">Estimated active / engaged project time</div></div>
+          <div class="metric green"><div class="number">828</div><div class="label">August-period commits reviewed</div></div>
+          <div class="metric blue"><div class="number">18</div><div class="label">Active engineering dates observed</div></div>
+          <div class="metric"><div class="number">4 weeks</div><div class="label">Weekly subtotals through 20 August</div></div>
+        </div>
+        <div class="callout">
+          <strong>Estimation method and limitation.</strong>
+          The project work log does not contain start/end durations, so this is a conservative professional estimate—not a claim of clocked time. Related commits, task merges, build/test runs, and manual-production activities are grouped into working sessions to prevent double counting. Passive deployment waits, DNS propagation, personal breaks, and unverified external activity are excluded.
+        </div>
+        <p class="fineprint" style="margin-top:12px">
+          The Git query records 828 commits in the August-period review. Six commits display as 31 July in UTC but fall within 1 August in the project’s Asia/Manila working date; they are treated as early-August activity. Commit count supports scope only and is not converted directly into hours.
+        </p>
+      </section>
+
+      <section>
+        <h2>Time allocation by primary work category</h2>
+        <p>Categories are mutually exclusive in this table. For example, a production smoke test is allocated to testing/debugging rather than also being added to external-platform work.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Category</th><th>What is included</th><th class="hours">Estimated active time</th></tr></thead>
+            <tbody>
+              <tr><td class="category">Development / coding</td><td>Product features, server actions, route changes, reliability fixes, data-model work, safety controls, and UI changes.</td><td class="hours">35.0 h</td></tr>
+              <tr><td class="category">Testing / debugging</td><td>Unit, integration, real-database and browser smoke coverage; failure investigation; regression reproduction and fixes.</td><td class="hours">45.5 h</td></tr>
+              <tr><td class="category">CI / build / deployment</td><td>Typecheck, lint, production-build, test-suite and schema-drift monitoring; workflow and deployment troubleshooting.</td><td class="hours">7.0 h</td></tr>
+              <tr><td class="category">Production / configuration</td><td>Environment validation, security guardrails, release readiness, storage and operational configuration work.</td><td class="hours">6.0 h</td></tr>
+              <tr><td class="category">External platform work</td><td>Active Vercel, Stripe, Neon, GitHub Actions and live-browser verification documented in checklists/session records.</td><td class="hours">6.5 h</td></tr>
+              <tr><td class="category">Technical coordination</td><td>Task investigation notes, go-live/checklist updates, engineering reports and implementation coordination tied to delivery.</td><td class="hours">5.0 h</td></tr>
+              <tr class="total-row"><td colspan="2">Total estimated August activity through 20 August</td><td class="hours">105.0 h</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>Detailed work sessions</h2>
+        <p>Each row represents a correlated work block. Representative commits and task numbers are included where available; they are evidence references, not separate billable line items.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Date</th><th>Work performed</th><th>Representative evidence</th><th>Primary category</th><th class="hours">Estimated active time</th><th>Evidence basis</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Aug 1</td><td>Implemented Privacy/Terms pages, 30-day subscription trial flow, and correct Stripe webhook subscription-status handling; reviewed Stripe/dashboard assets and repository setup.</td><td>7052b6c, 3ab378e; Stripe dashboard assets</td><td>Development / coordination</td><td class="hours">4.0 h</td><td class="evidence">Git/Replit evidence</td></tr>
+              <tr><td>Aug 3</td><td>Addressed subdomain routing, cross-tenant artist assignment, email HTML injection, storage health visibility, platform-fee validation, billing/inquiry/retry reliability, and deployment guardrails.</td><td>47 commits; 5aeee17, 77fb1e0; Tasks #38, #46, #49, #50, #51, #63, #65–69, #72–74, #80, #88, #148, #205, #217</td><td>Development / testing</td><td class="hours">7.5 h</td><td class="evidence">Git, task merges, engineering log</td></tr>
+              <tr><td>Aug 4</td><td>Improved Stripe readiness and checkout gating, handled email transport failures, fixed five production defects, refined billing UX, and repaired CI pnpm-version mismatch.</td><td>24 commits; c168191; Task #366, #383, #385; CI workflow changes</td><td>Development / testing / CI</td><td class="hours">6.0 h</td><td class="evidence">Git, work log, CI records</td></tr>
+              <tr><td>Aug 5</td><td>Hardened orphan-sweep outcomes and real-HTTP behavior; built exhaustive database preflight timeout/boundary coverage; stabilized integration-test isolation.</td><td>71 commits; Tasks #388–#393, #412 and related require-db/orphan-sweep tests</td><td>Testing / debugging</td><td class="hours">7.0 h</td><td class="evidence">Git, task merges</td></tr>
+              <tr><td>Aug 6</td><td>Completed Stripe readiness/onboarding and trial reliability coverage, SMTP error handling, refund safeguards, operator diagnostics, and engineering activity reporting.</td><td>39 commits; StripeReadinessPanel, account.updated, checkout/retry and SMTP suites</td><td>Development / testing</td><td class="hours">7.0 h</td><td class="evidence">Git, work log</td></tr>
+              <tr><td>Aug 7</td><td>Delivered i-Framer Premium account linking/audit flow, Slack smoke/replay reliability, Cron authorization coverage, and live storage/routing checklist work.</td><td>46 commits; Task #217 implementation; /api/slack-smoke; live checklist updates</td><td>Development / CI / external platform</td><td class="hours">6.5 h</td><td class="evidence">Git, checklist, documented manual verification</td></tr>
+              <tr><td>Aug 8</td><td>Expanded platform reporting and tenant administration; built a broad real-database integration suite across checkout, order, storage, billing, inquiry and multi-tenant isolation behavior.</td><td>123 commits; 50+ integration-test files; 1,500+ cases documented at the time</td><td>Testing / debugging</td><td class="hours">7.5 h</td><td class="evidence">Git, task merge history</td></tr>
+              <tr><td>Aug 10</td><td>Diagnosed the www redirect impact on Stripe webhooks/Vercel Cron, added webhook health/heartbeat protections, and fixed Vercel Blob upload-callback authorization.</td><td>Tasks #539–#604; blob-upload route fix; @vercel/blob upgrade</td><td>Development / external platform</td><td class="hours">7.0 h</td><td class="evidence">Git, deployment/runbook records, documented browser investigation</td></tr>
+              <tr><td>Aug 11</td><td>Fixed production image uploads through a server-side proxy; hardened streaming upload limits, slow-drip/stall handling, content safety, and upload→serve→delete persistence testing.</td><td>51 commits; storage upload/serve integration suites; live server checklist</td><td>Development / testing</td><td class="hours">6.0 h</td><td class="evidence">Git, checklist</td></tr>
+              <tr><td>Aug 12</td><td>Improved CI probe-cache sentinel lifecycle and environment overrides; continued failure-safe Slack replay testing and concurrent-sweep behavior.</td><td>69 commits; probe-cache and i-Framer Slack replay suites</td><td>Testing / CI</td><td class="hours">7.0 h</td><td class="evidence">Git, task merge history</td></tr>
+              <tr><td>Aug 13</td><td>Worked through Slack billing-alert replay/idempotency paths, failure-payload preservation, storage and production verification, and webhook operational safeguards.</td><td>58 commits; Slack replay integration tests; go-live record updated with www webhook registration</td><td>Testing / debugging / production</td><td class="hours">7.0 h</td><td class="evidence">Git, GO-LIVE.md</td></tr>
+              <tr><td>Aug 14</td><td>Finished recovery/replay behavior for billing-alert delivery failures and verified correct tenant-level state updates under exceptions and concurrent sweeps.</td><td>45 commits; Slack replay UI and real-DB integration coverage</td><td>Testing / debugging</td><td class="hours">6.5 h</td><td class="evidence">Git, task merge history</td></tr>
+              <tr><td>Aug 15</td><td>Hardened inquiry email sweep behavior for missing contact data, deleted/cross-tenant records, permanent failures, and recovery after gallery settings changes.</td><td>25 commits; inquiry sweep and settings/requeue integration tests</td><td>Development / testing</td><td class="hours">4.5 h</td><td class="evidence">Git, task merge history</td></tr>
+              <tr><td>Aug 16</td><td>Corrected settings-field clearing semantics so optional gallery values persist as null rather than invalid empty strings; added regression coverage.</td><td>3 commits; location/about/theme-color persistence fixes</td><td>Development / testing</td><td class="hours">1.0 h</td><td class="evidence">Git</td></tr>
+              <tr><td>Aug 17</td><td>Extended tenant-settings recovery behavior, inquiry requeue safety and data round-trip coverage; continued email failure-state handling.</td><td>69 commits; Tasks #989 onward; contact-email and gallery-settings integration tests</td><td>Testing / debugging</td><td class="hours">7.0 h</td><td class="evidence">Git, task merge history</td></tr>
+              <tr><td>Aug 18</td><td>Resolved inquiry bulk-action and cross-tenant edge cases; implemented gallery logo upload/storage serving; investigated and then live-tested the complete Create Artwork/image-upload workflow.</td><td>95c7093; Tasks #996–#1053; production test of create, upload, reload, isolation and cleanup</td><td>Development / testing / external platform</td><td class="hours">8.0 h</td><td class="evidence">Git, task history, documented production smoke test</td></tr>
+              <tr><td>Aug 19</td><td>Completed bulk inquiry interaction/accessibility regressions and reply sender-display handling, then kept the fast suite within CI time limits.</td><td>Tasks #1034, #1045–#1082; sender-display and BulkActionBar suites</td><td>Testing / debugging</td><td class="hours">4.5 h</td><td class="evidence">Git, task merge history</td></tr>
+              <tr><td>Aug 20</td><td>Stabilized status-email retry backoff boundary coverage; ran consolidated tests, typecheck, lint, production build and schema-drift verification.</td><td>c95df34; 2,293 fast tests, 1,938 integration tests, typecheck/build/drift checks</td><td>Testing / CI</td><td class="hours">1.0 h</td><td class="evidence">Git, current workflow results</td></tr>
+              <tr class="total-row"><td colspan="4">Total estimated active project time</td><td class="hours">105.0 h</td><td>Evidence-based estimate</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>Weekly subtotals</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Week</th><th>Dates covered</th><th>Focus</th><th class="hours">Estimated active time</th></tr></thead>
+            <tbody>
+              <tr><td>Week 1</td><td>Aug 1–2</td><td>Subscription trials, webhooks, legal pages and project setup.</td><td class="hours">4.0 h</td></tr>
+              <tr><td>Week 2</td><td>Aug 3–9</td><td>Security, reliability, Stripe readiness, i-Framer Premium, CI and broad integration coverage.</td><td class="hours">41.5 h</td></tr>
+              <tr><td>Week 3</td><td>Aug 10–16</td><td>Webhook/cron diagnostics, Blob upload recovery, storage hardening, Slack replay safety and inquiry email recovery.</td><td class="hours">39.0 h</td></tr>
+              <tr><td>Week 4 (partial)</td><td>Aug 17–20</td><td>Tenant settings/inquiry recovery, production Create Artwork smoke test, logo upload and bulk-action regressions.</td><td class="hours">20.5 h</td></tr>
+              <tr class="total-row"><td colspan="3">Total through 20 August</td><td class="hours">105.0 h</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>External platform and production work included</h2>
+        <p>The following active work was included only where it is recorded in a checklist, work-history report, session summary, deployment/runbook record, commit message, or final production verification. It is grouped into the daily estimates above rather than added again here.</p>
+        <ul>
+          <li><strong>Vercel:</strong> Blob connection/environment review, preview/production deployment checks, live storage health checks, upload investigation, domain/redirect diagnosis, and serverless deployment verification.</li>
+          <li><strong>Stripe:</strong> Connect-readiness investigation, webhook endpoint/redirect analysis, checkout test-mode verification, trial/subscription behavior, and payment-related smoke work.</li>
+          <li><strong>Neon/Postgres:</strong> real-database integration tests, schema drift checks, production database verification and recovery-path investigation.</li>
+          <li><strong>GitHub Actions:</strong> pnpm/lockfile CI correction, drift/smoke/heartbeat workflow monitoring and webhook-health safeguards.</li>
+          <li><strong>Live browser testing:</strong> confirmed storefront, Checkout, SOLD state, `/catalog/new`, artwork creation, image upload, persistence after reload, cross-tenant isolation, and test-artwork cleanup.</li>
+        </ul>
+        <p class="fineprint">No allowance has been made for genuine unattended deployment/build time, DNS propagation, or activity that cannot be reasonably tied to a project record.</p>
+      </section>
+
+      <section>
+        <h2>Major accomplishments</h2>
+        <ul>
+          <li>Improved multi-tenant security and authorization across artwork, inquiry, image, order and staff-related paths, with real-database regression coverage.</li>
+          <li>Strengthened Stripe Connect/Billing operation: trial subscriptions, readiness gating, webhooks, subscription-state handling, invoice/refund safeguards and i-Framer Premium support.</li>
+          <li>Made storage production-ready: Vercel Blob diagnostics and proxy upload path, strict stream-size/stall protections, safe public/private serving, image persistence tests, and gallery logo support.</li>
+          <li>Raised operational reliability through sweep/retry recovery, alert replay/idempotency behavior, Slack/email error handling, health probes, CI smoke checks and deployment documentation.</li>
+          <li>Expanded automated quality coverage substantially, including tenant isolation, payment lifecycle, inquiry-email recovery, storage, webhook, CI and UI accessibility/interaction regressions.</li>
+          <li>Completed an end-to-end production Create Artwork smoke test: form render, creation, image upload, reload persistence, cross-tenant isolation and cleanup all passed.</li>
+        </ul>
+      </section>
+
+      <section>
+        <div class="sources">
+          <h3>Evidence reviewed</h3>
+          <ul>
+            <li>Git history for the August-period review (828 commits), including feature, fix, task-merge and test commits.</li>
+            <li>Project work logs: <code>WORK_LOG.md</code>, <code>artifacts/artwork-bank/docs/WORK_LOG.md</code>, and the earlier August work-history report.</li>
+            <li>Operational records: <code>LIVE_SERVER_TEST_CHECKLIST.md</code>, <code>GO-LIVE.md</code>, deployment/runbook references and task merge updates.</li>
+            <li>Latest validation evidence on 20 August: fast suite (2,293 tests, 2 skipped), real-DB integration suite (1,936 tests, 2 skipped), typecheck pass, production build pass, and 26-table schema-drift verification.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section>
+        <h2>Invoice review note</h2>
+        <p>This report is designed as a conservative estimate for review. The 105.0-hour total represents supported active work through 20 August 2026, not a replacement for a contemporaneous stopwatch or calendar record. If a personal time record identifies a materially different duration for any session, that first-party record should take precedence and the relevant daily row can be adjusted without changing the underlying scope/evidence list.</p>
+      </section>
+
+      <footer>
+        Artwork Bank / i-Art — August 2026 Estimated Time Report · Coverage ends 20 August 2026 · Prepared from available project evidence.
+      </footer>
+    </main>
+  </body>
+</html>

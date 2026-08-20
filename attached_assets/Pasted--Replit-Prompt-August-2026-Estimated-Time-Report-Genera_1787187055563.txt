@@ -1,0 +1,99 @@
+# Replit Prompt — August 2026 Estimated Time Report
+
+Generate an updated monthly estimated time report for **August 2026** for the Artwork Bank / i-Art project.
+
+Output filename:
+
+`Artwork_Bank_August_2026_Estimated_Time_Report`
+
+Review all available project activity for August 2026, including work performed **inside and outside Replit**.
+
+Include:
+
+* Git commits and code changes
+* Task investigation and implementation
+* Bug fixes
+* Production/live-site testing
+* Vercel configuration and deployments
+* Vercel Blob/storage work
+* Stripe configuration, webhook testing, and payment verification
+* Database/Neon configuration and verification
+* GitHub/repository work
+* Authentication/security work
+* Email/inquiry testing
+* Artwork creation and image-upload testing
+* Automated tests
+* Typecheck, lint, builds, and integration tests
+* CI/CD monitoring and troubleshooting
+* Deployment monitoring and verification
+* Production smoke testing
+* Operational/recovery work
+* Investigation and debugging
+* Client/project communication directly related to technical work
+
+### Time Estimation Rules
+
+Include legitimate working time that may not appear directly in Replit or Git history.
+
+**CI/build and deployment time may be counted when it required active involvement**, including:
+
+* Starting or managing builds/deployments
+* Monitoring CI/build results
+* Reviewing logs
+* Investigating failures
+* Rerunning failed checks
+* Waiting for a required build/deployment result before performing the next verification step
+* Post-deployment production verification
+* Vercel dashboard work
+* GitHub deployment/CI work
+* Neon/database verification
+* Stripe dashboard configuration/testing
+* Manual browser/live-site testing
+* Slack/email/client communication directly related to the work
+
+Do not automatically exclude time simply because the work happened outside Replit.
+
+However, **do not count genuine idle/unattended time**, such as:
+
+* Long periods where a deployment/build was running unattended and no project work was being performed
+* DNS propagation while no active verification was being done
+* Personal breaks
+* Time away from the project
+* Other passive waiting that required no attention
+
+Use reasonable professional estimates where exact timestamps are unavailable.
+
+For each work item provide:
+
+* Date
+* Task/work description
+* Relevant commit/task number, if available
+* Work category
+* Estimated active/engaged time
+* Brief explanation of what was performed
+* Whether the estimate comes from Git/Replit evidence or estimated external work
+
+### Avoid Double Counting
+
+Correlate commits, tasks, deployments, tests, and related activities so that the same work is not counted multiple times.
+
+For example, if several commits belong to one debugging session, estimate the complete work session rather than assigning an excessive independent estimate to every commit.
+
+### Final Summary
+
+Provide:
+
+* Development/coding hours
+* Testing/debugging hours
+* CI/build/deployment hours
+* Production/configuration hours
+* External platform work (Vercel, Stripe, Neon, GitHub, etc.)
+* Technical communication/coordination hours
+* Weekly subtotals
+* **Total estimated August 2026 hours**
+
+Also provide a concise summary of the major accomplishments for the month.
+
+The final report should be professional, conservative, evidence-based, and suitable for reviewing my work and preparing the August invoice.
+
+Do not invent unsupported work, but do not omit legitimate work merely because it occurred outside Replit or did not result in a Git commit.

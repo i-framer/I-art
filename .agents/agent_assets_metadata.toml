@@ -35,3 +35,10 @@ uri = "file://artwork-bank-work-history-aug2026.md"
 type = "text"
 title = "Artwork Bank — Work History & Time Report (Aug 1–10, 2026)"
 description = "Engineering work history, external manual time estimates, and invoice preparation summary for August 1–10, 2026."
+
+[[outputs]]
+id = "-i6q-iHJlpNoyUqt7w5j8"
+uri = "file://reports/Artwork_Bank_August_2026_Estimated_Time_Report.html"
+type = "text"
+title = "Artwork Bank — August 2026 Estimated Time Report"
+description = "Professional, printable report covering evidence-backed work from 1–20 August 2026, with weekly subtotals and a conservative 105.0-hour estimate."
