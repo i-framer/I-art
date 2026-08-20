@@ -42,3 +42,10 @@ uri = "file://reports/Artwork_Bank_August_2026_Estimated_Time_Report.html"
 type = "text"
 title = "Artwork Bank — August 2026 Estimated Time Report"
 description = "Professional, printable report covering evidence-backed work from 1–20 August 2026, with weekly subtotals and a conservative 105.0-hour estimate."
+
+[[outputs]]
+id = "uiMdvbgpLIzXUCv7ZGXdW"
+uri = "file://reports/Artwork_Bank_August_2026_Estimated_Time_Report.md"
+type = "text"
+title = "Artwork Bank — August 2026 Estimated Time Report (Markdown)"
+description = "Markdown version of the August 2026 estimated time report, covering activity through 20 August and a conservative 105.0-hour estimate."
