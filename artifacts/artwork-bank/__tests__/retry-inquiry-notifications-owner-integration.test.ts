@@ -54,6 +54,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // integration test validates the full DB write path.
 
 import { retryFailedInquiryNotifications } from "@/app/(admin)/settings/actions";
+import { getEmailFailCount } from "@/app/(admin)/_actions/inquiry-count";
 import { NO_CONTACT_EMAIL_ERROR, MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -99,6 +100,7 @@ async function insertInquiry(
     emailError?: string | null;
     emailAttempts?: number;
     emailLastAttemptAt?: Date | null;
+    archivedAt?: Date | null;
   } = {},
 ): Promise<void> {
   CREATED_INQUIRY_IDS.push(id);
@@ -113,6 +115,7 @@ async function insertInquiry(
     emailError: overrides.emailError ?? "SMTP connection refused",
     emailAttempts: overrides.emailAttempts ?? MAX_EMAIL_ATTEMPTS,
     emailLastAttemptAt: overrides.emailLastAttemptAt ?? new Date("2024-01-01T00:00:00Z"),
+    archivedAt: overrides.archivedAt ?? null,
   });
 }
 
@@ -347,6 +350,44 @@ describeIntegration(
         });
         expect(afterOther?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
         expect(afterOther?.emailLastAttemptAt).not.toBeNull();
+      },
+    );
+
+    it(
+      "archived exhausted SMTP-error inquiry is excluded from retry redirect count and failure banner",
+      async () => {
+        const tenantId = makeId("tenant-archived");
+        const artworkId = makeId("artwork-archived");
+        const inquiryId = makeId("inquiry-archived");
+        const archivedAt = new Date("2024-01-06T00:00:00Z");
+
+        await insertTenant(tenantId);
+        await insertArtwork(artworkId, tenantId);
+        await insertInquiry(inquiryId, tenantId, artworkId, {
+          emailError: "550 mailbox not found",
+          emailAttempts: MAX_EMAIL_ATTEMPTS,
+          emailLastAttemptAt: new Date("2024-01-06T01:00:00Z"),
+          archivedAt,
+        });
+
+        mockSession.tenantId = tenantId;
+        mockSession.role = "owner";
+
+        const error = await retryFailedInquiryNotifications().catch((e) => e);
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toBe("REDIRECT:/settings?retry_result=0");
+
+        expect(await getEmailFailCount()).toBe(0);
+
+        const after = await db.query.inquiriesTable.findFirst({
+          where: eq(inquiriesTable.id, inquiryId),
+        });
+        expect(after?.archivedAt).toEqual(archivedAt);
+        expect(after?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+        expect(after?.emailLastAttemptAt).toEqual(
+          new Date("2024-01-06T01:00:00Z"),
+        );
+        expect(after?.emailError).toBe("550 mailbox not found");
       },
     );
   },
