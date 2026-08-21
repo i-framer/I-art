@@ -9,14 +9,26 @@
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 const { spawnSync } = require("node:child_process");
+const { readFileSync, unlinkSync } = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 /* eslint-enable @typescript-eslint/no-require-imports */
+
+// Replit's validation command limit is five minutes. Four minutes gives the
+// database pre-flight and CI overhead a full minute of headroom, while still
+// making a gradual integration-suite regression visible well before an outer
+// timeout turns the result into an unreliable failure.
+const PLATFORM_COMMAND_LIMIT_MS = 5 * 60 * 1_000;
+const DEFAULT_FULL_SUITE_DURATION_BUDGET_MS = 4 * 60 * 1_000;
+const FULL_SUITE_PHASE_NAMES = [
+  "parallel test files",
+  "shared database-state test files",
+];
 
 const VITEST_ARGS = [
   "run",
   "--config",
   "vitest.integration.config.ts",
-  "--reporter=default",
 ];
 
 // These checks deliberately inspect database-wide queues or totals. Run them
@@ -68,17 +80,117 @@ function buildFullSuiteRuns() {
   ];
 }
 
-function runVitest(vitestBin, args) {
+function getFullSuiteDurationBudgetMs(value = process.env.INTEGRATION_DURATION_BUDGET_MS) {
+  if (value === undefined) {
+    return DEFAULT_FULL_SUITE_DURATION_BUDGET_MS;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed >= PLATFORM_COMMAND_LIMIT_MS) {
+    throw new Error(
+      "INTEGRATION_DURATION_BUDGET_MS must be a positive whole number below " +
+        `${PLATFORM_COMMAND_LIMIT_MS} ms (the platform command limit).`
+    );
+  }
+
+  return parsed;
+}
+
+function formatDuration(durationMs) {
+  return `${(durationMs / 1_000).toFixed(durationMs >= 10_000 ? 1 : 2)}s`;
+}
+
+function getTimingReportPath(phaseIndex) {
+  return path.join(
+    os.tmpdir(),
+    `artwork-bank-integration-timing-${process.pid}-${phaseIndex}.json`
+  );
+}
+
+function readTimingReport(timingReportPath) {
+  try {
+    const report = JSON.parse(readFileSync(timingReportPath, "utf8"));
+    if (!Array.isArray(report.files)) {
+      throw new Error("the report has no files array");
+    }
+
+    return report;
+  } catch (error) {
+    process.stderr.write(
+      `[integration timing] Could not read file timing diagnostics: ${error.message}\n`
+    );
+    return null;
+  } finally {
+    try {
+      unlinkSync(timingReportPath);
+    } catch {
+      // Vitest can fail before the reporter initializes. The warning above is
+      // enough context in that case, and there is no generated file to clean.
+    }
+  }
+}
+
+function printPhaseTiming(phaseName, wallClockMs, report) {
+  process.stdout.write(
+    `\n[integration timing] ${phaseName}: ${formatDuration(wallClockMs)} wall time\n`
+  );
+
+  if (!report) {
+    return;
+  }
+
+  const files = report.files;
+  const sum = (field) =>
+    files.reduce((total, file) => total + (Number(file[field]) || 0), 0);
+  const workerSetupMs = sum("workerSetupMs");
+  const importAndCollectionMs = sum("importAndCollectionMs");
+  const testAndHookMs = sum("testAndHookMs");
+  process.stdout.write(
+    `[integration timing] Worker setup: ${formatDuration(workerSetupMs)} ` +
+      `(summed across ${files.length} files); module imports/collection: ` +
+      `${formatDuration(importAndCollectionMs)}; tests/hooks: ` +
+      `${formatDuration(testAndHookMs)}.\n`
+  );
+
+  const slowestFiles = [...files]
+    .sort(
+      (left, right) =>
+        right.testAndHookMs +
+        right.importAndCollectionMs -
+        (left.testAndHookMs + left.importAndCollectionMs)
+    )
+    .slice(0, 5);
+
+  if (slowestFiles.length) {
+    process.stdout.write("[integration timing] Slowest test files:\n");
+    for (const file of slowestFiles) {
+      process.stdout.write(
+        `  ${formatDuration(file.testAndHookMs + file.importAndCollectionMs)} ` +
+          `(tests/hooks ${formatDuration(file.testAndHookMs)}, ` +
+          `imports ${formatDuration(file.importAndCollectionMs)}, ` +
+          `worker setup ${formatDuration(file.workerSetupMs)}) ${file.file}\n`
+      );
+    }
+  }
+}
+
+function runVitest(vitestBin, args, timingReportPath) {
+  const startedAt = performance.now();
   const result = spawnSync(vitestBin, args, {
     stdio: "inherit",
+    env: {
+      ...process.env,
+      INTEGRATION_TIMING_REPORT_PATH: timingReportPath,
+    },
   });
+  const wallClockMs = performance.now() - startedAt;
 
   if (result.error) {
     process.stderr.write(`Failed to start Vitest: ${result.error.message}\n`);
-    return 1;
+    return { status: 1, wallClockMs };
   }
 
-  return result.status ?? 1;
+  return { status: result.status ?? 1, wallClockMs };
 }
 
 function run() {
@@ -87,24 +199,65 @@ function run() {
     `../node_modules/.bin/vitest${process.platform === "win32" ? ".cmd" : ""}`
   );
   const extraArgs = process.argv.slice(2);
-  const runs = extraArgs.length
-    ? [buildVitestArgs(extraArgs)]
-    : buildFullSuiteRuns();
+  const isFullSuite = extraArgs.length === 0;
+  const runs = isFullSuite
+    ? buildFullSuiteRuns()
+    : [buildVitestArgs(extraArgs)];
+  const durationBudgetMs = isFullSuite ? getFullSuiteDurationBudgetMs() : null;
+  const startedAt = performance.now();
+  let status = 0;
 
-  for (const args of runs) {
-    const status = runVitest(vitestBin, args);
-    if (status !== 0) {
-      process.exit(status);
+  for (const [phaseIndex, args] of runs.entries()) {
+    const timingReportPath = getTimingReportPath(phaseIndex);
+    const result = runVitest(vitestBin, args, timingReportPath);
+    const phaseName = isFullSuite
+      ? FULL_SUITE_PHASE_NAMES[phaseIndex]
+      : "selected test files";
+    printPhaseTiming(
+      phaseName,
+      result.wallClockMs,
+      readTimingReport(timingReportPath)
+    );
+
+    if (result.status !== 0) {
+      status = result.status;
+      break;
     }
   }
+
+  const totalDurationMs = performance.now() - startedAt;
+  if (isFullSuite) {
+    process.stdout.write(
+      `\n[integration timing] Full suite: ${formatDuration(totalDurationMs)} ` +
+        `of ${formatDuration(durationBudgetMs)} budget.\n`
+    );
+    if (totalDurationMs > durationBudgetMs) {
+      process.stderr.write(
+        "\nERROR: The full integration suite exceeded its duration budget. " +
+          `It took ${formatDuration(totalDurationMs)}; the budget is ` +
+          `${formatDuration(durationBudgetMs)} to leave headroom below the ` +
+          `${formatDuration(PLATFORM_COMMAND_LIMIT_MS)} platform command limit.\n` +
+          "Use the phase, worker setup, import, and slow-file timings above " +
+          "to locate the regression before increasing this budget.\n"
+      );
+      status = 1;
+    }
+  }
+
+  return status;
 }
 
 if (require.main === module) {
-  run();
+  process.exitCode = run();
 }
 
 module.exports = {
+  DEFAULT_FULL_SUITE_DURATION_BUDGET_MS,
+  FULL_SUITE_PHASE_NAMES,
+  PLATFORM_COMMAND_LIMIT_MS,
   buildFullSuiteRuns,
   buildVitestArgs,
+  formatDuration,
+  getFullSuiteDurationBudgetMs,
   SHARED_DATABASE_STATE_FILES,
 };

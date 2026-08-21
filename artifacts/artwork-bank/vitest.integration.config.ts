@@ -25,6 +25,10 @@ export default defineConfig({
     include: [
       "__tests__/**/*-integration.test.ts",
     ],
+    // The command runner gives this reporter a per-phase temp file. It records
+    // worker setup, imports/collection, and test execution for each test file
+    // without changing which real-database checks Vitest executes.
+    reporters: ["default", "./scripts/integration-timing-reporter.ts"],
     // A small, fixed pool keeps the full suite comfortably inside the command
     // limit without overwhelming the database with hundreds of simultaneous
     // pools. The runner reserves globally scoped queue/count assertions for a
