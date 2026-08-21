@@ -36,34 +36,72 @@ const PNG_1X1 = new Uint8Array([
   0x44, 0xae, 0x42, 0x60, 0x82,
 ]);
 
-async function fetchImageInBrowser(page: Page, url: string) {
-  return page.evaluate(async (imageUrl) => {
-    const response = await fetch(imageUrl, { cache: "no-store" });
-    return {
-      status: response.status,
-      headers: Object.fromEntries(response.headers.entries()),
-    };
-  }, url);
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function fetchImageInBrowser(
+  page: Page,
+  url: string,
+  phase: "visible fetch" | "post-hide fetch",
+) {
+  try {
+    return await page.evaluate(async (imageUrl) => {
+      const response = await fetch(imageUrl, { cache: "no-store" });
+      return {
+        status: response.status,
+        headers: Object.fromEntries(response.headers.entries()),
+      };
+    }, url);
+  } catch (error) {
+    throw new Error(
+      `[${phase}] Unable to fetch the production artwork image: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
 }
 
 async function cleanupFixture(objectWasUploaded: boolean) {
-  await db.transaction(async (tx) => {
-    await tx
-      .delete(artworkImagesTable)
-      .where(eq(artworkImagesTable.artworkId, ARTWORK_ID));
-    await tx
-      .delete(artworksTable)
-      .where(
-        and(
-          eq(artworksTable.id, ARTWORK_ID),
-          eq(artworksTable.tenantId, TENANT_ID),
-        ),
-      );
-    await tx.delete(tenantsTable).where(eq(tenantsTable.id, TENANT_ID));
-  });
+  // Always attempt both cleanup paths. A database cleanup failure must not
+  // prevent deletion of the production blob (and vice versa).
+  const cleanupResults = await Promise.allSettled([
+    db.transaction(async (tx) => {
+      await tx
+        .delete(artworkImagesTable)
+        .where(eq(artworkImagesTable.artworkId, ARTWORK_ID));
+      await tx
+        .delete(artworksTable)
+        .where(
+          and(
+            eq(artworksTable.id, ARTWORK_ID),
+            eq(artworksTable.tenantId, TENANT_ID),
+          ),
+        );
+      await tx.delete(tenantsTable).where(eq(tenantsTable.id, TENANT_ID));
+    }),
+    objectWasUploaded ? deleteObject(OBJECT_PATH) : Promise.resolve(),
+  ]);
 
-  if (objectWasUploaded) {
-    await deleteObject(OBJECT_PATH);
+  const failedCleanup = cleanupResults
+    .map((result, index) => ({ result, target: index === 0 ? "database rows" : "blob" }))
+    .filter(
+      (
+        result,
+      ): result is {
+        result: PromiseRejectedResult;
+        target: "database rows" | "blob";
+      } => result.result.status === "rejected",
+    );
+
+  if (failedCleanup.length > 0) {
+    throw new AggregateError(
+      failedCleanup.map(({ result }) => result.reason),
+      `[fixture cleanup] Failed to remove ${failedCleanup
+        .map(({ target }) => target)
+        .join(" and ")}: ${failedCleanup
+        .map(({ result }) => errorMessage(result.reason))
+        .join("; ")}`,
+    );
   }
 }
 
@@ -72,6 +110,8 @@ test(
   async ({ page, baseURL }) => {
     test.setTimeout(120_000);
     let objectWasUploaded = false;
+    let checkFailure: unknown;
+    let cleanupFailure: unknown;
 
     try {
       expect(getStorageProvider()).toBe("vercel-blob");
@@ -108,12 +148,28 @@ test(
         });
       });
 
-      await page.goto(baseURL!, { waitUntil: "domcontentloaded" });
+      try {
+        await page.goto(baseURL!, { waitUntil: "domcontentloaded" });
+      } catch (error) {
+        throw new Error(
+          `[visible fetch] Unable to open the deployed app before fetching the artwork image: ${errorMessage(error)}`,
+          { cause: error },
+        );
+      }
 
-      const visible = await fetchImageInBrowser(page, IMAGE_URL);
-      expect(visible.status).toBe(200);
-      expect(visible.headers["cache-control"]).toBe("private, no-store");
-      expect(visible.headers["content-type"]).toContain("image/png");
+      const visible = await fetchImageInBrowser(page, IMAGE_URL, "visible fetch");
+      expect(
+        visible.status,
+        "[visible fetch] Expected the visible artwork image to return HTTP 200.",
+      ).toBe(200);
+      expect(
+        visible.headers["cache-control"],
+        "[cache policy] Expected the visible artwork image response to be private, no-store.",
+      ).toBe("private, no-store");
+      expect(
+        visible.headers["content-type"],
+        "[visible fetch] Expected the visible artwork image response to be a PNG.",
+      ).toContain("image/png");
 
       await db
         .update(artworksTable)
@@ -127,10 +183,37 @@ test(
 
       // Use the exact URL requested above. A 200 here means an edge/browser
       // cache served the previous response instead of reauthorizing visibility.
-      const hidden = await fetchImageInBrowser(page, IMAGE_URL);
-      expect(hidden.status).toBe(404);
-    } finally {
+      const hidden = await fetchImageInBrowser(
+        page,
+        IMAGE_URL,
+        "post-hide fetch",
+      );
+      expect(
+        hidden.status,
+        "[post-hide fetch] Expected the same image URL to return HTTP 404 after the artwork is hidden.",
+      ).toBe(404);
+    } catch (error) {
+      checkFailure = error;
+    }
+
+    try {
       await cleanupFixture(objectWasUploaded);
+    } catch (error) {
+      cleanupFailure = error;
+    }
+
+    if (checkFailure && cleanupFailure) {
+      throw new AggregateError(
+        [checkFailure, cleanupFailure],
+        `[fixture cleanup] The smoke check failed with "${errorMessage(checkFailure)}" and cleanup also failed with "${errorMessage(cleanupFailure)}".`,
+        { cause: checkFailure },
+      );
+    }
+    if (cleanupFailure) {
+      throw cleanupFailure;
+    }
+    if (checkFailure) {
+      throw checkFailure;
     }
   },
 );

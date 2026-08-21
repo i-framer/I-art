@@ -10,6 +10,12 @@ function requireProductionSmokeEnvironment(): string {
     );
   }
 
+  if (process.env.PRODUCTION_SMOKE_APPROVED !== "approved") {
+    throw new Error(
+      "Production smoke tests require PRODUCTION_SMOKE_APPROVED=approved. Explicit approval is required because this test writes and removes a short-lived production fixture.",
+    );
+  }
+
   if (!baseURL?.startsWith("https://")) {
     throw new Error(
       "ARTWORK_BANK_PRODUCTION_SMOKE_URL must be an HTTPS URL for the deployed Artwork Bank app.",

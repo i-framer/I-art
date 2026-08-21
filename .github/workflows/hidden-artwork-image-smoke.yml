@@ -10,16 +10,49 @@ name: Hidden artwork image production smoke test
 #   PROD_DATABASE_URL      — the deployed app's production database URL
 #   BLOB_READ_WRITE_TOKEN  — token for the deployed Vercel Blob store
 #
-# Run manually after deploying changes to public image serving. This is
-# intentionally not scheduled: it writes a small, isolated fixture to prod.
+# Run after a live release only when the caller explicitly approves the
+# controlled production write. This workflow is reusable so a trusted release
+# workflow can invoke it after deployment with:
+#
+#   uses: ./.github/workflows/hidden-artwork-image-smoke.yml
+#   with:
+#     confirm_production_write: true
+#   secrets: inherit
+#
+# It is intentionally not scheduled: it writes a small, isolated fixture to
+# production.
 
 on:
   workflow_dispatch:
     inputs:
+      confirm_production_write:
+        description: >-
+          I approve creating and deleting the isolated production artwork and
+          image fixture for this release check.
+        required: true
+        default: false
+        type: boolean
       artwork_bank_url:
         description: Base URL of the deployed Artwork Bank app (overrides ARTWORK_BANK_URL).
         required: false
         type: string
+  workflow_call:
+    inputs:
+      confirm_production_write:
+        description: Explicit approval for the controlled production fixture write.
+        required: true
+        type: boolean
+      artwork_bank_url:
+        description: Base URL of the deployed Artwork Bank app (overrides ARTWORK_BANK_URL).
+        required: false
+        type: string
+    secrets:
+      ARTWORK_BANK_URL:
+        required: false
+      PROD_DATABASE_URL:
+        required: true
+      BLOB_READ_WRITE_TOKEN:
+        required: true
 
 jobs:
   smoke:
@@ -27,6 +60,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Confirm controlled production write approval
+        env:
+          CONFIRM_PRODUCTION_WRITE: ${{ inputs.confirm_production_write }}
+        run: |
+          if [ "$CONFIRM_PRODUCTION_WRITE" != "true" ]; then
+            echo "Production smoke test blocked: set confirm_production_write to true."
+            echo "The check creates and removes an isolated production artwork and image fixture."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
@@ -56,6 +99,7 @@ jobs:
       - name: Verify hidden image revocation at the production edge
         env:
           PRODUCTION_SMOKE: enabled
+          PRODUCTION_SMOKE_APPROVED: approved
           ARTWORK_BANK_PRODUCTION_SMOKE_URL: ${{ steps.resolve.outputs.url }}
           DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
           PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
