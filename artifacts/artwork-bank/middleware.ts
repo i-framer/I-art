@@ -12,6 +12,7 @@ const PLATFORM_DOMAIN_SUFFIXES = [
   ".repl.co",
   ".vercel.app",
   "localhost",
+  "127.0.0.1",
 ];
 
 /**

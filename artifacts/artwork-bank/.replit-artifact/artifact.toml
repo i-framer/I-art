@@ -7,7 +7,7 @@ router = "path"
 
 [[services]]
 name = "web"
-paths = [ "/" ]
+paths = [ "/", "/_next/webpack-hmr" ]
 localPort = 24410
 
 [services.development]

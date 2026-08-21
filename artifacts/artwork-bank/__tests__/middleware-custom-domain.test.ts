@@ -127,14 +127,17 @@ describe("middleware — custom domain routing", () => {
 
   // ── Platform domain passthrough ────────────────────────────────────────────
 
-  it("does not call the tenant lookup for localhost requests", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+  it.each(["localhost", "127.0.0.1"])(
+    "does not call the tenant lookup for the platform host %s",
+    async (host) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
 
-    await middleware(makeRequest("localhost"));
+      await middleware(makeRequest(host));
 
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   // ── Operational failure (5xx) — don't falsely show unknown-domain ──────────
 

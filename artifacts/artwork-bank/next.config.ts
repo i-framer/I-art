@@ -13,7 +13,12 @@ const nextConfig: NextConfig = {
   // with the concurrent `next dev` process in the Replit workspace.
   distDir: process.env.BUILD_DIR ?? ".next",
   // Silence the cross-origin warning from the Replit preview proxy.
-  allowedDevOrigins: ["localhost", "*.riker.replit.dev", "*.replit.dev"],
+  allowedDevOrigins: [
+    "localhost",
+    "127.0.0.1",
+    "*.riker.replit.dev",
+    "*.replit.dev",
+  ],
 };
 
 export default nextConfig;
