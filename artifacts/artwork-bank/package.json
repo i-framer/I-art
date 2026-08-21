@@ -18,6 +18,7 @@
     "smoke:billing-alert": "tsx scripts/smoke-billing-alert.ts",
     "smoke:schema-push-alert": "tsx scripts/smoke-schema-push-alert.ts",
     "smoke:drift-alert": "tsx scripts/smoke-drift-alert.ts",
+    "smoke:hidden-artwork-image": "playwright test --config playwright.production-smoke.config.ts",
     "probe:nextdev-startup": "tsx scripts/probe-nextdev-startup.ts"
   },
   "dependencies": {

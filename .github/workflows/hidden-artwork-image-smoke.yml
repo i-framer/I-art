@@ -1,0 +1,64 @@
+name: Hidden artwork image production smoke test
+
+# Creates a uniquely named, billing-exempt artwork and a 1×1 PNG in the
+# production services. It confirms the live public image route returns strict
+# no-store headers, hides the artwork, then confirms the same URL is denied.
+# The test always deletes its database fixture and blob before it exits.
+#
+# Required repository secrets:
+#   ARTWORK_BANK_URL       — deployed Artwork Bank base URL (https://...)
+#   PROD_DATABASE_URL      — the deployed app's production database URL
+#   BLOB_READ_WRITE_TOKEN  — token for the deployed Vercel Blob store
+#
+# Run manually after deploying changes to public image serving. This is
+# intentionally not scheduled: it writes a small, isolated fixture to prod.
+
+on:
+  workflow_dispatch:
+    inputs:
+      artwork_bank_url:
+        description: Base URL of the deployed Artwork Bank app (overrides ARTWORK_BANK_URL).
+        required: false
+        type: string
+
+jobs:
+  smoke:
+    name: Confirm hidden images are immediately denied
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Resolve target URL
+        id: resolve
+        env:
+          INPUT_URL: ${{ inputs.artwork_bank_url }}
+          SECRET_URL: ${{ secrets.ARTWORK_BANK_URL }}
+        run: |
+          URL="${INPUT_URL:-$SECRET_URL}"
+          if [[ "$URL" != https://* ]]; then
+            echo "ARTWORK_BANK_URL must be an HTTPS URL."
+            exit 1
+          fi
+          echo "url=${URL%/}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify hidden image revocation at the production edge
+        env:
+          PRODUCTION_SMOKE: enabled
+          ARTWORK_BANK_PRODUCTION_SMOKE_URL: ${{ steps.resolve.outputs.url }}
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          STORAGE_PROVIDER: vercel-blob
+        run: pnpm --filter @workspace/artwork-bank run smoke:hidden-artwork-image
