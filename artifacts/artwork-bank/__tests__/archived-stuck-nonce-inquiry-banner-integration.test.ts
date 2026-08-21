@@ -1,5 +1,5 @@
 /**
- * Task #1007 — Confirm archiving a stuck-nonce inquiry clears the admin
+ * Task #1096 — Confirm archiving a stuck-nonce inquiry clears the admin
  * "stuck nonce" banner count.
  *
  * A stuck-nonce inquiry has emailClaimNonce IS NOT NULL and
@@ -25,7 +25,15 @@ vi.mock("@/lib/auth", () => ({
   getSession: vi.fn(async () => ({ ...mockSession })),
 }));
 
+vi.mock("@/lib/billing", () => ({
+  requireActiveBillingAccess: vi.fn(async () => {}),
+}));
+
+const revalidatePath = vi.hoisted(() => vi.fn());
+vi.mock("next/cache", () => ({ revalidatePath }));
+
 import { getStuckNonceCount } from "@/app/(admin)/_actions/inquiry-count";
+import { setInquiryArchived } from "@/app/(admin)/(gated)/inquiries/actions";
 
 const RUN = randomUUID().slice(0, 8);
 let sequence = 0;
@@ -35,6 +43,13 @@ const createdInquiryIds: string[] = [];
 
 function makeId(label: string) {
   return `t1007-${RUN}-${++sequence}-${label}`;
+}
+
+function archiveFormData(inquiryId: string): FormData {
+  const formData = new FormData();
+  formData.set("inquiryId", inquiryId);
+  formData.set("archived", "true");
+  return formData;
 }
 
 async function insertTenant(id: string) {
@@ -102,10 +117,10 @@ afterEach(async () => {
 afterAll(cleanup);
 
 describeIntegration(
-  "Archiving a stuck-nonce inquiry clears the admin banner — real DB (Task #1007)",
+  "Archiving a stuck-nonce inquiry clears the admin banner — real DB (Task #1096)",
   () => {
     it(
-      "excludes an archived stuck-nonce inquiry from getStuckNonceCount",
+      "archives through setInquiryArchived, drops getStuckNonceCount, and revalidates both banner paths",
       { timeout: 30_000 },
       async () => {
         const tenantId = makeId("tenant");
@@ -121,13 +136,12 @@ describeIntegration(
         const countBeforeArchive = await getStuckNonceCount();
         expect(countBeforeArchive).toBeGreaterThanOrEqual(1);
 
-        await db
-          .update(inquiriesTable)
-          .set({ archivedAt: new Date() } as any)
-          .where(eq(inquiriesTable.id, inquiryId));
+        await setInquiryArchived(archiveFormData(inquiryId));
 
         const countAfterArchive = await getStuckNonceCount();
         expect(countAfterArchive).toBe(countBeforeArchive - 1);
+        expect(revalidatePath).toHaveBeenCalledWith("/inquiries");
+        expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
       },
     );
   },
