@@ -238,12 +238,9 @@ describeIntegration(
      * The count must equal 3 at every checkpoint until all deliveries succeed.
      * sendArtworkInquiry must be called exactly 3 times — never more.
      *
-     * Why emailLastAttemptAt = null matters here:
-     *   The sweep's CAS claim uses `WHERE emailLastAttemptAt IS NULL` (because
-     *   the snapshot is null).  After requeue resets the field to null, the CAS
-     *   for unclaimed rows is `IS NULL` → the DB value is null → condition still
-     *   matches → each row is claimed and delivered by the same sweep run.
-     *   This lets us verify the full end-to-end path in a single sweep pass.
+     * The requeue deliberately skips the live claimed row so another sweep
+     * cannot reclaim it and double-send. It still resets the two unclaimed rows,
+     * whose null timestamp continues to satisfy their CAS snapshots.
      */
     it(
       "count stays at N mid-sweep and drops to 0 post-sweep; no inquiry is double-sent",
@@ -318,10 +315,9 @@ describeIntegration(
 
         // ── Fire the concurrent requeue ────────────────────────────────────────
         //
-        // requeueNoContactEmailInquiries resets emailAttempts→0 and
-        // emailLastAttemptAt→null for every row still carrying the sentinel.
-        // This simulates the gallery owner saving their contact email while the
-        // sweep is blocked waiting for the transport.
+        // requeueNoContactEmailInquiries resets unclaimed sentinel rows while
+        // preserving the active claim. This prevents another sweep from
+        // reclaiming the blocked delivery and double-sending it.
 
         await requeueNoContactEmailInquiries(tenantId);
 
@@ -344,17 +340,21 @@ describeIntegration(
           expect(row?.emailError).toBe(NO_CONTACT_EMAIL_ERROR);
         }
 
-        // Row 1's emailAttempts was reset to 0 by requeue (even though the
-        // sweep had already CAS-claimed it — the claim stamp was on
-        // emailLastAttemptAt, not emailAttempts, and requeue resets both).
-        expect(row1Mid?.emailAttempts).toBe(0);
-
-        // Rows 2 and 3 were not yet claimed; requeue is a no-op (they were
-        // already at emailAttempts=0 and emailLastAttemptAt=null).
-        expect(row2Mid?.emailAttempts).toBe(0);
-        expect(row2Mid?.emailLastAttemptAt).toBeNull();
-        expect(row3Mid?.emailAttempts).toBe(0);
-        expect(row3Mid?.emailLastAttemptAt).toBeNull();
+        // The query does not promise a candidate order, so assert the claim
+        // state across all rows rather than assigning the blocked delivery to
+        // a particular seeded id. Exactly one row is actively claimed; requeue
+        // leaves its nonce and timestamp intact. The other two are reset.
+        const rowsMid = [row1Mid, row2Mid, row3Mid];
+        const activeRows = rowsMid.filter((row) => row?.emailClaimNonce);
+        const unclaimedRows = rowsMid.filter((row) => !row?.emailClaimNonce);
+        expect(activeRows).toHaveLength(1);
+        expect(activeRows[0]?.emailAttempts).toBe(0);
+        expect(activeRows[0]?.emailLastAttemptAt).toBeInstanceOf(Date);
+        expect(unclaimedRows).toHaveLength(2);
+        for (const row of unclaimedRows) {
+          expect(row?.emailAttempts).toBe(0);
+          expect(row?.emailLastAttemptAt).toBeNull();
+        }
 
         // ── Release the deferred — sweep resumes ──────────────────────────────
 
@@ -391,13 +391,12 @@ describeIntegration(
     );
 
     /**
-     * Variant: requeue fires *between* deliveries — after row 1 has been
-     * delivered (emailError cleared) but before row 2 is claimed.
+     * Variant: requeue fires *between* deliveries — after one row has been
+     * delivered (emailError cleared) and while the next row is claimed.
      *
-     * At that point the count should be 2 (rows 2 and 3 still have the
-     * sentinel), the requeue should be a no-op for row 1 (emailError=null does
-     * not match the sentinel filter), and the sweep should continue to deliver
-     * rows 2 and 3 successfully.
+     * At that point the count should be 2. Requeue must preserve both the
+     * delivered row and the active claim, then the sweep continues to deliver
+     * the remaining rows successfully.
      *
      * Synchronization: instead of polling with flushMicrotasks we expose a
      * `secondCallStarted` deferred that the mock resolves the instant the
@@ -433,10 +432,9 @@ describeIntegration(
 
         // ── Transport: row 1 resolves immediately; row 2 blocks ───────────────
         //
-        // `secondCallStarted` resolves the moment sendArtworkInquiry is called
-        // for row 2.  That call can only happen after row 1's DB success-write
-        // has committed (the sweep loop is sequential), giving us a precise,
-        // race-free synchronization point.
+         // `secondCallStarted` resolves the moment the second sequential
+         // sendArtworkInquiry call begins. The first success write has committed
+         // by then, while the second row's live claim is protected by its nonce.
 
         const secondDelivery = createDeferred<boolean>();
         const secondCallStarted = createDeferred<void>();
@@ -454,26 +452,35 @@ describeIntegration(
 
         const sweepPromise = sweepUnsentInquiryEmails(new Date(), tenantId);
 
-        // Wait until the sweep has called sendArtworkInquiry for row 2.
-        // At this point row 1's emailError is null in the DB.
+        // Wait until the second sequential delivery begins.
         await secondCallStarted.promise;
 
-        // ── Row 1 is delivered; rows 2 and 3 are still pending ────────────────
+        // ── One row delivered; one row claimed; one row is pending ─────────────
 
-        const row1Mid = await fetchRow(inqId1);
-        expect(row1Mid?.emailError).toBeNull(); // delivered
+        const rowsMid = await Promise.all([
+          fetchRow(inqId1),
+          fetchRow(inqId2),
+          fetchRow(inqId3),
+        ]);
+        expect(rowsMid.filter((row) => row?.emailError === null)).toHaveLength(1);
+        expect(rowsMid.filter((row) => row?.emailClaimNonce)).toHaveLength(1);
+        expect(
+          rowsMid.filter(
+            (row) =>
+              row?.emailError === NO_CONTACT_EMAIL_ERROR &&
+              row.emailClaimNonce === null,
+          ),
+        ).toHaveLength(1);
 
-        // Count at this mid-point: 2 (rows 2 and 3 still carry the sentinel).
+        // Count at this mid-point: the two non-delivered rows still carry the
+        // no-contact sentinel.
         const countMid = await getNoContactEmailInquiryCount();
         expect(countMid).toBe(2);
 
-        // ── Requeue fires between row 1 (done) and row 2 (in-flight) ──────────
+        // ── Requeue fires between one completed and one in-flight delivery ─────
         //
-        // requeueNoContactEmailInquiries only touches rows WHERE emailError =
-        // NO_CONTACT_EMAIL_ERROR.  Row 1 is already cleared (emailError=null)
-        // so it is unaffected.  Rows 2 and 3 still carry the sentinel, so their
-        // emailAttempts→0 and emailLastAttemptAt→null (already the seeded
-        // state, so effectively a no-op for the CAS condition).
+        // It cannot touch the delivered row (error cleared) or the active row
+        // (non-expired nonce). Only the remaining unclaimed sentinel row resets.
 
         await requeueNoContactEmailInquiries(tenantId);
 
@@ -544,7 +551,7 @@ describeIntegration(
         const countMid = await getNoContactEmailInquiryCount();
         expect(countMid).toBe(1);
 
-        // Concurrent requeue — resets emailAttempts→0, emailLastAttemptAt→null.
+        // Concurrent requeue preserves the live claim to avoid a double send.
         await requeueNoContactEmailInquiries(tenantId);
 
         // Count is still 1 (emailError unchanged).

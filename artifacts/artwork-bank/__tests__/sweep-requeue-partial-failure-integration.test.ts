@@ -181,23 +181,23 @@ describeIntegration(
         // Both rows must have been attempted — sendArtworkInquiry is called twice.
         expect(sendArtworkInquiry).toHaveBeenCalledTimes(2);
 
-        // ── Row-level assertions: first inquiry (failed) ───────────────────
-        const firstAfter = await inquiryRow(firstInquiryId);
-        // emailAttempts incremented from 0 → 1 even on failure.
-        expect(firstAfter?.emailAttempts).toBe(1);
-        // emailLastAttemptAt is set, proving the sweep reached the row.
-        expect(firstAfter?.emailLastAttemptAt).toBeInstanceOf(Date);
-        // emailError is updated to the transport error message.
-        expect(firstAfter?.emailError).toMatch(/SMTP timeout/);
+        // The sweep does not declare an order for its database candidates, so
+        // assert final states rather than assuming the first inserted inquiry
+        // receives the first transport result.
+        const rowsAfter = await Promise.all([
+          inquiryRow(firstInquiryId),
+          inquiryRow(secondInquiryId),
+        ]);
+        for (const row of rowsAfter) {
+          expect(row?.emailAttempts).toBe(1);
+          expect(row?.emailLastAttemptAt).toBeInstanceOf(Date);
+        }
 
-        // ── Row-level assertions: second inquiry (sent) ────────────────────
-        const secondAfter = await inquiryRow(secondInquiryId);
-        // emailAttempts incremented from 0 → 1 on success.
-        expect(secondAfter?.emailAttempts).toBe(1);
-        // emailLastAttemptAt is set.
-        expect(secondAfter?.emailLastAttemptAt).toBeInstanceOf(Date);
-        // emailError is cleared on successful delivery.
-        expect(secondAfter?.emailError).toBeNull();
+        const failedRows = rowsAfter.filter((row) => row?.emailError !== null);
+        const sentRows = rowsAfter.filter((row) => row?.emailError === null);
+        expect(failedRows).toHaveLength(1);
+        expect(failedRows[0]?.emailError).toMatch(/SMTP timeout/);
+        expect(sentRows).toHaveLength(1);
       },
     );
   },

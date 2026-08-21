@@ -1,17 +1,8 @@
 /**
- * Task #936 — Confirm the inquiry-notification retry is blocked for staff
- * on a real database.
- *
- * `retryFailedInquiryNotifications` in settings/actions.ts checks
- * `session.role !== "owner"` and redirects to
- * `/settings?retry_result=unauthorized` before calling
- * `requeueAllFailedInquiries`.  This suite hits a live PostgreSQL database to
- * confirm the guard fires before any DB write, covering the full server-action
- * path.
- *
- *  1. Calling the action as staff → throws REDIRECT:/settings?retry_result=unauthorized
- *  2. `requeueAllFailedInquiries` is never invoked (no sweep write)
- *  3. The seeded inquiry row is completely untouched after the call
+ * `retryFailedInquiryNotifications` in settings/actions.ts allows only owners
+ * to requeue failed notifications. This suite seeds genuine SMTP-error
+ * inquiries in PostgreSQL and confirms a staff session is redirected before
+ * the real retry helper can update either row.
  */
 import { afterAll, it, expect, vi } from "vitest";
 import { describeIntegration } from "./helpers/skip-if-no-db";
@@ -38,21 +29,10 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
-// Spy on email-sweep so we can assert requeueAllFailedInquiries is never
-// called when the staff guard fires.  vi.hoisted() runs before vi.mock()
-// factory evaluation, so the spy reference is available inside the factory.
-const { requeueAllFailedInquiriesSpy } = vi.hoisted(() => ({
-  requeueAllFailedInquiriesSpy: vi.fn(async () => 0),
-}));
-vi.mock("@/lib/email-sweep", () => ({
-  requeueNoContactEmailInquiries: vi.fn(async () => {}),
-  requeueAllFailedInquiries: requeueAllFailedInquiriesSpy,
-  NO_CONTACT_EMAIL_ERROR: "no gallery contact email",
-}));
-
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { retryFailedInquiryNotifications } from "@/app/(admin)/settings/actions";
+import { MAX_EMAIL_ATTEMPTS } from "@/lib/email-sweep";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -84,7 +64,7 @@ async function insertArtwork(id: string, tenantId: string): Promise<void> {
     id,
     tenantId,
     title: "Test Artwork 936",
-    sku: `sku-936-${RUN}`,
+    sku: `sku-936-${RUN}-${id.slice(-4)}`,
     status: "AVAILABLE",
   } as any);
 }
@@ -93,6 +73,9 @@ async function insertFailedInquiry(
   id: string,
   tenantId: string,
   artworkId: string,
+  emailError: string,
+  emailAttempts: number,
+  emailLastAttemptAt: Date,
 ): Promise<void> {
   CREATED_INQUIRY_IDS.push(id);
   await db.insert(inquiriesTable).values({
@@ -103,9 +86,20 @@ async function insertFailedInquiry(
     buyerName: "Test Buyer",
     buyerEmail: "buyer@example.com",
     message: "Is this available?",
-    emailError: "SMTP connection refused",
-    emailAttempts: 3,
+    emailError,
+    emailAttempts,
+    emailLastAttemptAt,
   });
+}
+
+async function getInquiryState(id: string) {
+  const row = await db.query.inquiriesTable.findFirst({
+    where: eq(inquiriesTable.id, id),
+  });
+  return {
+    emailAttempts: row?.emailAttempts,
+    emailLastAttemptAt: row?.emailLastAttemptAt,
+  };
 }
 
 // ── Cleanup ───────────────────────────────────────────────────────────────────
@@ -126,46 +120,61 @@ afterAll(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describeIntegration(
-  "retryFailedInquiryNotifications — staff guard — real DB (Task #936)",
+  "retryFailedInquiryNotifications — staff authorization — real DB",
   () => {
     it(
       "staff role → redirects to /settings?retry_result=unauthorized " +
-        "and makes zero DB writes to inquiry rows",
+        "and leaves every SMTP-error inquiry unchanged",
       async () => {
         const tenantId = makeId("tenant");
-        const artworkId = makeId("artwork");
-        const inquiryId = makeId("inquiry");
+        const artworkId1 = makeId("artwork-1");
+        const artworkId2 = makeId("artwork-2");
+        const inquiryId1 = makeId("inquiry-1");
+        const inquiryId2 = makeId("inquiry-2");
+        const timestamp1 = new Date("2024-02-01T00:00:00.000Z");
+        const timestamp2 = new Date("2024-02-02T00:00:00.000Z");
 
         await insertTenant(tenantId);
-        await insertArtwork(artworkId, tenantId);
-        await insertFailedInquiry(inquiryId, tenantId, artworkId);
+        await insertArtwork(artworkId1, tenantId);
+        await insertArtwork(artworkId2, tenantId);
+        await insertFailedInquiry(
+          inquiryId1,
+          tenantId,
+          artworkId1,
+          "SMTP connection refused",
+          MAX_EMAIL_ATTEMPTS,
+          timestamp1,
+        );
+        await insertFailedInquiry(
+          inquiryId2,
+          tenantId,
+          artworkId2,
+          "550 mailbox not found",
+          MAX_EMAIL_ATTEMPTS + 1,
+          timestamp2,
+        );
 
-        // Confirm baseline state before the call
-        const before = await db.query.inquiriesTable.findFirst({
-          where: eq(inquiriesTable.id, inquiryId),
-        });
-        expect(before?.emailError).toBe("SMTP connection refused");
-        expect(before?.emailAttempts).toBe(3);
+        const before1 = await getInquiryState(inquiryId1);
+        const before2 = await getInquiryState(inquiryId2);
+        expect(before1.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+        expect(before2.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS + 1);
+        expect(before1.emailLastAttemptAt?.getTime()).toBe(timestamp1.getTime());
+        expect(before2.emailLastAttemptAt?.getTime()).toBe(timestamp2.getTime());
 
-        // Act as staff
         mockSession.tenantId = tenantId;
         mockSession.role = "staff";
-        requeueAllFailedInquiriesSpy.mockClear();
 
-        await expect(retryFailedInquiryNotifications()).rejects.toThrow(
+        const error = await retryFailedInquiryNotifications().catch((cause) => cause);
+
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toBe(
           "REDIRECT:/settings?retry_result=unauthorized",
         );
 
-        // requeueAllFailedInquiries must never have been called
-        expect(requeueAllFailedInquiriesSpy).not.toHaveBeenCalled();
-
-        // Inquiry row must be completely unchanged
-        const after = await db.query.inquiriesTable.findFirst({
-          where: eq(inquiriesTable.id, inquiryId),
-        });
-        expect(after?.emailError).toBe("SMTP connection refused");
-        expect(after?.emailAttempts).toBe(3);
-        expect(after?.emailLastAttemptAt).toBeNull();
+        const after1 = await getInquiryState(inquiryId1);
+        const after2 = await getInquiryState(inquiryId2);
+        expect(after1).toEqual(before1);
+        expect(after2).toEqual(before2);
       },
     );
   },
