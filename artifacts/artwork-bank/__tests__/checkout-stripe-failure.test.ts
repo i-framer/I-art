@@ -73,6 +73,7 @@ vi.mock("@workspace/db", () => ({
   },
   artworksTable: { id: "a.id", tenantId: "a.tenantId", status: "a.status", showInGallery: "a.showInGallery" },
   artworkImagesTable: { artworkId: "ai.artworkId", isPrimary: "ai.isPrimary" },
+  tenantsTable: { id: "t.id", stripeAccountId: "t.stripeAccountId" },
   ordersTable: {},
   orderItemsTable: {},
   eq: vi.fn(),
@@ -197,6 +198,34 @@ describe("checkout route — Stripe failure releases reservation", () => {
 
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(releaseUpdateCalls.count).toBe(1);
+  });
+
+  it("clears a stale Connect account and returns a buyer-safe reconnect message", async () => {
+    const staleAccountError = Object.assign(
+      new Error("No such account: 'acct_test_123'"),
+      { code: "resource_missing" },
+    );
+    getStripeClient.mockResolvedValueOnce({
+      checkout: {
+        sessions: {
+          create: vi.fn().mockRejectedValueOnce(staleAccountError),
+        },
+      },
+    });
+
+    const res = await POST(makeRequest());
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({
+      error:
+        "This gallery's payment connection needs to be reconnected. Please try again later or contact the gallery directly.",
+    });
+    expect(releaseUpdateCalls.count).toBe(1);
+    expect(updateSetFn).toHaveBeenCalledWith({
+      stripeAccountId: null,
+      stripeChargesEnabled: false,
+      stripePayoutsEnabled: false,
+    });
   });
 });
 

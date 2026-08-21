@@ -55,8 +55,8 @@ const mockTenant = {
   customDomain: null,
   customDomainVerified: false,
   stripeAccountId: null,
-  stripeChargesEnabled: null,
-  stripePayoutsEnabled: null,
+  stripeChargesEnabled: null as boolean | null,
+  stripePayoutsEnabled: null as boolean | null,
 };
 
 vi.mock("@workspace/db", () => ({
@@ -184,6 +184,9 @@ async function renderSettingsPage(searchParams = makeSearchParams()) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockFailedCount = 0;
+  mockTenant.stripeAccountId = null;
+  mockTenant.stripeChargesEnabled = null;
+  mockTenant.stripePayoutsEnabled = null;
   cleanup();
 });
 
@@ -249,5 +252,26 @@ describe("Settings page — retry button visibility by role", () => {
       retryButtons,
       "No retry button when there are no failed inquiries",
     ).toHaveLength(0);
+  });
+});
+
+describe("Settings page — stale Stripe connection", () => {
+  it("shows a reconnect warning after checkout clears a missing Connect account", async () => {
+    mockTenant.stripeChargesEnabled = false;
+    mockTenant.stripePayoutsEnabled = false;
+    getSession.mockResolvedValue({
+      userId: "u-owner-3",
+      tenantId: "tenant-1",
+      role: "owner",
+    });
+
+    await renderSettingsPage();
+
+    expect(
+      screen.getByText("Reconnect Stripe to accept payments"),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Reconnect Stripe Account" }),
+    ).toBeTruthy();
   });
 });

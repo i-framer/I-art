@@ -5,6 +5,7 @@ import {
   artworkImagesTable,
   freightMethodsTable,
   freightSettingsTable,
+  tenantsTable,
 } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { getTenantBySlug } from "@/lib/tenant-cache";
@@ -16,6 +17,7 @@ import {
 import { getServeUrl } from "@/lib/object-storage";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getFreightCents, getFreightClass } from "@/lib/freight";
+import { isStripeAccountMissing } from "@/lib/stripe-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -380,6 +382,46 @@ export async function POST(request: Request) {
           },
         });
       } catch (err: any) {
+        // A saved Connect ID can become stale when a gallery's Stripe platform
+        // or API mode changes. Remove only the matching saved ID so Settings
+        // shows a reconnect prompt, then return a buyer-safe error instead of
+        // exposing Stripe's raw "No such account" response.
+        if (isStripeAccountMissing(err)) {
+          await releaseReservation();
+          try {
+            await db
+              .update(tenantsTable)
+              .set({
+                stripeAccountId: null,
+                stripeChargesEnabled: false,
+                stripePayoutsEnabled: false,
+              })
+              .where(
+                and(
+                  eq(tenantsTable.id, tenant.id),
+                  eq(tenantsTable.stripeAccountId, tenant.stripeAccountId),
+                ),
+              );
+          } catch (clearErr) {
+            console.error(
+              `[checkout] Failed to clear stale Connect account ${tenant.stripeAccountId} for tenant ${tenant.id}:`,
+              clearErr,
+            );
+          }
+
+          console.error(
+            `[checkout] Stale Connect account ${tenant.stripeAccountId} for tenant ${tenant.id}:`,
+            err?.message ?? err,
+          );
+          return NextResponse.json(
+            {
+              error:
+                "This gallery's payment connection needs to be reconnected. Please try again later or contact the gallery directly.",
+            },
+            { status: 503 },
+          );
+        }
+
         // Stripe rejects session creation when a connected account is not yet
         // enabled for charges (onboarding incomplete, account restricted, or
         // country/compliance requirements outstanding).  Surface a clear 503

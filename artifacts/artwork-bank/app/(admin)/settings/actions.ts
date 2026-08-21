@@ -15,6 +15,7 @@ import {
   requeueNoContactEmailInquiries,
   requeueExhaustedInquiries,
 } from "@/lib/email-sweep";
+import { isStripeResourceMissing } from "@/lib/stripe-errors";
 
 const settingsSchema = z.object({
   businessName: z.string().min(2),
@@ -344,22 +345,6 @@ export async function verifyCustomDomain(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Stripe Connect onboarding
 // ---------------------------------------------------------------------------
-
-/**
- * True when a Stripe error means a saved account/customer ID no longer exists
- * under the current API key (e.g. the key was switched between live and test
- * mode, or between Stripe accounts). Recoverable by clearing the stale ID.
- */
-function isStripeResourceMissing(err: unknown): boolean {
-  const e = err as {
-    code?: string;
-    raw?: { code?: string };
-    message?: string;
-  } | null;
-  const code = e?.code ?? e?.raw?.code;
-  if (code === "resource_missing" || code === "account_invalid") return true;
-  return /no such (account|customer)/i.test(String(e?.message ?? ""));
-}
 
 /**
  * True when Stripe rejected account creation because Connect is not enabled

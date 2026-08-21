@@ -71,6 +71,11 @@ export default async function SettingsPage({
       stripeStatus = "pending";
     }
   }
+  // Checkout clears a missing/stale Connect ID and records disabled readiness
+  // so the owner sees a reconnect prompt rather than a generic first-time
+  // connection action on their next visit to Settings.
+  const stripeConnectionNeedsReconnect =
+    !tenant.stripeAccountId && tenant.stripeChargesEnabled === false;
 
   // Count inquiries stalled on "no gallery contact email" so the UI can warn
   // the gallery owner before they save an empty contact email field.
@@ -476,6 +481,19 @@ export default async function SettingsPage({
           {platformFeePercent}% applies per transaction.
         </p>
 
+        {stripeConnectionNeedsReconnect && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div>
+              <p className="font-medium">Reconnect Stripe to accept payments</p>
+              <p className="mt-1 text-amber-700">
+                Your previous Stripe payment connection is no longer available.
+                Reconnect it before buyers try to check out again.
+              </p>
+            </div>
+          </div>
+        )}
+
         {stripeStatus === "active" ? (
           <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-700">
             <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -504,7 +522,9 @@ export default async function SettingsPage({
               type="submit"
               className="rounded-lg bg-[#635bff] px-5 py-2.5 text-sm font-medium text-white hover:bg-[#5a52e8] transition-colors"
             >
-              Connect Stripe Account
+              {stripeConnectionNeedsReconnect
+                ? "Reconnect Stripe Account"
+                : "Connect Stripe Account"}
             </button>
           </form>
         )}
