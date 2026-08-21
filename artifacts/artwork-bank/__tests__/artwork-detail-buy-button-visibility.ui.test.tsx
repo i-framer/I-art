@@ -185,6 +185,28 @@ describe("artwork detail page — stripeChargesEnabled is null (no webhook yet)"
       screen.queryByText(/gallery not yet accepting payments/i),
     ).toBeNull();
   });
+
+  it("shows an enquiry form alongside Buy Now when the gallery has a contact email", async () => {
+    vi.mocked(getTenantBySlug).mockResolvedValue({
+      ...baseTenant,
+      stripeChargesEnabled: true,
+      contactEmail: "gallery@example.com",
+    } as any);
+
+    const jsx = await ArtworkDetailPage(makeParams());
+    render(jsx as React.ReactElement);
+
+    expect(screen.getByTestId("buy-now-button")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /question before buying/i })).toBeTruthy();
+    expect(screen.getByTestId("inquiry-form")).toBeTruthy();
+  });
+
+  it("does not show an enquiry form when the gallery has no contact email", async () => {
+    const jsx = await ArtworkDetailPage(makeParams());
+    render(jsx as React.ReactElement);
+
+    expect(screen.queryByTestId("inquiry-form")).toBeNull();
+  });
 });
 
 // ── artwork.status = SOLD ─────────────────────────────────────────────────────

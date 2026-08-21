@@ -247,13 +247,36 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
                 )}
               </div>
             ) : (
-              <BuyNowButton
-                artworkId={artworkId}
-                slug={slug}
-                tenantType={tenant.type}
-                price={artwork.price!}
-                themeColor={themeColor}
-              />
+              <div className="space-y-5">
+                <BuyNowButton
+                  artworkId={artworkId}
+                  slug={slug}
+                  tenantType={tenant.type}
+                  price={artwork.price!}
+                  themeColor={themeColor}
+                />
+                {tenant.contactEmail && (
+                  <section
+                    aria-labelledby="artwork-inquiry-heading"
+                    className="rounded-xl border border-stone-200 bg-stone-50 p-4"
+                  >
+                    <h2
+                      id="artwork-inquiry-heading"
+                      className="text-sm font-semibold text-stone-800"
+                    >
+                      Have a question before buying?
+                    </h2>
+                    <p className="mt-1 text-xs text-stone-500">
+                      Send an enquiry directly to {tenant.businessName}.
+                    </p>
+                    <InquiryForm
+                      slug={slug}
+                      artworkId={artworkId}
+                      themeColor={themeColor}
+                    />
+                  </section>
+                )}
+              </div>
             )}
           </div>
 
