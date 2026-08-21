@@ -8,14 +8,17 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildVitestArgs } from "../scripts/run-integration-tests.js";
+import {
+  buildFullSuiteRuns,
+  buildVitestArgs,
+  SHARED_DATABASE_STATE_FILES,
+} from "../scripts/run-integration-tests.js";
 
 const VITEST_PREFIX = [
   "run",
   "--config",
   "vitest.integration.config.ts",
-  "--no-file-parallelism",
-  "--reporter=verbose",
+  "--reporter=default",
 ];
 
 describe("focused integration-test command", () => {
@@ -32,6 +35,20 @@ describe("focused integration-test command", () => {
     expect(buildVitestArgs(["--", ...filters])).toEqual([
       ...VITEST_PREFIX,
       ...filters,
+    ]);
+  });
+
+  it("runs global database-state assertions in a serial phase", () => {
+    const [parallelRun, serialRun] = buildFullSuiteRuns();
+
+    expect(parallelRun).toEqual([
+      ...VITEST_PREFIX,
+      ...SHARED_DATABASE_STATE_FILES.flatMap((file) => ["--exclude", file]),
+    ]);
+    expect(serialRun).toEqual([
+      ...VITEST_PREFIX,
+      "--no-file-parallelism",
+      ...SHARED_DATABASE_STATE_FILES,
     ]);
   });
 });

@@ -102,26 +102,6 @@ function createDeferred<T = void>() {
   return { promise, resolve, reject };
 }
 
-/**
- * Yield to the Node.js microtask / macro-task queue so any already-started
- * async chains (like a non-awaited sweep) can advance to their next suspension
- * point (typically the first `await` inside a mock).
- *
- * One `setImmediate` is usually enough for the sweep to read its DB candidates
- * and reach the first `sendArtworkInquiry` call.  We use three rounds to be
- * safe across minor implementation changes.
- */
-function flushMicrotasks(rounds = 3): Promise<void> {
-  return new Promise((resolve) => {
-    let remaining = rounds;
-    function next() {
-      if (--remaining <= 0) return resolve();
-      setImmediate(next);
-    }
-    setImmediate(next);
-  });
-}
-
 // ── Test data helpers ─────────────────────────────────────────────────────────
 
 const RUN = randomUUID().slice(0, 8);
@@ -278,11 +258,13 @@ describeIntegration(
         // further intervention once we release the first deferred.
 
         const firstDelivery = createDeferred<boolean>();
+        const firstDeliveryStarted = createDeferred<void>();
         let deliveryCallCount = 0;
 
         sendArtworkInquiry.mockImplementation(async () => {
           deliveryCallCount++;
           if (deliveryCallCount === 1) {
+            firstDeliveryStarted.resolve();
             // Block until the test releases this deferred.
             return firstDelivery.promise;
           }
@@ -297,12 +279,15 @@ describeIntegration(
         //  2. CAS-claim row 1 (stamp emailLastAttemptAt).
         //  3. Call sendArtworkInquiry for row 1 → suspend here (deferred).
         //
-        // Control returns to the test after flushMicrotasks.
+        // Control returns immediately; the explicit delivery signal below
+        // tells the test when the claim has reached the transport.
 
         const sweepPromise = sweepUnsentInquiryEmails(new Date(), tenantId);
 
-        // Give the sweep enough event-loop turns to reach the first blocked send.
-        await flushMicrotasks(5);
+        // A delivery begins only after its database claim is committed. Waiting
+        // for this explicit signal keeps the mid-sweep assertion stable when
+        // other isolated integration workers are actively using the database.
+        await firstDeliveryStarted.promise;
 
         // ── Mid-sweep checkpoint (before requeue) ─────────────────────────────
         //
@@ -398,7 +383,7 @@ describeIntegration(
      * delivered row and the active claim, then the sweep continues to deliver
      * the remaining rows successfully.
      *
-     * Synchronization: instead of polling with flushMicrotasks we expose a
+     * Synchronization: instead of timing an event-loop poll we expose a
      * `secondCallStarted` deferred that the mock resolves the instant the
      * second sendArtworkInquiry invocation begins.  This is the earliest
      * possible moment after row 1's DB success-write has committed, giving us
@@ -540,12 +525,16 @@ describeIntegration(
         // ── Deferred transport ────────────────────────────────────────────────
 
         const delivery = createDeferred<boolean>();
-        sendArtworkInquiry.mockImplementation(() => delivery.promise);
+        const deliveryStarted = createDeferred<void>();
+        sendArtworkInquiry.mockImplementation(() => {
+          deliveryStarted.resolve();
+          return delivery.promise;
+        });
 
         const sweepPromise = sweepUnsentInquiryEmails(new Date(), tenantId);
 
-        // Advance to the blocked delivery.
-        await flushMicrotasks(5);
+        // A delivery begins only after its database claim is committed.
+        await deliveryStarted.promise;
 
         // Mid-sweep: row is claimed but not yet delivered — count is still 1.
         const countMid = await getNoContactEmailInquiryCount();

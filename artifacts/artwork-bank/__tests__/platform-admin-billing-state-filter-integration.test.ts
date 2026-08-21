@@ -94,17 +94,23 @@ describeIntegration("Platform admin billing state filter — real-DB integration
   });
 
   it("count of tenants per billing state is correct", async () => {
-    const activeBefore = (await tenantsByStatus("active")).length;
-    const canceledBefore = (await tenantsByStatus("canceled")).length;
+    const activeTenantIds = [
+      await createTenant("active"),
+      await createTenant("active"),
+    ];
+    const canceledTenantId = await createTenant("canceled");
 
-    await createTenant("active");
-    await createTenant("active");
-    await createTenant("canceled");
+    // Other integration files can create their own tenants concurrently. Count
+    // only this test's uniquely seeded fixtures so the assertion remains about
+    // the billing-state filter rather than unrelated database activity.
+    const activeRows = await tenantsByStatus("active");
+    const canceledRows = await tenantsByStatus("canceled");
 
-    const activeAfter   = (await tenantsByStatus("active")).length;
-    const canceledAfter = (await tenantsByStatus("canceled")).length;
-
-    expect(activeAfter).toBe(activeBefore + 2);
-    expect(canceledAfter).toBe(canceledBefore + 1);
+    expect(
+      activeRows.filter((row) => activeTenantIds.includes(row.id)),
+    ).toHaveLength(2);
+    expect(
+      canceledRows.filter((row) => row.id === canceledTenantId),
+    ).toHaveLength(1);
   });
 });

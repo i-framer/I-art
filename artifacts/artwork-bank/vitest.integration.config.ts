@@ -25,5 +25,11 @@ export default defineConfig({
     include: [
       "__tests__/**/*-integration.test.ts",
     ],
+    // A small, fixed pool keeps the full suite comfortably inside the command
+    // limit without overwhelming the database with hundreds of simultaneous
+    // pools. The runner reserves globally scoped queue/count assertions for a
+    // short serial phase; all other files run in isolated workers.
+    fileParallelism: true,
+    maxWorkers: 4,
   },
 });
