@@ -15,13 +15,18 @@ import {
   calcApplicationFee,
   StripeNotConfiguredError,
 } from "@/lib/stripe";
-import { sendOrderConfirmation, sendBillingAlertNotification } from "@/lib/email";
+import {
+  sendBillingAlertNotification,
+  sendGalleryNewOrderNotification,
+  sendOrderConfirmation,
+} from "@/lib/email";
 import { sendBillingAlertSlackNotification } from "@/lib/slack";
 import { getTenantUrl } from "@/lib/base-url";
 import { createIFramerJob, IFramerError } from "@/lib/iframer";
 import type Stripe from "stripe";
 
 export const dynamic = "force-dynamic";
+const NO_GALLERY_ORDER_EMAIL_ERROR = "no gallery contact email";
 
 export async function POST(request: Request) {
   const body = await request.text();
@@ -889,6 +894,89 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
           (dbErr as any)?.message ?? dbErr,
         );
       }
+    }
+  }
+
+  // Notify the owning gallery separately from the buyer confirmation. The
+  // order is already committed, so transport or bookkeeping failures are
+  // logged and persisted where possible but never turn this webhook into a
+  // Stripe retry loop. The stripeSessionId idempotency guard above ensures a
+  // replay cannot dispatch this notification twice.
+  if (tenant?.contactEmail) {
+    const attemptedAt = new Date();
+    let deliveryError: string | null = null;
+    try {
+      await sendGalleryNewOrderNotification({
+        galleryEmail: tenant.contactEmail,
+        buyerEmail,
+        buyerName,
+        artworkTitle: artwork.title,
+        artworkSku: artwork.sku,
+        totalCents: order.totalCents,
+        fulfillmentType,
+        orderRef: order.id.slice(0, 8).toUpperCase(),
+        tenantName: tenant.businessName,
+      });
+    } catch (err) {
+      deliveryError = (err as any)?.message ?? String(err);
+      console.error(
+        `Gallery new-order email failed for order ${order.id}:`,
+        deliveryError,
+      );
+    }
+
+    if (deliveryError === null) {
+      // Keep bookkeeping errors separate from transport errors. If the provider
+      // accepted the message but this write fails, recording it as an email
+      // failure would be false and could prompt a duplicate manual retry.
+      try {
+        await db
+          .update(ordersTable)
+          .set({
+            galleryOrderEmailSentAt: attemptedAt,
+            galleryOrderEmailError: null,
+            galleryOrderEmailAttempts: 1,
+            galleryOrderEmailLastAttemptAt: attemptedAt,
+          })
+          .where(eq(ordersTable.id, order.id));
+      } catch (dbErr) {
+        console.error(
+          `Failed to record successful gallery email for order ${order.id}:`,
+          (dbErr as any)?.message ?? dbErr,
+        );
+      }
+    } else {
+      // A confirmed transport failure is retryable. Persist it independently;
+      // failure to write this state must still remain non-fatal to Stripe.
+      try {
+        await db
+          .update(ordersTable)
+          .set({
+            galleryOrderEmailError: deliveryError,
+            galleryOrderEmailAttempts: 1,
+            galleryOrderEmailLastAttemptAt: attemptedAt,
+          })
+          .where(eq(ordersTable.id, order.id));
+      } catch (dbErr) {
+        console.error(
+          `Failed to record gallery email error for order ${order.id}:`,
+          (dbErr as any)?.message ?? dbErr,
+        );
+      }
+    }
+  } else if (tenant) {
+    // Keep the reason durable without consuming a delivery attempt. A future
+    // retry can send once the gallery configures a contact email.
+    try {
+      await db
+        .update(ordersTable)
+        .set({ galleryOrderEmailError: NO_GALLERY_ORDER_EMAIL_ERROR })
+        .where(eq(ordersTable.id, order.id));
+    } catch (dbErr) {
+      console.error(
+        `Failed to record missing gallery contact email for order ${order.id}:`,
+        (dbErr as any)?.message ?? dbErr,
+      );
     }
   }
 

@@ -17,6 +17,9 @@ const state = vi.hoisted(() => ({
   /** When true, tx.update().set({status:…}) throws to simulate a mid-tx crash. */
   throwOnArtworkUpdate: false,
 }));
+const sendGalleryNewOrderNotification = vi.hoisted(() =>
+  vi.fn(async () => {}),
+);
 
 // ── DB mock ───────────────────────────────────────────────────────────────────
 // `db.transaction` is the key observable: it must be called exactly once.
@@ -52,6 +55,7 @@ vi.mock("@workspace/db", () => {
         findFirst: vi.fn(async () => ({
           id: "tenant-1",
           businessName: "Test Gallery",
+          contactEmail: "orders@test-gallery.example",
           iframerAccountId: null,
         })),
       },
@@ -138,6 +142,7 @@ vi.mock("@/lib/stripe", () => ({
 
 vi.mock("@/lib/email", () => ({
   sendOrderConfirmation: vi.fn(async () => {}),
+  sendGalleryNewOrderNotification,
   sendBillingAlertNotification: vi.fn(async () => {}),
 }));
 
@@ -220,6 +225,7 @@ describe("checkout.session.completed — duplicate webhook idempotency", () => {
 
     // Transaction must have been called exactly once (first delivery only).
     expect(state.transactionCallCount).toBe(1);
+    expect(sendGalleryNewOrderNotification).toHaveBeenCalledOnce();
   });
 
   it("marks the artwork SOLD exactly once across both deliveries", async () => {

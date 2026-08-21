@@ -33,6 +33,8 @@ const createdOrderIds: string[] = [];
 
 function uid() { return `${randomUUID()}-wdci-${RUN}-${++seq}`; }
 
+const mockSendGalleryNewOrderNotification = vi.hoisted(() => vi.fn());
+
 vi.mock("@/lib/stripe", () => ({
   getStripeClient: vi.fn(),
   getStripeWebhookSecret: vi.fn().mockResolvedValue(null), // dev-bypass
@@ -41,6 +43,8 @@ vi.mock("@/lib/stripe", () => ({
 }));
 vi.mock("@/lib/email", () => ({
   sendOrderConfirmation: vi.fn(async () => true),
+  sendGalleryNewOrderNotification: (...args: any[]) =>
+    mockSendGalleryNewOrderNotification(...args),
   sendBillingAlertNotification: vi.fn(),
 }));
 vi.mock("@/lib/slack", () => ({
@@ -70,11 +74,11 @@ function post(event: object) {
   );
 }
 
-async function createTenant() {
+async function createTenant(contactEmail = "orders@duplicate-gallery.example") {
   const id = uid();
   await db.insert(tenantsTable).values({
     id, slug: id, businessName: "Duplicate Checkout Gallery",
-    type: "ARTIST", billingExempt: true,
+    type: "ARTIST", billingExempt: true, contactEmail,
   } as any);
   createdTenantIds.push(id);
   return id;
@@ -136,7 +140,10 @@ async function cleanup() {
   }
 }
 
-afterEach(cleanup);
+afterEach(async () => {
+  mockSendGalleryNewOrderNotification.mockReset();
+  await cleanup();
+});
 afterAll(cleanup);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -199,5 +206,60 @@ describeIntegration("Duplicate checkout.session.completed webhook — real-DB in
 
     const items = await itemsForArtwork(artworkId);
     expect(items).toHaveLength(1);
+  });
+
+  it("sends one tenant-scoped gallery notification across webhook replay", async () => {
+    const galleryEmail = `orders-${uid()}@gallery.test`;
+    const otherGalleryEmail = `orders-${uid()}@other-gallery.test`;
+    const tenantId = await createTenant(galleryEmail);
+    await createTenant(otherGalleryEmail);
+    const artworkId = await createArtwork(tenantId);
+    const sessionId = `cs_test_${uid()}`;
+    const event = checkoutEvent(sessionId, artworkId, tenantId);
+
+    await post(event);
+    await post(event);
+
+    expect(mockSendGalleryNewOrderNotification).toHaveBeenCalledOnce();
+    expect(mockSendGalleryNewOrderNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        galleryEmail,
+        artworkTitle: "Duplicate Checkout Art",
+        orderRef: expect.any(String),
+      }),
+    );
+    expect(mockSendGalleryNewOrderNotification).not.toHaveBeenCalledWith(
+      expect.objectContaining({ galleryEmail: otherGalleryEmail }),
+    );
+
+    const [order] = await ordersForSession(sessionId);
+    expect(order?.galleryOrderEmailSentAt).toBeInstanceOf(Date);
+    expect(order?.galleryOrderEmailError).toBeNull();
+    expect(order?.galleryOrderEmailAttempts).toBe(1);
+    expect(order?.galleryOrderEmailLastAttemptAt).toBeInstanceOf(Date);
+  });
+
+  it("records gallery delivery failure without failing the webhook", async () => {
+    mockSendGalleryNewOrderNotification.mockRejectedValueOnce(
+      new Error("SMTP gallery delivery failed"),
+    );
+    const tenantId = await createTenant();
+    const artworkId = await createArtwork(tenantId);
+    const sessionId = `cs_test_${uid()}`;
+
+    const event = checkoutEvent(sessionId, artworkId, tenantId);
+    const response = await post(event);
+    const replayResponse = await post(event);
+
+    expect(response.status).toBe(200);
+    expect(replayResponse.status).toBe(200);
+    expect(mockSendGalleryNewOrderNotification).toHaveBeenCalledOnce();
+    const [order] = await ordersForSession(sessionId);
+    expect(order?.galleryOrderEmailSentAt).toBeNull();
+    expect(order?.galleryOrderEmailError).toContain(
+      "SMTP gallery delivery failed",
+    );
+    expect(order?.galleryOrderEmailAttempts).toBe(1);
+    expect(order?.galleryOrderEmailLastAttemptAt).toBeInstanceOf(Date);
   });
 });

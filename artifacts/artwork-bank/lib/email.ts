@@ -156,6 +156,91 @@ const FULFILLMENT_TEXT: Record<string, string> = {
   FRAMING_JOB: "Your framing job has been received. The framer will contact you with next steps.",
 };
 
+const GALLERY_FULFILLMENT_TEXT: Record<string, string> = {
+  SHIP: "Ship to buyer",
+  PICKUP: "Buyer collection",
+  FRAMING_JOB: "Custom framing job",
+};
+
+function emailSubjectText(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+/**
+ * Notify a gallery that a customer has completed payment for an artwork.
+ * Throws EmailSendError so the webhook can persist delivery state without
+ * making the completed checkout fail.
+ */
+export async function sendGalleryNewOrderNotification({
+  galleryEmail,
+  buyerEmail,
+  buyerName,
+  artworkTitle,
+  artworkSku,
+  totalCents,
+  fulfillmentType,
+  orderRef,
+  tenantName,
+  orderAdminUrl,
+}: {
+  galleryEmail: string;
+  buyerEmail: string;
+  buyerName: string | null;
+  artworkTitle: string;
+  artworkSku: string | null;
+  totalCents: number;
+  fulfillmentType: string;
+  orderRef: string;
+  tenantName: string;
+  orderAdminUrl?: string;
+}): Promise<void> {
+  if (!isEmailTransportConfigured()) {
+    throw new EmailSendError(`${NO_TRANSPORT_MSG} Gallery new-order email not sent.`);
+  }
+
+  const total = new Intl.NumberFormat("en-AU", {
+    style: "currency",
+    currency: "AUD",
+  }).format(totalCents / 100);
+  const fulfillment =
+    GALLERY_FULFILLMENT_TEXT[fulfillmentType] ?? "Contact buyer for next steps";
+
+  try {
+    await deliverEmail({
+      from: getOrdersFrom(),
+      to: galleryEmail,
+      ...(buyerEmail ? { replyTo: buyerEmail } : {}),
+      subject: `New order — ${emailSubjectText(artworkTitle)} (${emailSubjectText(orderRef)})`,
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+          <h2 style="color:#1c1917;">New paid order</h2>
+          <p>A customer has bought <strong>${htmlEscape(artworkTitle)}</strong> from ${htmlEscape(tenantName)}.</p>
+          <div style="margin:24px 0;padding:16px;background:#f5f5f4;border-radius:8px;">
+            <p style="margin:0 0 8px;"><strong>Order reference:</strong> <code style="font-family:monospace;">${htmlEscape(orderRef)}</code></p>
+            <p style="margin:0 0 8px;"><strong>Artwork:</strong> ${htmlEscape(artworkTitle)}${artworkSku ? ` (SKU ${htmlEscape(artworkSku)})` : ""}</p>
+            <p style="margin:0 0 8px;"><strong>Buyer:</strong> ${htmlEscape(buyerName ?? "Not provided")} &lt;${htmlEscape(buyerEmail)}&gt;</p>
+            <p style="margin:0 0 8px;"><strong>Total:</strong> ${htmlEscape(total)} AUD</p>
+            <p style="margin:0;"><strong>Fulfilment:</strong> ${htmlEscape(fulfillment)}</p>
+          </div>
+          ${
+            orderAdminUrl
+              ? `<p><a href="${htmlEscape(orderAdminUrl)}" style="color:#1c1917;">Open this order in Artwork Bank</a></p>`
+              : ""
+          }
+          <p style="color:#78716c;font-size:14px;margin-top:24px;">
+            Reply to this email to contact the buyer directly.
+          </p>
+        </div>
+      `,
+    });
+  } catch (err) {
+    if (err instanceof EmailSendError) throw err;
+    throw new EmailSendError(
+      `Failed to send gallery new-order email: ${(err as any)?.message ?? String(err)}`,
+    );
+  }
+}
+
 /**
  * Send a buyer inquiry about an artwork to the gallery's contact email.
  * Returns true if the email was accepted by Resend, false otherwise.

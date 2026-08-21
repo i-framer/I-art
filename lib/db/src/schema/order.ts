@@ -55,6 +55,20 @@ export const ordersTable = pgTable(
     emailFailureNotifiedAt: timestamp("email_failure_notified_at", {
       withTimezone: true,
     }),
+    // Gallery new-order notification delivery tracking. This is independent
+    // from the buyer confirmation above because the recipients, failure state,
+    // and retry lifecycle are different.
+    galleryOrderEmailSentAt: timestamp("gallery_order_email_sent_at", {
+      withTimezone: true,
+    }),
+    galleryOrderEmailError: text("gallery_order_email_error"),
+    galleryOrderEmailAttempts: integer("gallery_order_email_attempts")
+      .default(0)
+      .notNull(),
+    galleryOrderEmailLastAttemptAt: timestamp(
+      "gallery_order_email_last_attempt_at",
+      { withTimezone: true },
+    ),
     // Buyer status-update email (fulfilled / tracking note changed).
     // Non-null statusEmailQueuedAt means an update email is owed to the buyer;
     // it is cleared once delivered. The sweep retries failures with backoff.
