@@ -18,6 +18,9 @@
  *  7. A tenant with past_due billing and no exemption can call both actions
  *       while Stripe retries its card, and each action performs its mutation
  *       (Task #1014)
+ *  8. A tenant with billingExempt=true and a canceled subscription can call
+ *       both actions, proving the exemption bypasses subscription status
+ *       (Task #1015)
  *
  * Mirrors the pattern used in exhausted-inquiry-banner-live-update-integration.test.ts.
  * Billing-gate assertions run against a real PostgreSQL database so the
@@ -112,6 +115,23 @@ async function insertCanceledTenant(id: string): Promise<void> {
     billingExempt: false,
     subscriptionStatus: "canceled",
     contactEmail: "owner-1011@gallery.test",
+  } as any);
+}
+
+/**
+ * Insert a tenant that is explicitly billing-exempt despite a canceled
+ * subscription. The exemption must take precedence over subscription status.
+ */
+async function insertBillingExemptCanceledTenant(id: string): Promise<void> {
+  CREATED_TENANT_IDS.push(id);
+  await db.insert(tenantsTable).values({
+    id,
+    slug: id,
+    businessName: "Billing Exempt Canceled Access Guard Test Gallery",
+    type: "ARTIST",
+    billingExempt: true,
+    subscriptionStatus: "canceled",
+    contactEmail: "owner-1015@gallery.test",
   } as any);
 }
 
@@ -213,7 +233,7 @@ afterAll(cleanup);
 // ─────────────────────────────────────────────────────────────────────────────
 
 describeIntegration(
-  "retry-failed-notifications access guards — real DB (Tasks #1009, #1011, #1014)",
+  "retry-failed-notifications access guards — real DB (Tasks #1009, #1011, #1014, #1015)",
   () => {
     // ── Scenario 1 ───────────────────────────────────────────────────────────
 
@@ -482,6 +502,67 @@ describeIntegration(
         expect(clearedRow?.emailLastAttemptAt).toBeNull();
         expect(clearedRow?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
         expect(clearedRow?.emailError).toBe("smtp: connection refused (1014)");
+      },
+    );
+
+    // ── Scenario 8 (Task #1015) ──────────────────────────────────────────────
+
+    it(
+      "billing-exempt tenant with canceled subscription can retry failures and clear stuck nonces",
+      { timeout: 30_000 },
+      async () => {
+        const tenantId = makeId("tenant-1015");
+        await insertBillingExemptCanceledTenant(tenantId);
+
+        const artworkId = makeId("artwork-1015");
+        await insertArtwork(artworkId, tenantId);
+
+        const retryInquiryId = makeId("inq-1015-retry");
+        await insertExhaustedInquiry(retryInquiryId, tenantId, artworkId);
+
+        const stuckInquiryId = makeId("inq-1015-stuck");
+        CREATED_INQUIRY_IDS.push(stuckInquiryId);
+        await db.insert(inquiriesTable).values({
+          id: stuckInquiryId,
+          tenantId,
+          artworkId,
+          artworkTitle: "Test Artwork 1015",
+          buyerName: "Billing Exempt Access Guard Test Buyer",
+          buyerEmail: "buyer-1015@example.com",
+          message: "Is this available?",
+          emailError: "smtp: connection refused (1015)",
+          emailAttempts: MAX_EMAIL_ATTEMPTS,
+          emailLastAttemptAt: null,
+          emailClaimNonce: randomUUID(),
+          status: "NEW",
+        } as any);
+
+        mockSession.userId = "u-1009-test";
+        mockSession.tenantId = tenantId;
+
+        // billingExempt must bypass the canceled subscription status, allowing
+        // both actions to reach their normal mutation and redirect paths.
+        await expect(
+          runAction(retryFailedInquiryNotifications),
+        ).resolves.toBe(`/inquiries?retry_result=1`);
+        await expect(runAction(clearStuckInquiryNonces)).resolves.toBe(
+          `/inquiries?stuck_result=1`,
+        );
+
+        const retriedRow = await db.query.inquiriesTable.findFirst({
+          where: eq(inquiriesTable.id, retryInquiryId),
+        });
+        expect(retriedRow?.emailAttempts).toBe(0);
+        expect(retriedRow?.emailLastAttemptAt).toBeNull();
+        expect(retriedRow?.emailClaimNonce).toBeNull();
+
+        const clearedRow = await db.query.inquiriesTable.findFirst({
+          where: eq(inquiriesTable.id, stuckInquiryId),
+        });
+        expect(clearedRow?.emailClaimNonce).toBeNull();
+        expect(clearedRow?.emailLastAttemptAt).toBeNull();
+        expect(clearedRow?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+        expect(clearedRow?.emailError).toBe("smtp: connection refused (1015)");
       },
     );
   },
