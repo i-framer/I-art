@@ -10,7 +10,7 @@
     "typecheck": "rm -rf .next/types && tsc --noEmit",
     "test": "vitest run --no-file-parallelism",
     "test:slow": "vitest run --config vitest.slow.config.ts --no-file-parallelism --reporter=verbose",
-    "test:integration": "node scripts/require-db.js && vitest run --config vitest.integration.config.ts --no-file-parallelism --reporter=verbose",
+    "test:integration": "node scripts/require-db.js && node scripts/run-integration-tests.js",
     "pretest:browser": "node scripts/require-browser-test-db.js",
     "test:browser": "BROWSER_TEST_MODE=enabled playwright test",
     "cleanup:browser-test-fixtures": "BROWSER_TEST_MODE=enabled tsx scripts/cleanup-browser-test-fixtures.ts",

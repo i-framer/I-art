@@ -37,6 +37,8 @@ if (!process.env.DATABASE_URL) {
     "\n" +
     "The integration test suite requires a live PostgreSQL database.\n" +
     "Set DATABASE_URL before running `pnpm test:integration`.\n" +
+    "To run only selected integration files, add their paths after `--`:\n" +
+    "`pnpm test:integration -- __tests__/your-test-integration.test.ts`.\n" +
     "\n" +
     "If you are running in an environment where a database is intentionally\n" +
     "absent, use the `describeIntegration` helper from\n" +
@@ -183,6 +185,7 @@ if (result.error) {
       "\n" +
       "     # correct (dev)\n" +
       "     DATABASE_URL=postgres://... pnpm test:integration\n" +
+      "     DATABASE_URL=postgres://... pnpm test:integration -- __tests__/your-test-integration.test.ts\n" +
       "\n" +
       "     # wrong — do NOT do this\n" +
       "     DATABASE_URL=\"$PROD_DATABASE_URL\" pnpm test:integration\n" +

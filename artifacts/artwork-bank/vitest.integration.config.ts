@@ -8,7 +8,10 @@ import path from "node:path";
  * The default test command intentionally excludes these files so it remains
  * within the five-minute CI command limit. Run this suite with
  * `pnpm test:integration`; its package script verifies database availability
- * before Vitest starts.
+ * before Vitest starts. Pass one or more file filters after `--` to run only
+ * those files, for example:
+ *
+ *   pnpm test:integration -- __tests__/checkout-invalid-inputs-integration.test.ts
  */
 export default defineConfig({
   plugins: [react()],
