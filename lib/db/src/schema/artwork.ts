@@ -11,6 +11,7 @@ import {
 import { sql } from "drizzle-orm";
 import { tenantsTable } from "./tenant";
 import { representedArtistsTable } from "./representedArtist";
+import { artworkShippingFormatEnum } from "./freight";
 
 export const artworkConditionEnum = pgEnum("artwork_condition", [
   "EXCELLENT",
@@ -46,6 +47,10 @@ export const artworksTable = pgTable(
     dimensionsW: integer("dimensions_w"),
     dimensionsH: integer("dimensions_h"),
     dimensionsD: integer("dimensions_d"),
+    /** Standard packages are dimension-classified; tube packages use tube rates. */
+    shippingFormat: artworkShippingFormatEnum("shipping_format")
+      .notNull()
+      .default("STANDARD"),
     condition: artworkConditionEnum("condition"),
     // Price stored in cents (smallest currency unit)
     price: integer("price"),

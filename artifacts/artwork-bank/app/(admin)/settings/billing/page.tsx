@@ -126,6 +126,12 @@ export default async function BillingPage({
           <CreditCard className="h-3.5 w-3.5" />
           Billing
         </Link>
+        <Link
+          href="/settings/freight"
+          className="px-4 py-2.5 text-sm font-medium text-stone-500 hover:text-stone-700 transition-colors flex items-center gap-1.5"
+        >
+          Freight
+        </Link>
       </div>
 
       {/* Billing flash messages */}

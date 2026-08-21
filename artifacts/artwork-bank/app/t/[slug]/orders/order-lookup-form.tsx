@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { lookupOrder, type OrderLookupState } from "./actions";
+import { formatPrice } from "@/lib/format";
 
 const initialState: OrderLookupState = { status: "idle", error: "", order: null };
 
@@ -124,6 +125,14 @@ export function OrderLookupForm({
               year: "numeric",
             })}
           </p>
+          {state.order.freightMethodName && (
+            <p className="mt-1 text-sm text-stone-600">
+              Freight: {state.order.freightMethodName}
+              {state.order.freightClass ? ` (${state.order.freightClass === "TUBE" ? "Rolled / tube" : `${state.order.freightClass[0]}${state.order.freightClass.slice(1).toLowerCase()} parcel`})` : ""}
+              {" · "}
+              {formatPrice(state.order.freightCents)}
+            </p>
+          )}
           {state.order.trackingNote ? (
             <div className="mt-3 rounded-lg bg-white border border-stone-200 px-4 py-3 text-sm text-stone-700 whitespace-pre-line">
               {state.order.trackingNote}

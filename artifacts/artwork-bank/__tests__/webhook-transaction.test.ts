@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 // throws, the "committed" list stays empty (rollback semantics).
 const state = vi.hoisted(() => ({
   committed: [] as string[],
+  orderValues: [] as any[],
   failOn: null as string | null, // e.g. "insert:orderItems"
   directUpdates: [] as any[], // db.update(...).set(vals) outside the transaction
 }));
@@ -32,6 +33,7 @@ const transactionSpy = vi.hoisted(() =>
           if (state.failOn === `insert:${name}`)
             throw new Error(`boom ${name}`);
           staged.push(`insert:${name}`);
+          if (name === "orders") state.orderValues.push(vals);
           return {
             returning: () => Promise.resolve([{ id: "order-1", ...vals }]),
             then: (res: any) => Promise.resolve(undefined).then(res),
@@ -115,6 +117,9 @@ function completedEvent() {
           artworkId: "art-1",
           tenantId: "tenant-1",
           fulfillmentType: "SHIP",
+          freightMethodName: "Australia Post",
+          freightClass: "MEDIUM",
+          freightCents: "2500",
         },
       },
     },
@@ -133,6 +138,7 @@ function post() {
 beforeEach(() => {
   vi.clearAllMocks();
   state.committed.length = 0;
+  state.orderValues.length = 0;
   state.failOn = null;
   state.directUpdates.length = 0;
   process.env.STRIPE_WEBHOOK_DEV_BYPASS = "true";
@@ -169,6 +175,12 @@ describe("checkout.session.completed transactional handling", () => {
       "update:artworks",
     ]);
     expect(sendOrderConfirmation).toHaveBeenCalledTimes(1);
+    expect(state.orderValues[0]).toMatchObject({
+      freightMethodName: "Australia Post",
+      freightClass: "MEDIUM",
+      freightCents: 2500,
+      totalCents: 12_000,
+    });
   });
 
   it("rolls back everything and returns 500 when the order item insert fails", async () => {

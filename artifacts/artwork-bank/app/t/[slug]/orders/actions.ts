@@ -15,6 +15,9 @@ export type OrderLookupState = {
     ref: string;
     orderStatus: string;
     fulfillmentType: string;
+    freightMethodName: string | null;
+    freightClass: string | null;
+    freightCents: number;
     trackingNote: string | null;
     artworkTitle: string | null;
     createdAt: string;
@@ -100,6 +103,9 @@ export async function lookupOrder(
         ref: order.id.slice(0, 8).toUpperCase(),
         orderStatus: order.status,
         fulfillmentType: order.fulfillmentType,
+        freightMethodName: order.freightMethodName,
+        freightClass: order.freightClass,
+        freightCents: order.freightCents,
         trackingNote: order.trackingNote,
         artworkTitle: item?.artworkTitle ?? null,
         createdAt: order.createdAt.toISOString(),

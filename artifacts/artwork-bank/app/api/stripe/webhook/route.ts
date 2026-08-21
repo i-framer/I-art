@@ -659,7 +659,14 @@ async function handleInvoicePaymentFailed(
 }
 
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId: string) {
-  const { artworkId, tenantId, fulfillmentType } = session.metadata ?? {};
+  const {
+    artworkId,
+    tenantId,
+    fulfillmentType,
+    freightMethodName,
+    freightClass: freightClassMetadata,
+    freightCents: freightCentsMetadata,
+  } = session.metadata ?? {};
   const customerId = typeof session.customer === "string" ? session.customer : null;
 
   if (!artworkId || !tenantId || !fulfillmentType) {
@@ -782,6 +789,31 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
     return;
   }
 
+  const freightCents = (() => {
+    if (!freightCentsMetadata) return 0;
+    const value = Number(freightCentsMetadata);
+    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  })();
+  const freightClass: "SMALL" | "MEDIUM" | "LARGE" | "TUBE" | null =
+    freightClassMetadata === "SMALL" ||
+    freightClassMetadata === "MEDIUM" ||
+    freightClassMetadata === "LARGE" ||
+    freightClassMetadata === "TUBE"
+      ? (freightClassMetadata as "SMALL" | "MEDIUM" | "LARGE" | "TUBE")
+      : null;
+  const freightSnapshot =
+    fulfillmentType === "SHIP"
+      ? {
+          freightMethodName: freightMethodName?.trim() || null,
+          freightClass,
+          freightCents,
+        }
+      : {
+          freightMethodName: null,
+          freightClass: null,
+          freightCents: 0,
+        };
+
   const buyerEmail =
     session.customer_details?.email ?? (session as any).customer_email ?? "";
   const buyerName = session.customer_details?.name ?? null;
@@ -804,12 +836,22 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
         status: "PAID",
         fulfillmentType: fulfillmentType as "SHIP" | "PICKUP" | "FRAMING_JOB",
         totalCents: session.amount_total ?? 0,
+        ...freightSnapshot,
         // Persist the platform commission actually charged on this sale.
         // The commission rate and fee were computed at checkout time and passed
         // through session.metadata so we don't need to recompute.
         applicationFeeCents:
           session.amount_total != null
             ? (() => {
+                const recordedFee = session.metadata?.applicationFeeCents;
+                const recordedFeeCents =
+                  recordedFee != null ? Number(recordedFee) : Number.NaN;
+                if (
+                  Number.isSafeInteger(recordedFeeCents) &&
+                  recordedFeeCents >= 0
+                ) {
+                  return recordedFeeCents;
+                }
                 const bp = session.metadata?.commissionBasisPoints;
                 const bpNum = bp != null ? parseInt(bp, 10) : null;
                 return bpNum != null && isFinite(bpNum)

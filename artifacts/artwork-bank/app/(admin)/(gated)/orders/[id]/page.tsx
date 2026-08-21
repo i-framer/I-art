@@ -199,6 +199,19 @@ export default async function OrderDetailPage({
             <dd className="text-stone-900">
               {FULFILLMENT_LABELS[order.fulfillmentType] ?? order.fulfillmentType}
             </dd>
+            {order.freightMethodName && (
+              <>
+                <dt className="text-stone-500">Freight</dt>
+                <dd className="text-stone-900">
+                  {order.freightMethodName}
+                  {order.freightClass
+                    ? ` · ${order.freightClass === "TUBE" ? "Rolled / tube" : `${order.freightClass[0]}${order.freightClass.slice(1).toLowerCase()} parcel`}`
+                    : ""}
+                  {" · "}
+                  {formatPrice(order.freightCents)}
+                </dd>
+              </>
+            )}
           </dl>
         </div>
 
@@ -223,7 +236,21 @@ export default async function OrderDetailPage({
             ))}
           </div>
           <div className="mt-4 flex items-center justify-between pt-4 border-t border-stone-200">
-            <span className="text-sm font-semibold text-stone-700">Total</span>
+            <span className="text-sm font-semibold text-stone-700">Artwork</span>
+            <span className="text-sm font-medium text-stone-900">
+              {formatPrice(order.totalCents - order.freightCents)}
+            </span>
+          </div>
+          {order.freightCents > 0 && (
+            <div className="flex items-center justify-between py-3 border-b border-stone-200">
+              <span className="text-sm text-stone-700">Freight</span>
+              <span className="text-sm font-medium text-stone-900">
+                {formatPrice(order.freightCents)}
+              </span>
+            </div>
+          )}
+          <div className="flex items-center justify-between pt-4">
+            <span className="text-sm font-semibold text-stone-700">Total paid</span>
             <span className="text-lg font-semibold text-stone-900">
               {formatPrice(order.totalCents)}
             </span>

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "@workspace/db";
-import { artworksTable, artworkImagesTable } from "@workspace/db";
+import {
+  artworksTable,
+  artworkImagesTable,
+  freightMethodsTable,
+  freightSettingsTable,
+} from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { getTenantBySlug } from "@/lib/tenant-cache";
 import {
@@ -10,6 +15,7 @@ import {
 } from "@/lib/stripe";
 import { getServeUrl } from "@/lib/object-storage";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { getFreightCents, getFreightClass } from "@/lib/freight";
 
 export const dynamic = "force-dynamic";
 
@@ -40,10 +46,11 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { artworkId, slug, fulfillmentType } = body as {
+    const { artworkId, slug, fulfillmentType, freightMethodId } = body as {
       artworkId: string;
       slug: string;
       fulfillmentType: string;
+      freightMethodId?: string;
     };
 
     if (!artworkId || !slug || !fulfillmentType) {
@@ -163,6 +170,78 @@ export async function POST(request: Request) {
         );
       }
 
+      // Freight is always calculated from the gallery-owned method and the
+      // saved artwork data. The browser only supplies an opaque method ID, so
+      // it cannot lower the charge or select another gallery's method.
+      let freightCents = 0;
+      let freightMethodName: string | null = null;
+      let freightClass: "SMALL" | "MEDIUM" | "LARGE" | "TUBE" | null = null;
+      let freightMethodIdForMetadata = "";
+
+      if (fulfillmentType === "SHIP") {
+        // The query objects are present in the application schema. Keeping
+        // these defensive lookups also preserves the legacy zero-freight
+        // behaviour for deployments that are rolling out the additive schema.
+        const freightQuery = db.query as typeof db.query & {
+          freightSettingsTable?: typeof db.query.freightSettingsTable;
+          freightMethodsTable?: typeof db.query.freightMethodsTable;
+        };
+        const [freightSettings, freightMethods] = await Promise.all([
+          freightQuery.freightSettingsTable?.findFirst({
+            where: eq(freightSettingsTable.tenantId, tenant.id),
+          }) ?? Promise.resolve(null),
+          freightQuery.freightMethodsTable?.findMany({
+            where: eq(freightMethodsTable.tenantId, tenant.id),
+          }) ?? Promise.resolve([]),
+        ]);
+        const enabledMethods = freightMethods.filter((method) => method.enabled);
+
+        // Galleries with no configured methods keep the former zero-freight
+        // shipping behaviour. A gallery that has deliberately disabled every
+        // configured method cannot accidentally accept an unpriced shipment.
+        if (freightMethods.length > 0) {
+          if (enabledMethods.length === 0) {
+            await releaseReservation();
+            return NextResponse.json(
+              { error: "Delivery is not currently available for this artwork." },
+              { status: 400 },
+            );
+          }
+          if (!freightMethodId) {
+            await releaseReservation();
+            return NextResponse.json(
+              { error: "Please select a freight service." },
+              { status: 400 },
+            );
+          }
+          const freightMethod = enabledMethods.find(
+            (method) => method.id === freightMethodId,
+          );
+          if (!freightMethod) {
+            await releaseReservation();
+            return NextResponse.json(
+              { error: "The selected freight service is no longer available." },
+              { status: 400 },
+            );
+          }
+
+          freightClass = getFreightClass(artwork, freightSettings);
+          if (!freightClass) {
+            await releaseReservation();
+            return NextResponse.json(
+              {
+                error:
+                  "This artwork needs dimensions before delivery can be selected. Please contact the gallery.",
+              },
+              { status: 400 },
+            );
+          }
+          freightCents = getFreightCents(freightMethod, freightClass);
+          freightMethodName = freightMethod.name;
+          freightMethodIdForMetadata = freightMethod.id;
+        }
+      }
+
       // Fetch primary image for Stripe display
       const primaryImage = await db.query.artworkImagesTable.findFirst({
         where: and(
@@ -258,6 +337,24 @@ export async function POST(request: Request) {
               },
               quantity: 1,
             },
+            ...(freightMethodName
+              ? [
+                  {
+                    price_data: {
+                      currency: "aud" as const,
+                      product_data: {
+                        name: `Freight — ${freightMethodName}`,
+                        description:
+                          freightClass === "TUBE"
+                            ? "Rolled artwork in a tube"
+                            : `${freightClass?.toLowerCase()} parcel delivery`,
+                      },
+                      unit_amount: freightCents,
+                    },
+                    quantity: 1,
+                  },
+                ]
+              : []),
           ],
           mode: "payment",
           success_url: `${baseUrl}/t/${slug}/order/success?session_id={CHECKOUT_SESSION_ID}`,
@@ -273,6 +370,11 @@ export async function POST(request: Request) {
             tenantId: tenant.id,
             slug,
             fulfillmentType,
+            freightMethodId: freightMethodIdForMetadata,
+            freightMethodName: freightMethodName ?? "",
+            freightClass: freightClass ?? "",
+            freightCents: String(freightCents),
+            applicationFeeCents: String(feeAmount),
             // Record the commission rate used so the webhook can persist it
             commissionBasisPoints: String(commissionBasisPoints),
           },

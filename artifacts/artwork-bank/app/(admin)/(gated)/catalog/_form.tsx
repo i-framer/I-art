@@ -259,6 +259,23 @@ export function ArtworkForm({
             })}
           </div>
         </div>
+        <div>
+          <label htmlFor="shippingFormat" className={labelCls}>
+            Delivery packaging
+          </label>
+          <select
+            id="shippingFormat"
+            name="shippingFormat"
+            defaultValue={artwork?.shippingFormat ?? "STANDARD"}
+            className={inputCls}
+          >
+            <option value="STANDARD">Standard parcel (size calculated from dimensions)</option>
+            <option value="TUBE">Rolled artwork in a tube</option>
+          </select>
+          <p className="mt-1 text-xs text-stone-400">
+            Tube pricing is used for rolled artwork. Standard parcels use the freight size limits in Settings.
+          </p>
+        </div>
       </div>
 
       {/* ── Condition & pricing ── */}

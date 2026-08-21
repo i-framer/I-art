@@ -9,6 +9,7 @@ import {
 import { sql } from "drizzle-orm";
 import { tenantsTable } from "./tenant";
 import { artworksTable } from "./artwork";
+import { freightClassEnum } from "./freight";
 
 export const orderStatusEnum = pgEnum("order_status", [
   "PENDING",
@@ -39,6 +40,10 @@ export const ordersTable = pgTable(
     status: orderStatusEnum("status").default("PENDING").notNull(),
     fulfillmentType: fulfillmentTypeEnum("fulfillment_type").notNull(),
     totalCents: integer("total_cents").notNull(),
+    /** Immutable freight snapshot taken at checkout; old orders remain freight-free. */
+    freightMethodName: text("freight_method_name"),
+    freightClass: freightClassEnum("freight_class"),
+    freightCents: integer("freight_cents").notNull().default(0),
     applicationFeeCents: integer("application_fee_cents"),
     trackingNote: text("tracking_note"),
     // iFramer integration (FRAMING_JOB orders only)
