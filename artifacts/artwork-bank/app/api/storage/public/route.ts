@@ -97,10 +97,10 @@ export async function GET(request: NextRequest) {
       "Content-Disposition": isActiveContentType(contentType)
         ? "attachment"
         : "inline",
-      // Objects are immutable (a new upload gets a new UUID), but visibility
-      // can be revoked (showInGallery toggled off), so keep shared-cache TTL
-      // short enough that revocation takes effect within the hour.
-      "Cache-Control": "public, max-age=3600, s-maxage=3600",
+      // Every response is authorized against the current artwork/logo
+      // visibility above. Do not let a browser or shared CDN reuse a prior
+      // successful response after an owner hides or removes that content.
+      "Cache-Control": "private, no-store",
     });
     if (contentLength) headers.set("Content-Length", contentLength);
 
