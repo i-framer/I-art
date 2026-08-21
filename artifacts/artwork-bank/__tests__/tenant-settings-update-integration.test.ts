@@ -35,7 +35,8 @@
  *      when the gallery switches to a different email address (email-A → email-B).
  *      Only "no gallery contact email" rows are reset; all other error strings are
  *      an explicit intentional boundary documented in email-sweep.ts.
- *  25. retryFailedInquiryNotifications redirects to ?retry_result=unauthorized
+ *  25. Direct SMTP recovery skips archived inquiries while retrying active ones.
+ *  26. retryFailedInquiryNotifications redirects to ?retry_result=unauthorized
  *      when the session role is "staff" — inquiry rows must be completely untouched.
  */
 import { afterAll, afterEach, it, expect, vi } from "vitest";
@@ -103,7 +104,11 @@ import {
   updateTenantSettings,
   retryFailedInquiryNotifications,
 } from "@/app/(admin)/settings/actions";
-import { MAX_EMAIL_ATTEMPTS, sweepUnsentInquiryEmails } from "@/lib/email-sweep";
+import {
+  MAX_EMAIL_ATTEMPTS,
+  retrySmtpErrorInquiries,
+  sweepUnsentInquiryEmails,
+} from "@/lib/email-sweep";
 
 async function createTenant(businessName = "Settings Test Gallery") {
   const id = uid();
@@ -1007,6 +1012,49 @@ describeIntegration("updateTenantSettings action — persistence — real-DB int
     expect(afterTimeout?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
     expect(afterTimeout?.emailError).toBe("SMTP connection timeout");
     expect(afterTimeout?.emailLastAttemptAt).not.toBeNull();
+  });
+
+  it("retrySmtpErrorInquiries skips archived inquiries while resetting non-archived SMTP errors", async () => {
+    const { tenantId } = await createTenant("Gallery SMTP Retry Guard");
+    const artworkId = await createArtwork(tenantId);
+
+    const activeInquiryId = await createExhaustedInquiryWithError(
+      tenantId,
+      artworkId,
+      "550 mailbox not found",
+    );
+    const archivedInquiryId = await createExhaustedInquiryWithError(
+      tenantId,
+      artworkId,
+      "SMTP connection timeout",
+    );
+    const archivedAt = new Date();
+    await db
+      .update(inquiriesTable)
+      .set({ archivedAt })
+      .where(eq(inquiriesTable.id, archivedInquiryId));
+
+    const retryCount = await retrySmtpErrorInquiries(tenantId);
+
+    expect(retryCount).toBe(1);
+
+    const [activeInquiry, archivedInquiry] = await Promise.all([
+      db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, activeInquiryId),
+      }),
+      db.query.inquiriesTable.findFirst({
+        where: eq(inquiriesTable.id, archivedInquiryId),
+      }),
+    ]);
+
+    expect(activeInquiry?.emailAttempts).toBe(0);
+    expect(activeInquiry?.emailLastAttemptAt).toBeNull();
+    expect(activeInquiry?.emailError).toBe("550 mailbox not found");
+
+    expect(archivedInquiry?.emailAttempts).toBe(MAX_EMAIL_ATTEMPTS);
+    expect(archivedInquiry?.emailLastAttemptAt).not.toBeNull();
+    expect(archivedInquiry?.emailError).toBe("SMTP connection timeout");
+    expect(archivedInquiry?.archivedAt?.getTime()).toBe(archivedAt.getTime());
   });
 
   it("changing contactEmail from one non-null value to another also requeues exhausted no-contact-email inquiries (non-null → different non-null)", async () => {

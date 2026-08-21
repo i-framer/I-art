@@ -602,6 +602,9 @@ export async function retrySmtpErrorInquiries(
         eq(inquiriesTable.tenantId, tenantId),
         isNotNull(inquiriesTable.emailError),
         not(eq(inquiriesTable.emailError, NO_CONTACT_EMAIL_ERROR)),
+        // Archived inquiries were explicitly dismissed and must not be
+        // resurrected by this explicit recovery action.
+        isNull(inquiriesTable.archivedAt),
         // Skip rows with an active sweep claim; allow expired claims to be
         // reset — same lease-based guard as requeueNoContactEmailInquiries.
         or(
