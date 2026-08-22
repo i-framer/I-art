@@ -33,6 +33,27 @@ const FULFILLMENT_LABELS: Record<string, string> = {
   FRAMING_JOB: "Custom framing job",
 };
 
+type ShippingAddress = {
+  line1?: string;
+  line2?: string | null;
+  suburb?: string;
+  state?: string;
+  postcode?: string;
+  countryCode?: string;
+};
+
+function parseShippingAddress(value: string | null): ShippingAddress | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as ShippingAddress;
+    return parsed.line1 && parsed.suburb && parsed.state && parsed.postcode
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function OrderDetailPage({
   params,
   searchParams,
@@ -90,6 +111,7 @@ export default async function OrderDetailPage({
 
   const isFramingJob = order.fulfillmentType === "FRAMING_JOB";
   const hasIFramer = Boolean(tenant?.iframerAccountId);
+  const shippingAddress = parseShippingAddress(order.shippingAddressJson);
 
   return (
     <div className="px-8 py-8 max-w-3xl">
@@ -203,12 +225,33 @@ export default async function OrderDetailPage({
               <>
                 <dt className="text-stone-500">Freight</dt>
                 <dd className="text-stone-900">
+                  {order.freightProvider && order.freightProvider !== "MANUAL"
+                    ? `${order.freightProvider === "AUSTRALIA_POST" ? "Australia Post" : "Aramex"} · `
+                    : ""}
                   {order.freightMethodName}
                   {order.freightClass
                     ? ` · ${order.freightClass === "TUBE" ? "Rolled / tube" : `${order.freightClass[0]}${order.freightClass.slice(1).toLowerCase()} parcel`}`
                     : ""}
                   {" · "}
                   {formatPrice(order.freightCents)}
+                </dd>
+              </>
+            )}
+            {shippingAddress && (
+              <>
+                <dt className="text-stone-500">Delivery address</dt>
+                <dd className="text-stone-900">
+                  <span className="block">{shippingAddress.line1}</span>
+                  {shippingAddress.line2 && (
+                    <span className="block">{shippingAddress.line2}</span>
+                  )}
+                  <span className="block">
+                    {shippingAddress.suburb}, {shippingAddress.state}{" "}
+                    {shippingAddress.postcode}
+                  </span>
+                  <span className="block text-xs text-stone-500">
+                    {shippingAddress.countryCode ?? "AU"}
+                  </span>
                 </dd>
               </>
             )}

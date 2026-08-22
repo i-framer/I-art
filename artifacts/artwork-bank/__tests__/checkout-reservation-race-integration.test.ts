@@ -123,7 +123,7 @@ function makeRequest(artworkId: string, slug: string) {
   return new Request("http://localhost/api/stripe/checkout", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ artworkId, slug, fulfillmentType: "SHIP" }),
+    body: JSON.stringify({ artworkId, slug, fulfillmentType: "PICKUP" }),
   });
 }
 

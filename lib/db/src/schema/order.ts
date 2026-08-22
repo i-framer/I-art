@@ -44,6 +44,11 @@ export const ordersTable = pgTable(
     freightMethodName: text("freight_method_name"),
     freightClass: freightClassEnum("freight_class"),
     freightCents: integer("freight_cents").notNull().default(0),
+    /** Carrier/service and address are copied from the accepted quote at checkout. */
+    freightProvider: text("freight_provider"),
+    freightServiceCode: text("freight_service_code"),
+    freightQuoteId: text("freight_quote_id"),
+    shippingAddressJson: text("shipping_address_json"),
     applicationFeeCents: integer("application_fee_cents"),
     trackingNote: text("tracking_note"),
     // iFramer integration (FRAMING_JOB orders only)

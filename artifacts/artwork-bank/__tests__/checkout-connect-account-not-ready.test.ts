@@ -110,7 +110,7 @@ function makeRequest(): Request {
   return new Request("http://localhost/api/stripe/checkout", {
     method: "POST",
     headers: { "content-type": "application/json", "x-forwarded-for": "1.2.3.4" },
-    body: JSON.stringify({ artworkId: "art-1", slug: "gallery-a", fulfillmentType: "SHIP" }),
+    body: JSON.stringify({ artworkId: "art-1", slug: "gallery-a", fulfillmentType: "PICKUP" }),
   });
 }
 

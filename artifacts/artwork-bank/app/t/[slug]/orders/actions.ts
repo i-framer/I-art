@@ -16,6 +16,7 @@ export type OrderLookupState = {
     orderStatus: string;
     fulfillmentType: string;
     freightMethodName: string | null;
+    freightProvider: string | null;
     freightClass: string | null;
     freightCents: number;
     trackingNote: string | null;
@@ -104,6 +105,7 @@ export async function lookupOrder(
         orderStatus: order.status,
         fulfillmentType: order.fulfillmentType,
         freightMethodName: order.freightMethodName,
+        freightProvider: order.freightProvider,
         freightClass: order.freightClass,
         freightCents: order.freightCents,
         trackingNote: order.trackingNote,

@@ -52,6 +52,7 @@ Preview too where noted).
 | `SMTP_HOST` | Transactional email via your own mail server (SMTP). Works with Google Workspace (`smtp.gmail.com`), Office 365 (`smtp.office365.com`), or any domain-mail host. | Your email provider's SMTP settings. Also set `SMTP_PORT` (587 default, 465 for implicit TLS), `SMTP_USER`, `SMTP_PASS` (use an app password for Google/Microsoft). Optional `SMTP_SECURE=true/false`. |
 | `RESEND_API_KEY` | Alternative email transport (Resend) — only used when `SMTP_HOST` is not set | resend.com → API Keys |
 | `CRON_SECRET` | Protects the sweep endpoints invoked by Vercel cron | Generate: `openssl rand -hex 32`. Vercel automatically sends it on cron requests when set. |
+| `FREIGHT_CREDENTIALS_ENCRYPTION_KEY` | Encrypts each gallery’s Australia Post / Aramex credentials before they are stored in the database. Required before connecting a live carrier. | Generate: `openssl rand -base64 48`. Do not reuse a carrier API key; rotate only with a credential migration plan because existing encrypted connections use this key. |
 
 ### Recommended / optional
 

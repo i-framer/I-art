@@ -19,8 +19,7 @@ vi.mock("@/lib/stripe", () => ({
 }));
 
 const artworkRows = vi.hoisted(() => ({ value: [] as any[] }));
-const freightSettings = vi.hoisted(() => ({ value: null as any }));
-const freightMethods = vi.hoisted(() => ({ value: [] as any[] }));
+const freightQuote = vi.hoisted(() => ({ value: null as any }));
 vi.mock("@workspace/db", () => ({
   db: {
     update: vi.fn(() => ({
@@ -32,12 +31,7 @@ vi.mock("@workspace/db", () => ({
     })),
     query: {
       artworkImagesTable: { findFirst: vi.fn().mockResolvedValue(null) },
-      freightSettingsTable: {
-        findFirst: vi.fn(async () => freightSettings.value),
-      },
-      freightMethodsTable: {
-        findMany: vi.fn(async () => freightMethods.value),
-      },
+      freightQuotesTable: { findFirst: vi.fn(async () => freightQuote.value) },
     },
   },
   artworksTable: {
@@ -47,11 +41,11 @@ vi.mock("@workspace/db", () => ({
     showInGallery: "artwork.showInGallery",
   },
   artworkImagesTable: { artworkId: "image.artworkId", isPrimary: "image.isPrimary" },
-  freightSettingsTable: { tenantId: "settings.tenantId" },
-  freightMethodsTable: {
-    id: "method.id",
-    tenantId: "method.tenantId",
-    enabled: "method.enabled",
+  freightQuotesTable: {
+    id: "quote.id",
+    tenantId: "quote.tenantId",
+    artworkId: "quote.artworkId",
+    expiresAt: "quote.expiresAt",
   },
 }));
 
@@ -77,7 +71,7 @@ const tenant = {
   commissionBasisPoints: null,
 };
 
-function request(freightMethodId?: string) {
+function request(freightQuoteId?: string) {
   return new Request("http://localhost/api/stripe/checkout", {
     method: "POST",
     headers: { "content-type": "application/json", "x-forwarded-for": "198.51.100.42" },
@@ -85,7 +79,7 @@ function request(freightMethodId?: string) {
       artworkId: "artwork-a",
       slug: "gallery-a",
       fulfillmentType: "SHIP",
-      freightMethodId,
+      freightQuoteId,
     }),
   });
 }
@@ -107,78 +101,76 @@ beforeEach(() => {
       shippingFormat: "STANDARD",
     },
   ];
-  freightSettings.value = { tenantId: "tenant-a", smallMaxMm: 800, mediumMaxMm: 1500 };
-  freightMethods.value = [
-    {
-      id: "freight-a",
-      tenantId: "tenant-a",
-      name: "Australia Post",
-      smallCents: 1500,
-      mediumCents: 2500,
-      largeCents: 4500,
-      tubeCents: 2000,
-      enabled: true,
-    },
-  ];
+  freightQuote.value = {
+    id: "quote-a",
+    tenantId: "tenant-a",
+    artworkId: "artwork-a",
+    serviceName: "Express Post",
+    freightClass: "MEDIUM",
+    freightCents: 2500,
+    provider: "AUSTRALIA_POST",
+    serviceCode: "AUS_PARCEL_EXPRESS",
+  };
   checkoutCreate.mockResolvedValue({ url: "https://checkout.stripe.test/session" });
 });
 
 describe("checkout freight", () => {
-  it("uses the gallery method and calculated class for the Stripe freight line item", async () => {
-    const response = await POST(request("freight-a"));
+  it("uses a server-stored quote for the Stripe freight line item", async () => {
+    const response = await POST(request("quote-a"));
     expect(response.status).toBe(200);
 
     const params = checkoutCreate.mock.calls[0]?.[0];
     expect(params.metadata).toMatchObject({
-      freightMethodId: "freight-a",
-      freightMethodName: "Australia Post",
+      freightQuoteId: "quote-a",
+      freightMethodName: "Express Post",
       freightClass: "MEDIUM",
       freightCents: "2500",
+      freightProvider: "AUSTRALIA_POST",
+      freightServiceCode: "AUS_PARCEL_EXPRESS",
     });
     expect(params.line_items).toHaveLength(2);
     expect(params.line_items[0].price_data.unit_amount).toBe(10_000);
     expect(params.line_items[1].price_data).toMatchObject({
       unit_amount: 2500,
-      product_data: { name: "Freight — Australia Post" },
+      product_data: { name: "Freight — Express Post" },
     });
     // The platform commission remains based on the artwork, not freight.
     expect(params.payment_intent_data.application_fee_amount).toBe(500);
   });
 
-  it("rejects a freight method that is not one of the gallery's enabled methods", async () => {
-    const response = await POST(request("method-from-another-gallery"));
+  it("rejects a quote that is not available for this artwork and gallery", async () => {
+    freightQuote.value = null;
+    const response = await POST(request("quote-from-another-gallery"));
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
-      error: expect.stringMatching(/no longer available/i),
+      error: expect.stringMatching(/expired/i),
     });
     expect(checkoutCreate).not.toHaveBeenCalled();
   });
 
-  it("blocks shipping when a gallery has freight methods but all are disabled", async () => {
-    freightMethods.value = [{ ...freightMethods.value[0], enabled: false }];
-
+  it("blocks shipping when the buyer has not selected a quote", async () => {
     const response = await POST(request());
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
-      error: expect.stringMatching(/delivery is not currently available/i),
+      error: expect.stringMatching(/select a current freight quote/i),
     });
     expect(checkoutCreate).not.toHaveBeenCalled();
   });
 
-  it("keeps a selected free freight service as an explicit Stripe line item", async () => {
-    freightMethods.value = [{ ...freightMethods.value[0], mediumCents: 0 }];
+  it("keeps a selected free quote as an explicit Stripe line item", async () => {
+    freightQuote.value = { ...freightQuote.value, freightCents: 0 };
 
-    const response = await POST(request("freight-a"));
+    const response = await POST(request("quote-a"));
     expect(response.status).toBe(200);
 
     const params = checkoutCreate.mock.calls[0]?.[0];
     expect(params.line_items).toHaveLength(2);
     expect(params.line_items[1].price_data).toMatchObject({
       unit_amount: 0,
-      product_data: { name: "Freight — Australia Post" },
+      product_data: { name: "Freight — Express Post" },
     });
     expect(params.metadata).toMatchObject({
-      freightMethodName: "Australia Post",
+      freightMethodName: "Express Post",
       freightCents: "0",
     });
   });

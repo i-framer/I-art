@@ -28,6 +28,10 @@ const artworkSchema = z.object({
   dimensionsH: z.string().optional(),
   dimensionsD: z.string().optional(),
   shippingFormat: z.enum(["STANDARD", "TUBE"]).optional(),
+  packageLengthMm: z.string().regex(/^[1-9]\d*$/, "Packed dimensions must be positive whole millimetres.").optional(),
+  packageWidthMm: z.string().regex(/^[1-9]\d*$/, "Packed dimensions must be positive whole millimetres.").optional(),
+  packageHeightMm: z.string().regex(/^[1-9]\d*$/, "Packed dimensions must be positive whole millimetres.").optional(),
+  packedWeightGrams: z.string().regex(/^[1-9]\d*$/, "Packed weight must be a positive whole number of grams.").optional(),
   condition: z.enum(["EXCELLENT", "GOOD", "FAIR", "POOR"]).optional(),
   price: z.string().optional(),
   isEdition: z.string().optional(),
@@ -36,6 +40,21 @@ const artworkSchema = z.object({
   notes: z.string().optional(),
   representedArtistId: z.string().optional(),
   categoryIds: z.array(z.string()).optional(),
+}).superRefine((data, context) => {
+  const packageValues = [
+    data.packageLengthMm,
+    data.packageWidthMm,
+    data.packageHeightMm,
+    data.packedWeightGrams,
+  ];
+  if (packageValues.some(Boolean) && !packageValues.every(Boolean)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "Enter all packed parcel dimensions and the total packed weight, or leave all shipping-package fields blank.",
+      path: ["packageLengthMm"],
+    });
+  }
 });
 
 /**
@@ -59,6 +78,10 @@ function parseArtworkFormData(formData: FormData) {
     dimensionsH: field(formData, "dimensionsH"),
     dimensionsD: field(formData, "dimensionsD"),
     shippingFormat: field(formData, "shippingFormat"),
+    packageLengthMm: field(formData, "packageLengthMm"),
+    packageWidthMm: field(formData, "packageWidthMm"),
+    packageHeightMm: field(formData, "packageHeightMm"),
+    packedWeightGrams: field(formData, "packedWeightGrams"),
     condition: field(formData, "condition"),
     price: field(formData, "price"),
     isEdition: field(formData, "isEdition"),
@@ -85,6 +108,12 @@ function toInsertValues(data: z.infer<typeof artworkSchema>, tenantId: string) {
     dimensionsH: data.dimensionsH ? parseInt(data.dimensionsH) : null,
     dimensionsD: data.dimensionsD ? parseInt(data.dimensionsD) : null,
     shippingFormat: data.shippingFormat ?? "STANDARD",
+    packageLengthMm: data.packageLengthMm ? parseInt(data.packageLengthMm) : null,
+    packageWidthMm: data.packageWidthMm ? parseInt(data.packageWidthMm) : null,
+    packageHeightMm: data.packageHeightMm ? parseInt(data.packageHeightMm) : null,
+    packedWeightGrams: data.packedWeightGrams
+      ? parseInt(data.packedWeightGrams)
+      : null,
     condition: (data.condition as "EXCELLENT" | "GOOD" | "FAIR" | "POOR" | undefined) || null,
     price,
     isEdition,

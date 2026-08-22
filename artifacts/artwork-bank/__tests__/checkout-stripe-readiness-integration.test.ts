@@ -124,7 +124,7 @@ function checkoutRequest(slug: string) {
     body: JSON.stringify({
       artworkId: uid(), // intentionally unknown — no artwork row created
       slug,
-      fulfillmentType: "SHIP",
+      fulfillmentType: "PICKUP",
     }),
   });
 }
@@ -217,7 +217,7 @@ describeIntegration(
           new Request("http://localhost/api/stripe/checkout", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ artworkId, slug, fulfillmentType: "SHIP" }),
+            body: JSON.stringify({ artworkId, slug, fulfillmentType: "PICKUP" }),
           }),
         );
 
@@ -317,7 +317,7 @@ describeIntegration(
           new Request("http://localhost/api/stripe/checkout", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ artworkId, slug, fulfillmentType: "SHIP" }),
+            body: JSON.stringify({ artworkId, slug, fulfillmentType: "PICKUP" }),
           }),
         );
 

@@ -138,7 +138,7 @@ function checkoutRequest() {
     body: JSON.stringify({
       artworkId: "art-1",
       slug: "gallery",
-      fulfillmentType: "SHIP",
+      fulfillmentType: "PICKUP",
     }),
   });
 }

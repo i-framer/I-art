@@ -276,6 +276,38 @@ export function ArtworkForm({
             Tube pricing is used for rolled artwork. Standard parcels use the freight size limits in Settings.
           </p>
         </div>
+        <div className="border-t border-stone-100 pt-5">
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold text-stone-900">Packed shipping parcel</h3>
+            <p className="mt-1 text-xs leading-relaxed text-stone-500">
+              Required for live carrier quotes. Include the artwork, frame, protective materials, and outer packaging—not just the artwork size shown to buyers.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              { name: "packageLengthMm", label: "Length", value: artwork?.packageLengthMm },
+              { name: "packageWidthMm", label: "Width", value: artwork?.packageWidthMm },
+              { name: "packageHeightMm", label: "Height", value: artwork?.packageHeightMm },
+              { name: "packedWeightGrams", label: "Weight", value: artwork?.packedWeightGrams, suffix: "g" },
+            ].map((field) => (
+              <div key={field.name}>
+                <label htmlFor={field.name} className="block text-xs text-stone-500 mb-1">
+                  {field.label} {field.suffix ? `(${field.suffix})` : "(mm)"}
+                </label>
+                <input
+                  id={field.name}
+                  name={field.name}
+                  type="number"
+                  min="1"
+                  step="1"
+                  defaultValue={field.value?.toString() ?? ""}
+                  className={inputCls}
+                  placeholder={field.suffix ? "grams" : "mm"}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* ── Condition & pricing ── */}

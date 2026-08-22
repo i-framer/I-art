@@ -51,6 +51,15 @@ export const artworksTable = pgTable(
     shippingFormat: artworkShippingFormatEnum("shipping_format")
       .notNull()
       .default("STANDARD"),
+    /**
+     * Packed parcel measurements used for live shipping quotes. These include
+     * protective packaging and deliberately remain separate from the artwork's
+     * display dimensions above.
+     */
+    packageLengthMm: integer("package_length_mm"),
+    packageWidthMm: integer("package_width_mm"),
+    packageHeightMm: integer("package_height_mm"),
+    packedWeightGrams: integer("packed_weight_grams"),
     condition: artworkConditionEnum("condition"),
     // Price stored in cents (smallest currency unit)
     price: integer("price"),

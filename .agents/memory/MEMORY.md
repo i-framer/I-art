@@ -12,3 +12,4 @@
 - [Drizzle mocked set operations](drizzle-mocked-set-operations.md) — use SQL fragments for composable set predicates in helpers tested with lightweight Drizzle mocks
 - [Artifact health routing](artifact-health-routing.md) — a stopped path-owning service yields proxy 502s even while a sibling web page renders normally
 - [Artifact WebSocket routing](artifact-websocket-routing.md) — Next.js HMR needs both an explicit proxy path and an allowed preview origin
+- [Postgres trigram extension](postgres-trigram-extension.md) — enable pg_trgm before schema sync when existing GIN indexes use gin_trgm_ops

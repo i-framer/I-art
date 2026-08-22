@@ -7,7 +7,7 @@ import {
   artworkImagesTable,
   representedArtistsTable,
   freightMethodsTable,
-  freightSettingsTable,
+  freightCarrierAccountsTable,
 } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { getTenantBySlug, formatPrice, formatDimensions } from "@/lib/tenant-cache";
@@ -16,7 +16,6 @@ import { isStripeConfigured } from "@/lib/stripe";
 import { ImageCarousel } from "../_components/image-carousel";
 import { BuyNowButton } from "../_components/buy-now-button";
 import { InquiryForm } from "../_components/inquiry-form";
-import { getFreightCents, getFreightClass } from "@/lib/freight";
 
 type Props = {
   params: Promise<{ slug: string; artworkId: string }>;
@@ -91,10 +90,10 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
 
   // Fetch all images + represented artist in parallel
   const freightQuery = db.query as typeof db.query & {
-    freightSettingsTable?: typeof db.query.freightSettingsTable;
     freightMethodsTable?: typeof db.query.freightMethodsTable;
+    freightCarrierAccountsTable?: typeof db.query.freightCarrierAccountsTable;
   };
-  const [images, representedArtist, freightSettings, freightMethods] = await Promise.all([
+  const [images, representedArtist, freightMethods, carrierAccounts] = await Promise.all([
     db.query.artworkImagesTable.findMany({
       where: eq(artworkImagesTable.artworkId, artworkId),
       orderBy: (t, { asc }) => [asc(t.sortOrder), asc(t.createdAt)],
@@ -104,12 +103,16 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
           where: eq(representedArtistsTable.id, artwork.representedArtistId),
         })
       : Promise.resolve(null),
-    freightQuery.freightSettingsTable?.findFirst({
-      where: eq(freightSettingsTable.tenantId, tenant.id),
-    }) ?? Promise.resolve(null),
     freightQuery.freightMethodsTable?.findMany({
       where: eq(freightMethodsTable.tenantId, tenant.id),
       orderBy: (method, { asc }) => [asc(method.createdAt)],
+    }) ?? Promise.resolve([]),
+    freightQuery.freightCarrierAccountsTable?.findMany({
+      where: and(
+        eq(freightCarrierAccountsTable.tenantId, tenant.id),
+        eq(freightCarrierAccountsTable.owner, "GALLERY"),
+        eq(freightCarrierAccountsTable.enabled, true),
+      ),
     }) ?? Promise.resolve([]),
   ]);
 
@@ -147,23 +150,21 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
   const isSold = artwork.status === "SOLD";
   const isReserved = artwork.status === "RESERVED";
   const dimensions = formatDimensions(artwork.dimensionsW, artwork.dimensionsH, artwork.dimensionsD);
-  const freightClass = getFreightClass(artwork, freightSettings);
   const enabledFreightMethods = freightMethods.filter((method) => method.enabled);
-  const freightOptions = freightClass
-    ? enabledFreightMethods.map((method) => ({
-        id: method.id,
-        name: method.name,
-        cents: getFreightCents(method, freightClass),
-      }))
-    : [];
-  // Existing galleries with no freight setup retain the former "Ship to me"
-  // checkout. Freight configuration needs an enabled method and dimensions
-  // before shipping can be offered safely.
-  const canShip = freightMethods.length === 0 || freightOptions.length > 0;
-  const shippingNotice =
-    freightMethods.length > 0 && enabledFreightMethods.length === 0
-      ? "Delivery is not currently available for this artwork."
-      : "Delivery is not available for this artwork because its dimensions are missing.";
+  const hasPackedParcel = [
+    artwork.packageLengthMm,
+    artwork.packageWidthMm,
+    artwork.packageHeightMm,
+    artwork.packedWeightGrams,
+  ].every((value) => typeof value === "number" && value > 0);
+  const hasDeliveryService =
+    carrierAccounts.length > 0 || enabledFreightMethods.length > 0;
+  const canShip = hasPackedParcel && hasDeliveryService;
+  const shippingNotice = !hasPackedParcel
+    ? "Delivery is not available because the gallery has not entered the packed parcel dimensions and weight."
+    : !hasDeliveryService
+      ? "Delivery is not currently configured for this artwork."
+      : "Enter an Australian delivery address to see available services.";
 
   return (
     <div className="mx-auto max-w-7xl px-6 py-10">
@@ -286,8 +287,6 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
                   price={artwork.price!}
                   themeColor={themeColor}
                   shippingNotice={shippingNotice}
-                  freightOptions={freightOptions}
-                  freightClass={freightClass}
                   canShip={canShip}
                 />
                 {tenant.contactEmail && (

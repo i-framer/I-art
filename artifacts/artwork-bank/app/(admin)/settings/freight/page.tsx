@@ -6,13 +6,16 @@ import { db } from "@workspace/db";
 import {
   freightSettingsTable,
   freightMethodsTable,
+  freightCarrierAccountsTable,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Users, CreditCard, Truck } from "lucide-react";
 import { DEFAULT_FREIGHT_THRESHOLDS } from "@/lib/freight";
 import { FreightSettingsForm } from "./_components/freight-settings-form";
 import { FreightMethodsList } from "./_components/freight-methods-list";
 import { FreightMethodForm } from "./_components/freight-method-form";
+import { CarrierAccountForm } from "./_components/carrier-account-form";
+import { deleteCarrierAccount } from "./actions";
 
 export const metadata: Metadata = { title: "Freight Settings" };
 
@@ -27,12 +30,19 @@ export default async function FreightSettingsPage({
   const { saved, error } = await searchParams;
 
   // Load freight settings (may be null if never saved)
-  const [freightSettings, freightMethods] = await Promise.all([
+  const [freightSettings, freightMethods, carrierAccounts] = await Promise.all([
     db.query.freightSettingsTable.findFirst({
       where: eq(freightSettingsTable.tenantId, session.tenantId),
     }),
     db.query.freightMethodsTable.findMany({
       where: eq(freightMethodsTable.tenantId, session.tenantId),
+      orderBy: (t, { asc }) => [asc(t.createdAt)],
+    }),
+    db.query.freightCarrierAccountsTable.findMany({
+      where: and(
+        eq(freightCarrierAccountsTable.tenantId, session.tenantId),
+        eq(freightCarrierAccountsTable.owner, "GALLERY"),
+      ),
       orderBy: (t, { asc }) => [asc(t.createdAt)],
     }),
   ]);
@@ -115,6 +125,11 @@ export default async function FreightSettingsPage({
           <FreightSettingsForm
             smallMaxMm={thresholds.smallMaxMm}
             mediumMaxMm={thresholds.mediumMaxMm}
+            originAddressLine1={freightSettings?.originAddressLine1}
+            originAddressLine2={freightSettings?.originAddressLine2}
+            originSuburb={freightSettings?.originSuburb}
+            originState={freightSettings?.originState}
+            originPostcode={freightSettings?.originPostcode}
           />
         ) : (
           <div className="grid grid-cols-2 gap-4">
@@ -134,15 +149,54 @@ export default async function FreightSettingsPage({
         )}
       </div>
 
+      {/* ── Carrier accounts ───────────────────────────────────────────────── */}
+      <div className="mt-8 rounded-xl border border-stone-200 bg-white p-6 space-y-6">
+        <div>
+          <h2 className="text-sm font-semibold text-stone-900">Live carrier quotes</h2>
+          <p className="mt-1 text-sm text-stone-500">
+            Connect your own Australia Post or Aramex account. Buyers enter an Australian delivery address before they see current carrier prices.
+          </p>
+        </div>
+
+        {carrierAccounts.length > 0 && (
+          <div className="divide-y divide-stone-100 rounded-lg border border-stone-200">
+            {carrierAccounts.map((account) => (
+              <div key={account.id} className="flex items-center justify-between gap-4 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium text-stone-800">{account.label}</p>
+                  <p className="text-xs text-stone-500">
+                    {account.provider === "AUSTRALIA_POST" ? "Australia Post" : "Aramex"} · {account.enabled ? "Live quotes enabled" : "Disabled"} · credentials protected
+                  </p>
+                </div>
+                {isOwner && (
+                  <form action={deleteCarrierAccount}>
+                    <input type="hidden" name="id" value={account.id} />
+                    <button type="submit" className="rounded-md px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
+                      Disconnect
+                    </button>
+                  </form>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {isOwner && (
+          <div className={carrierAccounts.length > 0 ? "border-t border-stone-100 pt-6" : ""}>
+            <CarrierAccountForm />
+          </div>
+        )}
+      </div>
+
       {/* ── Freight methods ───────────────────────────────────────────────── */}
       <div className="mt-8 rounded-xl border border-stone-200 bg-white p-6 space-y-6">
         <div>
           <h2 className="text-sm font-semibold text-stone-900">
-            Freight methods
+            Manual fallback rates
           </h2>
           <p className="mt-1 text-sm text-stone-500">
-            Named carriers or services with AUD rates per size class. Enabled
-            methods are shown to buyers at checkout.
+            Use these fixed rates only when no live carrier service is available.
+            Enabled rates are clearly labelled as a manual fallback to buyers.
           </p>
         </div>
 

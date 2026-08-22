@@ -7,6 +7,7 @@ import {
   artworksTable,
   tenantsTable,
   stripeAlertsTable,
+  freightQuotesTable,
 } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import {
@@ -663,6 +664,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
     artworkId,
     tenantId,
     fulfillmentType,
+    freightQuoteId,
     freightMethodName,
     freightClass: freightClassMetadata,
     freightCents: freightCentsMetadata,
@@ -801,17 +803,54 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
     freightClassMetadata === "TUBE"
       ? (freightClassMetadata as "SMALL" | "MEDIUM" | "LARGE" | "TUBE")
       : null;
+  const acceptedQuote =
+    fulfillmentType === "SHIP" && freightQuoteId
+      ? await db.query.freightQuotesTable.findFirst({
+          where: and(
+            eq(freightQuotesTable.id, freightQuoteId),
+            eq(freightQuotesTable.tenantId, tenantId),
+            eq(freightQuotesTable.artworkId, artworkId),
+          ),
+        })
+      : null;
   const freightSnapshot =
     fulfillmentType === "SHIP"
-      ? {
-          freightMethodName: freightMethodName?.trim() || null,
-          freightClass,
-          freightCents,
-        }
+      ? acceptedQuote
+        ? {
+            freightMethodName: acceptedQuote.serviceName,
+            freightClass: acceptedQuote.freightClass,
+            freightCents: acceptedQuote.freightCents,
+            freightProvider: acceptedQuote.provider,
+            freightServiceCode: acceptedQuote.serviceCode,
+            freightQuoteId: acceptedQuote.id,
+            shippingAddressJson: JSON.stringify({
+              line1: acceptedQuote.destinationLine1,
+              line2: acceptedQuote.destinationLine2,
+              suburb: acceptedQuote.destinationSuburb,
+              state: acceptedQuote.destinationState,
+              postcode: acceptedQuote.destinationPostcode,
+              countryCode: acceptedQuote.destinationCountryCode,
+            }),
+          }
+        : {
+            // Sessions created before quote persistence are still allowed to
+            // complete. New checkouts always have an acceptedQuote.
+            freightMethodName: freightMethodName?.trim() || null,
+            freightClass,
+            freightCents,
+            freightProvider: session.metadata?.freightProvider?.trim() || null,
+            freightServiceCode: session.metadata?.freightServiceCode?.trim() || null,
+            freightQuoteId: freightQuoteId?.trim() || null,
+            shippingAddressJson: null,
+          }
       : {
           freightMethodName: null,
           freightClass: null,
           freightCents: 0,
+          freightProvider: null,
+          freightServiceCode: null,
+          freightQuoteId: null,
+          shippingAddressJson: null,
         };
 
   const buyerEmail =

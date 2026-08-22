@@ -115,7 +115,7 @@ function checkoutRequest(overrides: Record<string, string> = {}) {
     body: JSON.stringify({
       artworkId: "art-1",
       slug: "gallery",
-      fulfillmentType: "SHIP",
+      fulfillmentType: "PICKUP",
       ...overrides,
     }),
   });
@@ -177,7 +177,7 @@ describe("POST /api/stripe/checkout — commission amount", () => {
     expect(args.metadata).toMatchObject({
       artworkId: "art-1",
       tenantId: tenant.id,
-      fulfillmentType: "SHIP",
+      fulfillmentType: "PICKUP",
     });
   });
 

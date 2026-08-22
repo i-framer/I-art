@@ -129,7 +129,7 @@ function makeRequest(body: Record<string, unknown> = {}): Request {
     body: JSON.stringify({
       artworkId: "art-1",
       slug: "gallery-a",
-      fulfillmentType: "SHIP",
+      fulfillmentType: "PICKUP",
       ...body,
     }),
   });

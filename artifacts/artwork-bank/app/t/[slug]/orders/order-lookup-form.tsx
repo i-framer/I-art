@@ -127,7 +127,12 @@ export function OrderLookupForm({
           </p>
           {state.order.freightMethodName && (
             <p className="mt-1 text-sm text-stone-600">
-              Freight: {state.order.freightMethodName}
+              Freight:{" "}
+              {state.order.freightProvider &&
+              state.order.freightProvider !== "MANUAL"
+                ? `${state.order.freightProvider === "AUSTRALIA_POST" ? "Australia Post" : "Aramex"} · `
+                : ""}
+              {state.order.freightMethodName}
               {state.order.freightClass ? ` (${state.order.freightClass === "TUBE" ? "Rolled / tube" : `${state.order.freightClass[0]}${state.order.freightClass.slice(1).toLowerCase()} parcel`})` : ""}
               {" · "}
               {formatPrice(state.order.freightCents)}

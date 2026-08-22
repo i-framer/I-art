@@ -3,11 +3,10 @@ import { db } from "@workspace/db";
 import {
   artworksTable,
   artworkImagesTable,
-  freightMethodsTable,
-  freightSettingsTable,
+  freightQuotesTable,
   tenantsTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { getTenantBySlug } from "@/lib/tenant-cache";
 import {
   getStripeClient,
@@ -16,7 +15,6 @@ import {
 } from "@/lib/stripe";
 import { getServeUrl } from "@/lib/object-storage";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { getFreightCents, getFreightClass } from "@/lib/freight";
 import { isStripeAccountMissing } from "@/lib/stripe-errors";
 
 export const dynamic = "force-dynamic";
@@ -48,11 +46,11 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { artworkId, slug, fulfillmentType, freightMethodId } = body as {
+    const { artworkId, slug, fulfillmentType, freightQuoteId } = body as {
       artworkId: string;
       slug: string;
       fulfillmentType: string;
-      freightMethodId?: string;
+      freightQuoteId?: string;
     };
 
     if (!artworkId || !slug || !fulfillmentType) {
@@ -172,76 +170,47 @@ export async function POST(request: Request) {
         );
       }
 
-      // Freight is always calculated from the gallery-owned method and the
-      // saved artwork data. The browser only supplies an opaque method ID, so
-      // it cannot lower the charge or select another gallery's method.
+      // Freight is always read from a short-lived, server-stored quote. The
+      // browser supplies only its opaque ID, so it cannot lower the charge,
+      // substitute another gallery's quote, or reuse an expired price.
       let freightCents = 0;
       let freightMethodName: string | null = null;
       let freightClass: "SMALL" | "MEDIUM" | "LARGE" | "TUBE" | null = null;
-      let freightMethodIdForMetadata = "";
+      let freightProvider = "";
+      let freightServiceCode = "";
+      let freightQuoteIdForMetadata = "";
 
       if (fulfillmentType === "SHIP") {
-        // The query objects are present in the application schema. Keeping
-        // these defensive lookups also preserves the legacy zero-freight
-        // behaviour for deployments that are rolling out the additive schema.
-        const freightQuery = db.query as typeof db.query & {
-          freightSettingsTable?: typeof db.query.freightSettingsTable;
-          freightMethodsTable?: typeof db.query.freightMethodsTable;
-        };
-        const [freightSettings, freightMethods] = await Promise.all([
-          freightQuery.freightSettingsTable?.findFirst({
-            where: eq(freightSettingsTable.tenantId, tenant.id),
-          }) ?? Promise.resolve(null),
-          freightQuery.freightMethodsTable?.findMany({
-            where: eq(freightMethodsTable.tenantId, tenant.id),
-          }) ?? Promise.resolve([]),
-        ]);
-        const enabledMethods = freightMethods.filter((method) => method.enabled);
-
-        // Galleries with no configured methods keep the former zero-freight
-        // shipping behaviour. A gallery that has deliberately disabled every
-        // configured method cannot accidentally accept an unpriced shipment.
-        if (freightMethods.length > 0) {
-          if (enabledMethods.length === 0) {
-            await releaseReservation();
-            return NextResponse.json(
-              { error: "Delivery is not currently available for this artwork." },
-              { status: 400 },
-            );
-          }
-          if (!freightMethodId) {
-            await releaseReservation();
-            return NextResponse.json(
-              { error: "Please select a freight service." },
-              { status: 400 },
-            );
-          }
-          const freightMethod = enabledMethods.find(
-            (method) => method.id === freightMethodId,
+        if (!freightQuoteId) {
+          await releaseReservation();
+          return NextResponse.json(
+            { error: "Enter a delivery address and select a current freight quote." },
+            { status: 400 },
           );
-          if (!freightMethod) {
-            await releaseReservation();
-            return NextResponse.json(
-              { error: "The selected freight service is no longer available." },
-              { status: 400 },
-            );
-          }
-
-          freightClass = getFreightClass(artwork, freightSettings);
-          if (!freightClass) {
-            await releaseReservation();
-            return NextResponse.json(
-              {
-                error:
-                  "This artwork needs dimensions before delivery can be selected. Please contact the gallery.",
-              },
-              { status: 400 },
-            );
-          }
-          freightCents = getFreightCents(freightMethod, freightClass);
-          freightMethodName = freightMethod.name;
-          freightMethodIdForMetadata = freightMethod.id;
         }
+
+        const freightQuote = await db.query.freightQuotesTable.findFirst({
+          where: and(
+            eq(freightQuotesTable.id, freightQuoteId),
+            eq(freightQuotesTable.tenantId, tenant.id),
+            eq(freightQuotesTable.artworkId, artwork.id),
+            gt(freightQuotesTable.expiresAt, new Date()),
+          ),
+        });
+        if (!freightQuote) {
+          await releaseReservation();
+          return NextResponse.json(
+            { error: "This freight quote has expired. Please request a new delivery quote." },
+            { status: 400 },
+          );
+        }
+
+        freightCents = freightQuote.freightCents;
+        freightMethodName = freightQuote.serviceName;
+        freightClass = freightQuote.freightClass;
+        freightProvider = freightQuote.provider;
+        freightServiceCode = freightQuote.serviceCode ?? "";
+        freightQuoteIdForMetadata = freightQuote.id;
       }
 
       // Fetch primary image for Stripe display
@@ -372,9 +341,11 @@ export async function POST(request: Request) {
             tenantId: tenant.id,
             slug,
             fulfillmentType,
-            freightMethodId: freightMethodIdForMetadata,
+            freightQuoteId: freightQuoteIdForMetadata,
             freightMethodName: freightMethodName ?? "",
             freightClass: freightClass ?? "",
+            freightProvider,
+            freightServiceCode,
             freightCents: String(freightCents),
             applicationFeeCents: String(feeAmount),
             // Record the commission rate used so the webhook can persist it
