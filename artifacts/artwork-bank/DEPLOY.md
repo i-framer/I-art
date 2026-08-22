@@ -21,6 +21,12 @@ The command is development-only. It refuses to run when `NODE_ENV=production` or
 when `BROWSER_TEST_DATABASE_URL` is absent or does not exactly match
 `DATABASE_URL`. It reports the number of stale fixtures removed.
 
+The pull-request browser regression workflow uses the same guard. Configure the
+GitHub Actions repository secret `BROWSER_TEST_DATABASE_URL` with a dedicated
+non-production database; the workflow supplies it as both `DATABASE_URL` and
+`BROWSER_TEST_DATABASE_URL`, installs Chromium, and runs the public storefront
+favicon checks.
+
 ## 1. Vercel project setup
 
 1. Import the Git repository into Vercel.

@@ -18,10 +18,13 @@ const TENANT_ID = `production-smoke-tenant-${RUN_ID}`;
 const ARTWORK_ID = `production-smoke-artwork-${RUN_ID}`;
 const OBJECT_PATH = `/objects/uploads/${RUN_ID}`;
 const OBJECT_ENTITY_ID = `uploads/${RUN_ID}`;
-const IMAGE_URL = new URL(
-  `/api/storage/public?path=${encodeURIComponent(OBJECT_PATH)}&smoke=${RUN_ID}`,
-  process.env.ARTWORK_BANK_PRODUCTION_SMOKE_URL,
-).toString();
+const productionSmokeUrl = process.env.ARTWORK_BANK_PRODUCTION_SMOKE_URL;
+const IMAGE_URL = productionSmokeUrl
+  ? new URL(
+      `/api/storage/public?path=${encodeURIComponent(OBJECT_PATH)}&smoke=${RUN_ID}`,
+      productionSmokeUrl,
+    ).toString()
+  : null;
 
 // Valid, minimal 1×1 PNG. The bytes have no customer or artwork content.
 const PNG_1X1 = new Uint8Array([
@@ -109,6 +112,11 @@ test(
   "a hidden artwork image is denied on the next production request",
   async ({ page, baseURL }) => {
     test.setTimeout(120_000);
+    if (!IMAGE_URL) {
+      throw new Error(
+        "ARTWORK_BANK_PRODUCTION_SMOKE_URL is required for the production smoke test.",
+      );
+    }
     let objectWasUploaded = false;
     let checkFailure: unknown;
     let cleanupFailure: unknown;
