@@ -10,8 +10,9 @@ import {
 } from "@workspace/db";
 import { getSession } from "@/lib/auth";
 import { isPlatformAdmin, tenantBillingStatus } from "@/lib/platform-admin";
-import { ShieldCheck, ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { formatMoney, formatDate } from "../_lib/format";
+import { PlatformAdminHeader } from "../_components/PlatformAdminHeader";
 
 export const dynamic = "force-dynamic";
 
@@ -94,17 +95,11 @@ export default async function PlatformReportsPage() {
 
   return (
     <div className="min-h-screen bg-stone-50">
-      <header className="bg-stone-900 px-6 py-4">
-        <div className="mx-auto flex max-w-6xl items-center gap-2.5">
-          <ShieldCheck className="h-5 w-5 text-amber-400" />
-          <h1 className="text-sm font-semibold text-white">
-            Platform Admin — Reports
-          </h1>
-          <span className="ml-auto text-xs text-stone-400">
-            {session.email}
-          </span>
-        </div>
-      </header>
+      <PlatformAdminHeader
+        title="Platform Admin — Reports"
+        email={session.email ?? ""}
+        activeSection="reports"
+      />
 
       <main className="mx-auto max-w-6xl px-6 py-8">
         <Link

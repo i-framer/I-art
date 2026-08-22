@@ -60,6 +60,8 @@ export const artworksTable = pgTable(
     packageWidthMm: integer("package_width_mm"),
     packageHeightMm: integer("package_height_mm"),
     packedWeightGrams: integer("packed_weight_grams"),
+    /** Artwork-specific materials charge added to the carrier's raw freight. */
+    packagingCents: integer("packaging_cents").notNull().default(0),
     condition: artworkConditionEnum("condition"),
     // Price stored in cents (smallest currency unit)
     price: integer("price"),

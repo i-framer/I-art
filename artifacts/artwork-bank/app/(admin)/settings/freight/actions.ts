@@ -7,12 +7,11 @@ import {
   freightSettingsTable,
   freightMethodsTable,
   freightCarrierAccountsTable,
+  freightCarrierAccountAccessTable,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { getSession } from "@/lib/auth";
-import { encryptCarrierCredentials } from "@/lib/carrier-credentials";
-import { carrierProviderSchema } from "@/lib/carrier-quotes";
 
 // ---------------------------------------------------------------------------
 // Validation schemas
@@ -132,125 +131,46 @@ export async function saveFreightSettings(
 }
 
 // ---------------------------------------------------------------------------
-// Carrier account connections
-// ---------------------------------------------------------------------------
-
-export type CarrierAccountState = { error: string | null; success: boolean };
-
-const carrierAccountBaseSchema = z.object({
-  provider: carrierProviderSchema,
-  label: z.string().trim().min(2, "Account label is required.").max(80),
-  enabled: z.coerce.boolean().default(true),
-});
-
-const australiaPostAccountSchema = carrierAccountBaseSchema.extend({
-  provider: z.literal("AUSTRALIA_POST"),
-  apiKey: z.string().trim().min(8, "Australia Post API key is required.").max(500),
-});
-
-const aramexAccountSchema = carrierAccountBaseSchema.extend({
-  provider: z.literal("ARAMEX"),
-  userName: z.string().trim().min(1, "Aramex user name is required.").max(120),
-  password: z.string().min(1, "Aramex password is required.").max(500),
-  accountNumber: z.string().trim().min(1, "Aramex account number is required.").max(80),
-  accountPin: z.string().trim().min(1, "Aramex account PIN is required.").max(80),
-  accountEntity: z.string().trim().min(1, "Aramex account entity is required.").max(16),
-  accountCountryCode: z.string().trim().length(2, "Use a two-letter country code."),
-  useTestEndpoint: z.coerce.boolean().default(false),
-});
-
-export async function addCarrierAccount(
-  _prev: CarrierAccountState,
+export async function setPlatformCarrierAccountAccess(
   formData: FormData,
-): Promise<CarrierAccountState> {
-  const session = await getSession();
-  if (!session.userId) redirect("/login");
-  if (session.role !== "owner") {
-    return { error: "Only gallery owners can connect carrier accounts.", success: false };
-  }
-
-  const provider = carrierProviderSchema.safeParse(formData.get("provider"));
-  if (!provider.success) {
-    return { error: "Choose a supported carrier.", success: false };
-  }
-
-  const raw = {
-    provider: provider.data,
-    label: formData.get("label"),
-    enabled: formData.get("enabled") === "on" ? "true" : "false",
-    apiKey: formData.get("apiKey"),
-    userName: formData.get("userName"),
-    password: formData.get("password"),
-    accountNumber: formData.get("accountNumber"),
-    accountPin: formData.get("accountPin"),
-    accountEntity: formData.get("accountEntity"),
-    accountCountryCode: formData.get("accountCountryCode"),
-    useTestEndpoint: formData.get("useTestEndpoint") === "on" ? "true" : "false",
-  };
-  const parsed =
-    provider.data === "AUSTRALIA_POST"
-      ? australiaPostAccountSchema.safeParse(raw)
-      : aramexAccountSchema.safeParse(raw);
-  if (!parsed.success) {
-    return {
-      error: parsed.error.errors[0]?.message ?? "Invalid carrier account details.",
-      success: false,
-    };
-  }
-
-  try {
-    const credentials =
-      parsed.data.provider === "AUSTRALIA_POST"
-        ? { apiKey: parsed.data.apiKey }
-        : {
-            userName: parsed.data.userName,
-            password: parsed.data.password,
-            accountNumber: parsed.data.accountNumber,
-            accountPin: parsed.data.accountPin,
-            accountEntity: parsed.data.accountEntity,
-            accountCountryCode: parsed.data.accountCountryCode.toUpperCase(),
-            useTestEndpoint: parsed.data.useTestEndpoint,
-          };
-    await db.insert(freightCarrierAccountsTable).values({
-      tenantId: session.tenantId,
-      owner: "GALLERY",
-      provider: parsed.data.provider,
-      label: parsed.data.label,
-      enabled: parsed.data.enabled,
-      credentialsCiphertext: encryptCarrierCredentials(credentials),
-    });
-  } catch (error) {
-    console.error("[freight] Failed to store carrier account:", error);
-    return {
-      error:
-        error instanceof Error
-          ? error.message
-          : "Could not securely save this carrier account.",
-      success: false,
-    };
-  }
-
-  revalidatePath("/settings/freight");
-  return { error: null, success: true };
-}
-
-export async function deleteCarrierAccount(formData: FormData): Promise<void> {
+): Promise<void> {
   const session = await getSession();
   if (!session.userId) redirect("/login");
   if (session.role !== "owner") redirect("/settings/freight?error=unauthorized");
 
-  const id = formData.get("id");
-  if (typeof id !== "string" || !id) redirect("/settings/freight");
+  const carrierAccountId = formData.get("carrierAccountId");
+  const enabled = formData.get("enabled");
+  if (typeof carrierAccountId !== "string" || !carrierAccountId) {
+    redirect("/settings/freight");
+  }
+  if (enabled !== "true" && enabled !== "false") {
+    redirect("/settings/freight");
+  }
+
+  const carrier = await db.query.freightCarrierAccountsTable.findFirst({
+    where: and(
+      eq(freightCarrierAccountsTable.id, carrierAccountId),
+      eq(freightCarrierAccountsTable.owner, "PLATFORM"),
+      eq(freightCarrierAccountsTable.enabled, true),
+    ),
+    columns: { id: true },
+  });
+  if (!carrier) redirect("/settings/freight?error=courier_unavailable");
 
   await db
-    .delete(freightCarrierAccountsTable)
-    .where(
-      and(
-        eq(freightCarrierAccountsTable.id, id),
-        eq(freightCarrierAccountsTable.tenantId, session.tenantId),
-        eq(freightCarrierAccountsTable.owner, "GALLERY"),
-      ),
-    );
+    .insert(freightCarrierAccountAccessTable)
+    .values({
+      tenantId: session.tenantId,
+      carrierAccountId,
+      enabled: enabled === "true",
+    })
+    .onConflictDoUpdate({
+      target: [
+        freightCarrierAccountAccessTable.tenantId,
+        freightCarrierAccountAccessTable.carrierAccountId,
+      ],
+      set: { enabled: enabled === "true", updatedAt: new Date() },
+    });
 
   revalidatePath("/settings/freight");
   redirect("/settings/freight?saved=1");

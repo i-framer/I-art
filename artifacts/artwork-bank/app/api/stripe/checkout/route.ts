@@ -174,6 +174,8 @@ export async function POST(request: Request) {
       // browser supplies only its opaque ID, so it cannot lower the charge,
       // substitute another gallery's quote, or reuse an expired price.
       let freightCents = 0;
+      let packagingCents = 0;
+      let deliveryCents = 0;
       let freightMethodName: string | null = null;
       let freightClass: "SMALL" | "MEDIUM" | "LARGE" | "TUBE" | null = null;
       let freightProvider = "";
@@ -206,6 +208,18 @@ export async function POST(request: Request) {
         }
 
         freightCents = freightQuote.freightCents;
+        packagingCents =
+          typeof freightQuote.packagingCents === "number" &&
+          Number.isSafeInteger(freightQuote.packagingCents) &&
+          freightQuote.packagingCents >= 0
+            ? freightQuote.packagingCents
+            : 0;
+        deliveryCents =
+          typeof freightQuote.deliveryCents === "number" &&
+          Number.isSafeInteger(freightQuote.deliveryCents) &&
+          freightQuote.deliveryCents >= freightCents
+            ? freightQuote.deliveryCents
+            : freightCents + packagingCents;
         freightMethodName = freightQuote.serviceName;
         freightClass = freightQuote.freightClass;
         freightProvider = freightQuote.provider;
@@ -314,13 +328,13 @@ export async function POST(request: Request) {
                     price_data: {
                       currency: "aud" as const,
                       product_data: {
-                        name: `Freight — ${freightMethodName}`,
+                        name: `Delivery & packaging — ${freightMethodName}`,
                         description:
                           freightClass === "TUBE"
                             ? "Rolled artwork in a tube"
                             : `${freightClass?.toLowerCase()} parcel delivery`,
                       },
-                      unit_amount: freightCents,
+                      unit_amount: deliveryCents,
                     },
                     quantity: 1,
                   },
@@ -347,6 +361,8 @@ export async function POST(request: Request) {
             freightProvider,
             freightServiceCode,
             freightCents: String(freightCents),
+            packagingCents: String(packagingCents),
+            deliveryCents: String(deliveryCents),
             applicationFeeCents: String(feeAmount),
             // Record the commission rate used so the webhook can persist it
             commissionBasisPoints: String(commissionBasisPoints),

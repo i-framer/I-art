@@ -7,6 +7,7 @@ import {
   freightSettingsTable,
   freightMethodsTable,
   freightCarrierAccountsTable,
+  freightCarrierAccountAccessTable,
 } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { Users, CreditCard, Truck } from "lucide-react";
@@ -14,8 +15,7 @@ import { DEFAULT_FREIGHT_THRESHOLDS } from "@/lib/freight";
 import { FreightSettingsForm } from "./_components/freight-settings-form";
 import { FreightMethodsList } from "./_components/freight-methods-list";
 import { FreightMethodForm } from "./_components/freight-method-form";
-import { CarrierAccountForm } from "./_components/carrier-account-form";
-import { deleteCarrierAccount } from "./actions";
+import { setPlatformCarrierAccountAccess } from "./actions";
 
 export const metadata: Metadata = { title: "Freight Settings" };
 
@@ -30,7 +30,8 @@ export default async function FreightSettingsPage({
   const { saved, error } = await searchParams;
 
   // Load freight settings (may be null if never saved)
-  const [freightSettings, freightMethods, carrierAccounts] = await Promise.all([
+  const [freightSettings, freightMethods, carrierAccounts, carrierAccess] =
+    await Promise.all([
     db.query.freightSettingsTable.findFirst({
       where: eq(freightSettingsTable.tenantId, session.tenantId),
     }),
@@ -40,15 +41,20 @@ export default async function FreightSettingsPage({
     }),
     db.query.freightCarrierAccountsTable.findMany({
       where: and(
-        eq(freightCarrierAccountsTable.tenantId, session.tenantId),
-        eq(freightCarrierAccountsTable.owner, "GALLERY"),
+        eq(freightCarrierAccountsTable.owner, "PLATFORM"),
       ),
       orderBy: (t, { asc }) => [asc(t.createdAt)],
+    }),
+    db.query.freightCarrierAccountAccessTable.findMany({
+      where: eq(freightCarrierAccountAccessTable.tenantId, session.tenantId),
     }),
   ]);
 
   const thresholds = freightSettings ?? DEFAULT_FREIGHT_THRESHOLDS;
   const isOwner = session.role === "owner";
+  const accessByAccountId = new Map(
+    carrierAccess.map((access) => [access.carrierAccountId, access]),
+  );
 
   return (
     <div className="px-8 py-8 max-w-2xl">
@@ -149,12 +155,12 @@ export default async function FreightSettingsPage({
         )}
       </div>
 
-      {/* ── Carrier accounts ───────────────────────────────────────────────── */}
+      {/* ── Platform-approved carrier accounts ─────────────────────────────── */}
       <div className="mt-8 rounded-xl border border-stone-200 bg-white p-6 space-y-6">
         <div>
-          <h2 className="text-sm font-semibold text-stone-900">Live carrier quotes</h2>
+          <h2 className="text-sm font-semibold text-stone-900">Approved live couriers</h2>
           <p className="mt-1 text-sm text-stone-500">
-            Connect your own Australia Post or Aramex account. Buyers enter an Australian delivery address before they see current carrier prices.
+            Artwork Bank manages carrier accounts and live pricing. Choose which approved services your gallery offers; buyers will receive a current quote from the selected courier.
           </p>
         </div>
 
@@ -165,14 +171,25 @@ export default async function FreightSettingsPage({
                 <div>
                   <p className="text-sm font-medium text-stone-800">{account.label}</p>
                   <p className="text-xs text-stone-500">
-                    {account.provider === "AUSTRALIA_POST" ? "Australia Post" : "Aramex"} · {account.enabled ? "Live quotes enabled" : "Disabled"} · credentials protected
+                    {account.provider === "AUSTRALIA_POST" ? "Australia Post" : "Aramex"} · {account.enabled ? "Available for your gallery" : "Temporarily unavailable"} · pricing managed by Artwork Bank
                   </p>
                 </div>
                 {isOwner && (
-                  <form action={deleteCarrierAccount}>
-                    <input type="hidden" name="id" value={account.id} />
-                    <button type="submit" className="rounded-md px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
-                      Disconnect
+                  <form action={setPlatformCarrierAccountAccess}>
+                    <input type="hidden" name="carrierAccountId" value={account.id} />
+                    <input
+                      type="hidden"
+                      name="enabled"
+                      value={accessByAccountId.get(account.id)?.enabled ? "false" : "true"}
+                    />
+                    <button
+                      type="submit"
+                      disabled={!account.enabled}
+                      className="rounded-md px-2.5 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {accessByAccountId.get(account.id)?.enabled
+                        ? "Stop offering"
+                        : "Offer to buyers"}
                     </button>
                   </form>
                 )}
@@ -181,10 +198,10 @@ export default async function FreightSettingsPage({
           </div>
         )}
 
-        {isOwner && (
-          <div className={carrierAccounts.length > 0 ? "border-t border-stone-100 pt-6" : ""}>
-            <CarrierAccountForm />
-          </div>
+        {carrierAccounts.length === 0 && (
+          <p className="rounded-lg bg-stone-50 px-4 py-3 text-sm text-stone-500">
+            No live couriers have been approved yet. Manual fallback rates can still be used.
+          </p>
         )}
       </div>
 

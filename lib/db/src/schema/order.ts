@@ -43,7 +43,11 @@ export const ordersTable = pgTable(
     /** Immutable freight snapshot taken at checkout; old orders remain freight-free. */
     freightMethodName: text("freight_method_name"),
     freightClass: freightClassEnum("freight_class"),
+    /** Raw carrier/manual freight, excluding the artwork's packaging charge. */
     freightCents: integer("freight_cents").notNull().default(0),
+    packagingCents: integer("packaging_cents").notNull().default(0),
+    /** Total delivery amount actually collected from the buyer. */
+    deliveryCents: integer("delivery_cents").notNull().default(0),
     /** Carrier/service and address are copied from the accepted quote at checkout. */
     freightProvider: text("freight_provider"),
     freightServiceCode: text("freight_service_code"),

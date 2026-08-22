@@ -8,6 +8,7 @@ import {
   representedArtistsTable,
   freightMethodsTable,
   freightCarrierAccountsTable,
+  freightCarrierAccountAccessTable,
 } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { getTenantBySlug, formatPrice, formatDimensions } from "@/lib/tenant-cache";
@@ -92,8 +93,9 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
   const freightQuery = db.query as typeof db.query & {
     freightMethodsTable?: typeof db.query.freightMethodsTable;
     freightCarrierAccountsTable?: typeof db.query.freightCarrierAccountsTable;
+    freightCarrierAccountAccessTable?: typeof db.query.freightCarrierAccountAccessTable;
   };
-  const [images, representedArtist, freightMethods, carrierAccounts] = await Promise.all([
+  const [images, representedArtist, freightMethods, carrierAccounts, carrierAccess] = await Promise.all([
     db.query.artworkImagesTable.findMany({
       where: eq(artworkImagesTable.artworkId, artworkId),
       orderBy: (t, { asc }) => [asc(t.sortOrder), asc(t.createdAt)],
@@ -109,9 +111,14 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
     }) ?? Promise.resolve([]),
     freightQuery.freightCarrierAccountsTable?.findMany({
       where: and(
-        eq(freightCarrierAccountsTable.tenantId, tenant.id),
-        eq(freightCarrierAccountsTable.owner, "GALLERY"),
+        eq(freightCarrierAccountsTable.owner, "PLATFORM"),
         eq(freightCarrierAccountsTable.enabled, true),
+      ),
+    }) ?? Promise.resolve([]),
+    freightQuery.freightCarrierAccountAccessTable?.findMany({
+      where: and(
+        eq(freightCarrierAccountAccessTable.tenantId, tenant.id),
+        eq(freightCarrierAccountAccessTable.enabled, true),
       ),
     }) ?? Promise.resolve([]),
   ]);
@@ -158,7 +165,9 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
     artwork.packedWeightGrams,
   ].every((value) => typeof value === "number" && value > 0);
   const hasDeliveryService =
-    carrierAccounts.length > 0 || enabledFreightMethods.length > 0;
+    carrierAccounts.some((account) =>
+      carrierAccess.some((access) => access.carrierAccountId === account.id),
+    ) || enabledFreightMethods.length > 0;
   const canShip = hasPackedParcel && hasDeliveryService;
   const shippingNotice = !hasPackedParcel
     ? "Delivery is not available because the gallery has not entered the packed parcel dimensions and weight."

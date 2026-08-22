@@ -307,6 +307,29 @@ export function ArtworkForm({
               </div>
             ))}
           </div>
+          <div className="mt-4 max-w-xs">
+            <label htmlFor="packagingCostAud" className="block text-xs text-stone-500 mb-1">
+              Packaging cost (AUD)
+            </label>
+            <input
+              id="packagingCostAud"
+              name="packagingCostAud"
+              type="number"
+              min="0"
+              step="0.01"
+              inputMode="decimal"
+              defaultValue={
+                artwork?.packagingCents
+                  ? (artwork.packagingCents / 100).toFixed(2)
+                  : "0.00"
+              }
+              className={inputCls}
+              placeholder="0.00"
+            />
+            <p className="mt-1 text-xs text-stone-400">
+              Added to the carrier freight quote as a separate packaging charge.
+            </p>
+          </div>
         </div>
       </div>
 

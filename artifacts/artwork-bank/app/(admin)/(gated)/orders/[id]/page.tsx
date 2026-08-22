@@ -232,8 +232,16 @@ export default async function OrderDetailPage({
                   {order.freightClass
                     ? ` · ${order.freightClass === "TUBE" ? "Rolled / tube" : `${order.freightClass[0]}${order.freightClass.slice(1).toLowerCase()} parcel`}`
                     : ""}
-                  {" · "}
+                  {" · Freight "}
                   {formatPrice(order.freightCents)}
+                  {order.packagingCents > 0
+                    ? ` + packaging ${formatPrice(order.packagingCents)}`
+                    : ""}
+                  {" · Delivery total "}
+                  {formatPrice(
+                    order.deliveryCents ||
+                      order.freightCents + order.packagingCents,
+                  )}
                 </dd>
               </>
             )}
@@ -281,7 +289,11 @@ export default async function OrderDetailPage({
           <div className="mt-4 flex items-center justify-between pt-4 border-t border-stone-200">
             <span className="text-sm font-semibold text-stone-700">Artwork</span>
             <span className="text-sm font-medium text-stone-900">
-              {formatPrice(order.totalCents - order.freightCents)}
+              {formatPrice(
+                order.totalCents -
+                  (order.deliveryCents ||
+                    order.freightCents + order.packagingCents),
+              )}
             </span>
           </div>
           {order.freightCents > 0 && (
@@ -289,6 +301,14 @@ export default async function OrderDetailPage({
               <span className="text-sm text-stone-700">Freight</span>
               <span className="text-sm font-medium text-stone-900">
                 {formatPrice(order.freightCents)}
+              </span>
+            </div>
+          )}
+          {order.packagingCents > 0 && (
+            <div className="flex items-center justify-between py-3 border-b border-stone-200">
+              <span className="text-sm text-stone-700">Packaging</span>
+              <span className="text-sm font-medium text-stone-900">
+                {formatPrice(order.packagingCents)}
               </span>
             </div>
           )}

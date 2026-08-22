@@ -108,6 +108,8 @@ beforeEach(() => {
     serviceName: "Express Post",
     freightClass: "MEDIUM",
     freightCents: 2500,
+    packagingCents: 350,
+    deliveryCents: 2850,
     provider: "AUSTRALIA_POST",
     serviceCode: "AUS_PARCEL_EXPRESS",
   };
@@ -125,14 +127,16 @@ describe("checkout freight", () => {
       freightMethodName: "Express Post",
       freightClass: "MEDIUM",
       freightCents: "2500",
+      packagingCents: "350",
+      deliveryCents: "2850",
       freightProvider: "AUSTRALIA_POST",
       freightServiceCode: "AUS_PARCEL_EXPRESS",
     });
     expect(params.line_items).toHaveLength(2);
     expect(params.line_items[0].price_data.unit_amount).toBe(10_000);
     expect(params.line_items[1].price_data).toMatchObject({
-      unit_amount: 2500,
-      product_data: { name: "Freight — Express Post" },
+      unit_amount: 2850,
+      product_data: { name: "Delivery & packaging — Express Post" },
     });
     // The platform commission remains based on the artwork, not freight.
     expect(params.payment_intent_data.application_fee_amount).toBe(500);
@@ -158,7 +162,12 @@ describe("checkout freight", () => {
   });
 
   it("keeps a selected free quote as an explicit Stripe line item", async () => {
-    freightQuote.value = { ...freightQuote.value, freightCents: 0 };
+    freightQuote.value = {
+      ...freightQuote.value,
+      freightCents: 0,
+      packagingCents: 0,
+      deliveryCents: 0,
+    };
 
     const response = await POST(request("quote-a"));
     expect(response.status).toBe(200);
@@ -167,11 +176,13 @@ describe("checkout freight", () => {
     expect(params.line_items).toHaveLength(2);
     expect(params.line_items[1].price_data).toMatchObject({
       unit_amount: 0,
-      product_data: { name: "Freight — Express Post" },
+      product_data: { name: "Delivery & packaging — Express Post" },
     });
     expect(params.metadata).toMatchObject({
       freightMethodName: "Express Post",
       freightCents: "0",
+      packagingCents: "0",
+      deliveryCents: "0",
     });
   });
 });

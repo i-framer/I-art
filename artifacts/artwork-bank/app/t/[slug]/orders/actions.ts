@@ -19,6 +19,8 @@ export type OrderLookupState = {
     freightProvider: string | null;
     freightClass: string | null;
     freightCents: number;
+    packagingCents: number;
+    deliveryCents: number;
     trackingNote: string | null;
     artworkTitle: string | null;
     createdAt: string;
@@ -108,6 +110,8 @@ export async function lookupOrder(
         freightProvider: order.freightProvider,
         freightClass: order.freightClass,
         freightCents: order.freightCents,
+        packagingCents: order.packagingCents,
+        deliveryCents: order.deliveryCents || order.freightCents + order.packagingCents,
         trackingNote: order.trackingNote,
         artworkTitle: item?.artworkTitle ?? null,
         createdAt: order.createdAt.toISOString(),

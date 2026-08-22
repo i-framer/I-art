@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import {
   artworksTable,
   freightCarrierAccountsTable,
+  freightCarrierAccountAccessTable,
   freightMethodsTable,
   freightQuotesTable,
   freightSettingsTable,
@@ -101,14 +102,29 @@ export async function POST(request: Request) {
       db.query.freightMethodsTable.findMany({
         where: eq(freightMethodsTable.tenantId, tenant.id),
       }),
-      db.query.freightCarrierAccountsTable.findMany({
-        where: and(
-          eq(freightCarrierAccountsTable.tenantId, tenant.id),
-          eq(freightCarrierAccountsTable.owner, "GALLERY"),
-          eq(freightCarrierAccountsTable.enabled, true),
+      db
+        .select({ account: freightCarrierAccountsTable })
+        .from(freightCarrierAccountsTable)
+        .innerJoin(
+          freightCarrierAccountAccessTable,
+          and(
+            eq(
+              freightCarrierAccountAccessTable.carrierAccountId,
+              freightCarrierAccountsTable.id,
+            ),
+            eq(freightCarrierAccountAccessTable.tenantId, tenant.id),
+            eq(freightCarrierAccountAccessTable.enabled, true),
+          ),
+        )
+        .where(
+          and(
+            eq(freightCarrierAccountsTable.owner, "PLATFORM"),
+            eq(freightCarrierAccountsTable.enabled, true),
+          ),
         ),
-      }),
     ]);
+
+    const platformCarrierAccounts = carrierAccounts.map(({ account }) => account);
 
     if (!artwork) {
       return NextResponse.json(
@@ -139,7 +155,7 @@ export async function POST(request: Request) {
 
     if (origin?.success) {
       const liveResults = await Promise.allSettled(
-        carrierAccounts.map(async (account) => {
+        platformCarrierAccounts.map(async (account) => {
           const credentials = decryptCarrierCredentials<unknown>(
             account.credentialsCiphertext,
           );
@@ -174,6 +190,8 @@ export async function POST(request: Request) {
             serviceCode: quote.serviceCode,
             serviceName: quote.serviceName,
             freightCents: quote.freightCents,
+            packagingCents: artwork.packagingCents,
+            deliveryCents: quote.freightCents + artwork.packagingCents,
             destinationLine1: destination.data.line1,
             destinationLine2: destination.data.line2 || null,
             destinationSuburb: destination.data.suburb,
@@ -207,6 +225,9 @@ export async function POST(request: Request) {
           serviceName: `${method.name} (manual rate)`,
           freightClass,
           freightCents: getFreightCents(method, freightClass),
+          packagingCents: artwork.packagingCents,
+          deliveryCents:
+            getFreightCents(method, freightClass) + artwork.packagingCents,
           destinationLine1: destination.data.line1,
           destinationLine2: destination.data.line2 || null,
           destinationSuburb: destination.data.suburb,
@@ -224,7 +245,7 @@ export async function POST(request: Request) {
 
     if (rows.length === 0) {
       const detail =
-        carrierAccounts.length > 0 && !origin?.success
+        platformCarrierAccounts.length > 0 && !origin?.success
           ? "The gallery has not completed its dispatch address, so a live delivery quote cannot be calculated."
           : "No delivery service is currently available for this artwork.";
       return NextResponse.json({ error: detail }, { status: 400 });
@@ -237,6 +258,8 @@ export async function POST(request: Request) {
       serviceName: freightQuotesTable.serviceName,
       source: freightQuotesTable.source,
       freightCents: freightQuotesTable.freightCents,
+      packagingCents: freightQuotesTable.packagingCents,
+      deliveryCents: freightQuotesTable.deliveryCents,
       expiresAt: freightQuotesTable.expiresAt,
     });
 

@@ -136,6 +136,11 @@ export function OrderLookupForm({
               {state.order.freightClass ? ` (${state.order.freightClass === "TUBE" ? "Rolled / tube" : `${state.order.freightClass[0]}${state.order.freightClass.slice(1).toLowerCase()} parcel`})` : ""}
               {" · "}
               {formatPrice(state.order.freightCents)}
+               {state.order.packagingCents > 0
+                 ? ` + packaging ${formatPrice(state.order.packagingCents)}`
+                 : ""}
+               {" · Total delivery "}
+               {formatPrice(state.order.deliveryCents)}
             </p>
           )}
           {state.order.trackingNote ? (

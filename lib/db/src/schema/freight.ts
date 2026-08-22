@@ -4,6 +4,7 @@ import {
   integer,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
@@ -127,6 +128,37 @@ export const freightCarrierAccountsTable = pgTable(
 );
 
 /**
+ * A gallery may opt into a platform-approved account, but never receives or
+ * manages its credentials. Removing either side revokes access automatically.
+ */
+export const freightCarrierAccountAccessTable = pgTable(
+  "freight_carrier_account_access",
+  {
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenantsTable.id, { onDelete: "cascade" }),
+    carrierAccountId: text("carrier_account_id")
+      .notNull()
+      .references(() => freightCarrierAccountsTable.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    primaryKey({ columns: [t.tenantId, t.carrierAccountId] }),
+    index("freight_carrier_account_access_account_idx").on(
+      t.carrierAccountId,
+      t.enabled,
+    ),
+  ],
+);
+
+/**
  * A quote is persisted rather than trusted from the browser. It captures the
  * exact destination and packed parcel that produced the rate and expires before
  * a payment session can be created from it.
@@ -154,7 +186,11 @@ export const freightQuotesTable = pgTable(
     serviceCode: text("service_code"),
     serviceName: text("service_name").notNull(),
     freightClass: freightClassEnum("freight_class"),
+    /** Carrier or manual freight before the artwork-specific packing charge. */
     freightCents: integer("freight_cents").notNull(),
+    packagingCents: integer("packaging_cents").notNull().default(0),
+    /** The buyer-facing delivery amount charged at checkout. */
+    deliveryCents: integer("delivery_cents").notNull().default(0),
     destinationLine1: text("destination_line1").notNull(),
     destinationLine2: text("destination_line2"),
     destinationSuburb: text("destination_suburb").notNull(),
@@ -182,4 +218,6 @@ export const freightQuotesTable = pgTable(
 export type FreightSettings = typeof freightSettingsTable.$inferSelect;
 export type FreightMethod = typeof freightMethodsTable.$inferSelect;
 export type FreightCarrierAccount = typeof freightCarrierAccountsTable.$inferSelect;
+export type FreightCarrierAccountAccess =
+  typeof freightCarrierAccountAccessTable.$inferSelect;
 export type FreightQuote = typeof freightQuotesTable.$inferSelect;

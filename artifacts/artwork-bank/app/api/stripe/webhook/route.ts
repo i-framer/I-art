@@ -668,6 +668,8 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
     freightMethodName,
     freightClass: freightClassMetadata,
     freightCents: freightCentsMetadata,
+    packagingCents: packagingCentsMetadata,
+    deliveryCents: deliveryCentsMetadata,
   } = session.metadata ?? {};
   const customerId = typeof session.customer === "string" ? session.customer : null;
 
@@ -796,6 +798,18 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
     const value = Number(freightCentsMetadata);
     return Number.isSafeInteger(value) && value >= 0 ? value : 0;
   })();
+  const packagingCents = (() => {
+    if (!packagingCentsMetadata) return 0;
+    const value = Number(packagingCentsMetadata);
+    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  })();
+  const deliveryCents = (() => {
+    if (!deliveryCentsMetadata) return freightCents + packagingCents;
+    const value = Number(deliveryCentsMetadata);
+    return Number.isSafeInteger(value) && value >= 0
+      ? value
+      : freightCents + packagingCents;
+  })();
   const freightClass: "SMALL" | "MEDIUM" | "LARGE" | "TUBE" | null =
     freightClassMetadata === "SMALL" ||
     freightClassMetadata === "MEDIUM" ||
@@ -820,6 +834,23 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
             freightMethodName: acceptedQuote.serviceName,
             freightClass: acceptedQuote.freightClass,
             freightCents: acceptedQuote.freightCents,
+            packagingCents:
+              typeof acceptedQuote.packagingCents === "number" &&
+              Number.isSafeInteger(acceptedQuote.packagingCents) &&
+              acceptedQuote.packagingCents >= 0
+                ? acceptedQuote.packagingCents
+                : 0,
+            deliveryCents:
+              typeof acceptedQuote.deliveryCents === "number" &&
+              Number.isSafeInteger(acceptedQuote.deliveryCents) &&
+              acceptedQuote.deliveryCents >= acceptedQuote.freightCents
+                ? acceptedQuote.deliveryCents
+                : acceptedQuote.freightCents +
+                  (typeof acceptedQuote.packagingCents === "number" &&
+                  Number.isSafeInteger(acceptedQuote.packagingCents) &&
+                  acceptedQuote.packagingCents >= 0
+                    ? acceptedQuote.packagingCents
+                    : 0),
             freightProvider: acceptedQuote.provider,
             freightServiceCode: acceptedQuote.serviceCode,
             freightQuoteId: acceptedQuote.id,
@@ -838,6 +869,8 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
             freightMethodName: freightMethodName?.trim() || null,
             freightClass,
             freightCents,
+            packagingCents,
+            deliveryCents,
             freightProvider: session.metadata?.freightProvider?.trim() || null,
             freightServiceCode: session.metadata?.freightServiceCode?.trim() || null,
             freightQuoteId: freightQuoteId?.trim() || null,
@@ -847,6 +880,8 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session, eventId
           freightMethodName: null,
           freightClass: null,
           freightCents: 0,
+          packagingCents: 0,
+          deliveryCents: 0,
           freightProvider: null,
           freightServiceCode: null,
           freightQuoteId: null,

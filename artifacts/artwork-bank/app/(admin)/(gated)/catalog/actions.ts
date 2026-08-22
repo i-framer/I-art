@@ -32,6 +32,10 @@ const artworkSchema = z.object({
   packageWidthMm: z.string().regex(/^[1-9]\d*$/, "Packed dimensions must be positive whole millimetres.").optional(),
   packageHeightMm: z.string().regex(/^[1-9]\d*$/, "Packed dimensions must be positive whole millimetres.").optional(),
   packedWeightGrams: z.string().regex(/^[1-9]\d*$/, "Packed weight must be a positive whole number of grams.").optional(),
+  packagingCostAud: z
+    .string()
+    .regex(/^\d+(?:\.\d{1,2})?$/, "Packaging cost must be a non-negative dollar amount.")
+    .optional(),
   condition: z.enum(["EXCELLENT", "GOOD", "FAIR", "POOR"]).optional(),
   price: z.string().optional(),
   isEdition: z.string().optional(),
@@ -82,6 +86,7 @@ function parseArtworkFormData(formData: FormData) {
     packageWidthMm: field(formData, "packageWidthMm"),
     packageHeightMm: field(formData, "packageHeightMm"),
     packedWeightGrams: field(formData, "packedWeightGrams"),
+    packagingCostAud: field(formData, "packagingCostAud"),
     condition: field(formData, "condition"),
     price: field(formData, "price"),
     isEdition: field(formData, "isEdition"),
@@ -114,6 +119,9 @@ function toInsertValues(data: z.infer<typeof artworkSchema>, tenantId: string) {
     packedWeightGrams: data.packedWeightGrams
       ? parseInt(data.packedWeightGrams)
       : null,
+    packagingCents: data.packagingCostAud
+      ? Math.round(Number(data.packagingCostAud) * 100)
+      : 0,
     condition: (data.condition as "EXCELLENT" | "GOOD" | "FAIR" | "POOR" | undefined) || null,
     price,
     isEdition,

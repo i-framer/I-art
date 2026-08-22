@@ -6,7 +6,6 @@ import { getSession } from "@/lib/auth";
 import { isPlatformAdmin, tenantBillingStatus } from "@/lib/platform-admin";
 import { setBillingExempt, setIframerAccount } from "./actions";
 import Link from "next/link";
-import { ShieldCheck, BarChart3 } from "lucide-react";
 import { formatDate, subscriptionDetail } from "./_lib/format";
 import { BillingAlerts } from "./_components/BillingAlerts";
 import { IframerSlackAlerts } from "./_components/IframerSlackAlerts";
@@ -14,6 +13,7 @@ import {
   StripeEnvironmentPanel,
   StripeEnvironmentPanelSkeleton,
 } from "./_components/StripeEnvironmentPanel";
+import { PlatformAdminHeader } from "./_components/PlatformAdminHeader";
 
 export const dynamic = "force-dynamic";
 
@@ -71,21 +71,11 @@ export default async function PlatformAdminPage() {
 
   return (
     <div className="min-h-screen bg-stone-50">
-      <header className="bg-stone-900 px-6 py-4">
-        <div className="mx-auto flex max-w-5xl items-center gap-2.5">
-          <ShieldCheck className="h-5 w-5 text-amber-400" />
-          <h1 className="text-sm font-semibold text-white">
-            Platform Admin — Tenant Billing
-          </h1>
-          <Link
-            href="/platform/reports"
-            className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-stone-800 px-3 py-1.5 text-xs font-medium text-stone-200 transition-colors hover:bg-stone-700 hover:text-white"
-          >
-            <BarChart3 className="h-3.5 w-3.5" /> Reports
-          </Link>
-          <span className="text-xs text-stone-400">{session.email}</span>
-        </div>
-      </header>
+      <PlatformAdminHeader
+        title="Platform Admin — Tenants"
+        email={session.email ?? ""}
+        activeSection="tenants"
+      />
 
       <main className="mx-auto max-w-5xl px-6 py-8">
         <p className="mb-6 text-sm text-stone-600">

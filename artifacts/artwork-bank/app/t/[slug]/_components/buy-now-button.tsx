@@ -46,6 +46,8 @@ export function BuyNowButton({
       serviceName: string;
       source: "LIVE" | "MANUAL";
       freightCents: number;
+      packagingCents: number;
+      deliveryCents: number;
       expiresAt: string;
     }>
   >([]);
@@ -61,7 +63,7 @@ export function BuyNowButton({
       : [FULFILLMENT_OPTIONS[1]],
   ].flat();
   const selectedFreight = quotes.find((quote) => quote.id === freightQuoteId);
-  const checkoutTotal = price + (selectedFreight?.freightCents ?? 0);
+  const checkoutTotal = price + (selectedFreight?.deliveryCents ?? 0);
 
   function updateAddress(name: keyof typeof address, value: string) {
     setAddress((current) => ({ ...current, [name]: value }));
@@ -209,13 +211,21 @@ export function BuyNowButton({
               <select id="freight-quote" value={freightQuoteId} onChange={(event) => setFreightQuoteId(event.target.value)} className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-stone-900 focus:border-stone-900 focus:outline-none">
                 {quotes.map((quote) => (
                   <option key={quote.id} value={quote.id}>
-                    {quote.serviceName} — {formatPrice(quote.freightCents)}
+                    {quote.serviceName} — {formatPrice(quote.deliveryCents)}
                   </option>
                 ))}
               </select>
               {selectedFreight?.source === "MANUAL" && (
                 <p className="mt-1.5 text-xs text-amber-700">
                   Live carrier pricing is unavailable; this gallery&apos;s manual fallback rate is shown.
+                </p>
+              )}
+              {selectedFreight && (
+                <p className="mt-1.5 text-xs text-stone-500">
+                  Freight {formatPrice(selectedFreight.freightCents)}
+                  {selectedFreight.packagingCents > 0
+                    ? ` + packaging ${formatPrice(selectedFreight.packagingCents)}`
+                    : ""}
                 </p>
               )}
               <div className="mt-2 flex items-center justify-between text-sm">
