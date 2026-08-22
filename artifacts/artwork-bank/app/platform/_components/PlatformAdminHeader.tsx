@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ShieldCheck, Users, BarChart3, Truck } from "lucide-react";
+import { ShieldCheck, Users, BarChart3, Truck, Home } from "lucide-react";
 
 export interface PlatformAdminHeaderProps {
   title: string;
@@ -29,6 +29,14 @@ export function PlatformAdminHeader({
 
         <div className="flex items-center gap-4 sm:gap-6">
           <nav className="flex items-center gap-1 -ml-2 sm:ml-0 overflow-x-auto pb-1 sm:pb-0" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+            <Link
+              href="/admin"
+              aria-label="Admin home"
+              className="group inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-stone-400 transition-colors hover:bg-stone-800 hover:text-stone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-900"
+            >
+              <Home className="h-4 w-4 text-stone-500 group-hover:text-stone-400" />
+              <span className="hidden sm:inline">Home</span>
+            </Link>
             <Link
               href="/platform"
               className={`group inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-stone-900 ${

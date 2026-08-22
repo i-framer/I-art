@@ -61,7 +61,7 @@ async function cleanUpPreviousBrowserTestSession(session: SessionData) {
  */
 function safeDest(
   from: string | null | undefined,
-  fallback = "/dashboard",
+  fallback = "/admin",
 ): string {
   return from && /^\/[^/]/.test(from) ? from : fallback;
 }
@@ -195,7 +195,7 @@ export async function register(
   session.browserTestRunId = undefined;
   await session.save();
 
-  redirect("/dashboard");
+  redirect("/admin");
 }
 
 /**

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const ADMIN_PATHS = ["/dashboard", "/settings", "/orders", "/catalog"];
+const ADMIN_PATHS = ["/admin", "/dashboard", "/settings", "/orders", "/catalog"];
 
 /**
  * Platform-owned domains — requests from these are never treated as custom domains.

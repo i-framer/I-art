@@ -16,10 +16,12 @@ import {
   Award,
   Handshake,
   GalleryVertical,
+  Home,
 } from "lucide-react";
 import { InquiryBadge } from "@/app/(admin)/_components/inquiry-badge";
 
 const navItems = [
+  { href: "/admin", label: "Admin home", icon: Home },
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/catalog", label: "Catalog", icon: Image },
   { href: "/orders", label: "Orders", icon: ShoppingBag },
