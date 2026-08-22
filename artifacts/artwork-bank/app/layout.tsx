@@ -18,6 +18,10 @@ export const metadata: Metadata = {
     template: "%s | Artwork Bank",
   },
   description: "Sell and manage artwork online",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({
