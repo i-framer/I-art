@@ -28,6 +28,7 @@ _Last updated: 2026-08-11 (agent probe — storage routes deployed; manual UI ve
 - [!] 1.5 Buyer receives the order confirmation email — FAILED 2026-08-18: no email received
 - [!] 1.6 Gallery receives the sale notification (email / dashboard order appears) — PARTIAL 2026-08-18: order appears in dashboard, but no email received
 - [ ] 1.7 Refund the test purchase from Stripe dashboard — order status updates, partial-refund notification behaves
+- [ ] 1.8 Check freight from an available artwork as a guest — enter an Australian address, confirm the live/manual delivery result shows freight + packaging, then continue to Stripe Checkout before the quote expires
 
 ## 2. Gallery paywall & subscriptions
 

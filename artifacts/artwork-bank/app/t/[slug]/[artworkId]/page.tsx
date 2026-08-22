@@ -9,18 +9,20 @@ import {
   freightMethodsTable,
   freightCarrierAccountsTable,
   freightCarrierAccountAccessTable,
+  freightQuotesTable,
 } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { getTenantBySlug, formatPrice, formatDimensions } from "@/lib/tenant-cache";
 import { getServeUrl } from "@/lib/object-storage";
 import { isStripeConfigured } from "@/lib/stripe";
 import { ImageCarousel } from "../_components/image-carousel";
 import { BuyNowButton } from "../_components/buy-now-button";
 import { InquiryForm } from "../_components/inquiry-form";
+import type { FreightQuote } from "./freight-quote-types";
 
 type Props = {
   params: Promise<{ slug: string; artworkId: string }>;
-  searchParams: Promise<{ cancelled?: string }>;
+  searchParams: Promise<{ cancelled?: string; freightQuoteId?: string }>;
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -72,7 +74,7 @@ const CONDITION_LABELS: Record<string, string> = {
 
 export default async function ArtworkDetailPage({ params, searchParams }: Props) {
   const { slug, artworkId } = await params;
-  const { cancelled } = await searchParams;
+  const { cancelled, freightQuoteId } = await searchParams;
   const tenant = await getTenantBySlug(slug);
   if (!tenant) notFound();
 
@@ -94,8 +96,9 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
     freightMethodsTable?: typeof db.query.freightMethodsTable;
     freightCarrierAccountsTable?: typeof db.query.freightCarrierAccountsTable;
     freightCarrierAccountAccessTable?: typeof db.query.freightCarrierAccountAccessTable;
+    freightQuotesTable?: typeof db.query.freightQuotesTable;
   };
-  const [images, representedArtist, freightMethods, carrierAccounts, carrierAccess] = await Promise.all([
+  const [images, representedArtist, freightMethods, carrierAccounts, carrierAccess, initialFreightQuote] = await Promise.all([
     db.query.artworkImagesTable.findMany({
       where: eq(artworkImagesTable.artworkId, artworkId),
       orderBy: (t, { asc }) => [asc(t.sortOrder), asc(t.createdAt)],
@@ -121,6 +124,16 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
         eq(freightCarrierAccountAccessTable.enabled, true),
       ),
     }) ?? Promise.resolve([]),
+    freightQuoteId
+      ? freightQuery.freightQuotesTable?.findFirst({
+          where: and(
+            eq(freightQuotesTable.id, freightQuoteId),
+            eq(freightQuotesTable.tenantId, tenant.id),
+            eq(freightQuotesTable.artworkId, artwork.id),
+            gt(freightQuotesTable.expiresAt, new Date()),
+          ),
+        }) ?? Promise.resolve(null)
+      : Promise.resolve(null),
   ]);
 
   // Resolve signed URLs for all images
@@ -168,7 +181,26 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
     carrierAccounts.some((account) =>
       carrierAccess.some((access) => access.carrierAccountId === account.id),
     ) || enabledFreightMethods.length > 0;
-  const canShip = hasPackedParcel && hasDeliveryService;
+  const canShip = hasPackedParcel && (hasDeliveryService || Boolean(initialFreightQuote));
+  const initialQuote: FreightQuote | undefined = initialFreightQuote
+    ? {
+        id: initialFreightQuote.id,
+        provider: initialFreightQuote.provider,
+        providerName:
+          initialFreightQuote.provider === "MANUAL"
+            ? "Manual fallback"
+            : initialFreightQuote.provider === "AUSTRALIA_POST"
+              ? "Australia Post"
+              : "Aramex",
+        serviceCode: initialFreightQuote.serviceCode,
+        serviceName: initialFreightQuote.serviceName,
+        source: initialFreightQuote.source,
+        freightCents: initialFreightQuote.freightCents,
+        packagingCents: initialFreightQuote.packagingCents,
+        deliveryCents: initialFreightQuote.deliveryCents,
+        expiresAt: initialFreightQuote.expiresAt.toISOString(),
+      }
+    : undefined;
   const shippingNotice = !hasPackedParcel
     ? "Delivery is not available because the gallery has not entered the packed parcel dimensions and weight."
     : !hasDeliveryService
@@ -247,7 +279,16 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
           )}
 
           {/* CTA */}
-          <div>
+          <div className="space-y-5">
+            {!isSold && !isReserved && (
+              <Link
+                href={`${base}/${artworkId}/freight`}
+                className="flex items-center justify-between rounded-xl border border-stone-300 bg-white px-4 py-3 text-sm font-semibold text-stone-700 transition-colors hover:border-stone-500 hover:bg-stone-50"
+              >
+                <span>Check freight before buying</span>
+                <span aria-hidden="true">→</span>
+              </Link>
+            )}
             {isSold ? (
               <div className="w-full rounded-xl bg-stone-100 py-4 text-center text-stone-500 text-sm font-medium">
                 This piece has been sold
@@ -297,6 +338,7 @@ export default async function ArtworkDetailPage({ params, searchParams }: Props)
                   themeColor={themeColor}
                   shippingNotice={shippingNotice}
                   canShip={canShip}
+                  initialQuote={initialQuote}
                 />
                 {tenant.contactEmail && (
                   <section

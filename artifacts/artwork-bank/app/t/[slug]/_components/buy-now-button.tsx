@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { formatPrice } from "@/lib/format";
+import type { FreightQuote } from "../[artworkId]/freight-quote-types";
 
 type Props = {
   artworkId: string;
@@ -11,6 +12,7 @@ type Props = {
   themeColor: string;
   canShip?: boolean;
   shippingNotice?: string;
+  initialQuote?: FreightQuote;
 };
 
 const FULFILLMENT_OPTIONS = [
@@ -28,6 +30,7 @@ export function BuyNowButton({
   themeColor,
   canShip = false,
   shippingNotice = "Delivery is not available for this artwork.",
+  initialQuote,
 }: Props) {
   const [fulfillment, setFulfillment] = useState(canShip ? "SHIP" : "PICKUP");
   const [address, setAddress] = useState({
@@ -37,21 +40,10 @@ export function BuyNowButton({
     state: "",
     postcode: "",
   });
-  const [quotes, setQuotes] = useState<
-    Array<{
-      id: string;
-      provider: string;
-      providerName: string;
-      serviceCode: string | null;
-      serviceName: string;
-      source: "LIVE" | "MANUAL";
-      freightCents: number;
-      packagingCents: number;
-      deliveryCents: number;
-      expiresAt: string;
-    }>
-  >([]);
-  const [freightQuoteId, setFreightQuoteId] = useState("");
+  const [quotes, setQuotes] = useState<FreightQuote[]>(
+    initialQuote ? [initialQuote] : [],
+  );
+  const [freightQuoteId, setFreightQuoteId] = useState(initialQuote?.id ?? "");
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -134,7 +134,7 @@ afterAll(cleanup);
 describeIntegration("Auth lifecycle (login/register/logout) — real-DB integration", () => {
   // ── register ───────────────────────────────────────────────────────────────
 
-  it("register: creates tenant, user, and membership; saves session; redirects /dashboard", async () => {
+  it("register: creates tenant, user, and membership; saves session; redirects /admin", async () => {
     const userEmail = email();
 
     await expect(
@@ -148,7 +148,7 @@ describeIntegration("Auth lifecycle (login/register/logout) — real-DB integrat
           confirmPassword: "SecurePass1!",
         }),
       ),
-    ).rejects.toThrow("REDIRECT:/dashboard");
+    ).rejects.toThrow("REDIRECT:/admin");
 
     expect(sessionSave).toHaveBeenCalledOnce();
     expect(sessionState.email).toBe(userEmail);
@@ -196,13 +196,13 @@ describeIntegration("Auth lifecycle (login/register/logout) — real-DB integrat
 
   // ── login ──────────────────────────────────────────────────────────────────
 
-  it("login: valid credentials write the session and redirect /dashboard", async () => {
+  it("login: valid credentials write the session and redirect /admin", async () => {
     const userEmail = email();
     await seedUser(userEmail, "ValidPass1!");
 
     await expect(
       login({ error: "" } as import("@/app/(auth)/actions").AuthState, fd({ email: userEmail, password: "ValidPass1!" })),
-    ).rejects.toThrow("REDIRECT:/dashboard");
+    ).rejects.toThrow("REDIRECT:/admin");
 
     expect(sessionSave).toHaveBeenCalledOnce();
     expect(sessionState.email).toBe(userEmail);
