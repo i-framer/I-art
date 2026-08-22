@@ -240,6 +240,14 @@ export default async function BrowsePage({
           categories={categories}
           locations={locations}
           total={total}
+          initialFilters={{
+            q: sp.q ?? "",
+            sellerType: sp.sellerType ?? "",
+            seller: sp.seller ?? "",
+            artist: sp.artist ?? "",
+            category: sp.category ?? "",
+            location: sp.location ?? "",
+          }}
         />
 
         {/* Result grid */}

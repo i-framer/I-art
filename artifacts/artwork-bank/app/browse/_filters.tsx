@@ -1,8 +1,17 @@
 "use client";
 
-import { useCallback, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Search, X } from "lucide-react";
+
+type FilterValues = {
+  q: string;
+  sellerType: string;
+  seller: string;
+  artist: string;
+  category: string;
+  location: string;
+};
 
 type Props = {
   sellers: Array<{ slug: string; businessName: string; type: "ARTIST" | "FRAMER" }>;
@@ -10,26 +19,31 @@ type Props = {
   categories: string[];
   locations: string[];
   total: number;
+  initialFilters: FilterValues;
 };
 
-export function BrowseFilters({ sellers, artists, categories, locations, total }: Props) {
+export function BrowseFilters({
+  sellers,
+  artists,
+  categories,
+  locations,
+  total,
+  initialFilters,
+}: Props) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const searchRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [searchValue, setSearchValue] = useState(initialFilters.q);
 
-  const q = searchParams.get("q") ?? "";
-  const sellerType = searchParams.get("sellerType") ?? "";
-  const seller = searchParams.get("seller") ?? "";
-  const artist = searchParams.get("artist") ?? "";
-  const category = searchParams.get("category") ?? "";
-  const location = searchParams.get("location") ?? "";
+  useEffect(() => {
+    setSearchValue(initialFilters.q);
+  }, [initialFilters.q]);
 
-  const hasFilters = !!(q || sellerType || seller || artist || category || location);
+  const hasFilters = Object.values(initialFilters).some(Boolean);
 
   const updateParam = useCallback(
     (key: string, value: string) => {
-      const params = new URLSearchParams(searchParams.toString());
+      const params = new URLSearchParams(window.location.search);
       if (value) {
         params.set(key, value);
       } else {
@@ -38,22 +52,24 @@ export function BrowseFilters({ sellers, artists, categories, locations, total }
       params.delete("page"); // reset pagination on filter change
       router.replace(`/browse?${params.toString()}`);
     },
-    [router, searchParams],
+    [router],
   );
 
   function handleSearch(e: React.ChangeEvent<HTMLInputElement>) {
     const val = e.target.value;
+    setSearchValue(val);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => updateParam("q", val), 300);
   }
 
   function clearAll() {
     router.replace("/browse");
+    setSearchValue("");
     if (searchRef.current) searchRef.current.value = "";
   }
 
-  const visibleSellers = sellerType
-    ? sellers.filter((s) => s.type === sellerType)
+  const visibleSellers = initialFilters.sellerType
+    ? sellers.filter((s) => s.type === initialFilters.sellerType)
     : sellers;
 
   const selectCls =
@@ -68,7 +84,7 @@ export function BrowseFilters({ sellers, artists, categories, locations, total }
           ref={searchRef}
           type="search"
           placeholder="Search title or artist…"
-          defaultValue={q}
+          value={searchValue}
           onChange={handleSearch}
           className="rounded-lg border border-stone-300 bg-white pl-9 pr-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-900/10 w-56"
         />
@@ -76,7 +92,7 @@ export function BrowseFilters({ sellers, artists, categories, locations, total }
 
       {/* Seller type */}
       <select
-        value={sellerType}
+        value={initialFilters.sellerType}
         onChange={(e) => updateParam("sellerType", e.target.value)}
         className={selectCls}
         aria-label="Seller type"
@@ -89,7 +105,7 @@ export function BrowseFilters({ sellers, artists, categories, locations, total }
       {/* Seller */}
       {sellers.length > 0 && (
         <select
-          value={seller}
+          value={initialFilters.seller}
           onChange={(e) => updateParam("seller", e.target.value)}
           className={selectCls}
           aria-label="Seller"
@@ -106,7 +122,7 @@ export function BrowseFilters({ sellers, artists, categories, locations, total }
       {/* Artist */}
       {artists.length > 0 && (
         <select
-          value={artist}
+          value={initialFilters.artist}
           onChange={(e) => updateParam("artist", e.target.value)}
           className={selectCls}
           aria-label="Artist"
@@ -123,7 +139,7 @@ export function BrowseFilters({ sellers, artists, categories, locations, total }
       {/* Category */}
       {categories.length > 0 && (
         <select
-          value={category}
+          value={initialFilters.category}
           onChange={(e) => updateParam("category", e.target.value)}
           className={selectCls}
           aria-label="Category"
@@ -140,7 +156,7 @@ export function BrowseFilters({ sellers, artists, categories, locations, total }
       {/* Location */}
       {locations.length > 0 && (
         <select
-          value={location}
+          value={initialFilters.location}
           onChange={(e) => updateParam("location", e.target.value)}
           className={selectCls}
           aria-label="Location"
